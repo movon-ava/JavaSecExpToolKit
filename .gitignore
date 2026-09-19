@@ -8,6 +8,9 @@ lib/
 # 本地修改快照：只用于回滚，保留最近三次即可，不入版本库
 .backups/
 
+# java-chains 运行期缓存：正常落在 lib/chains-config/；依赖目录缺失时会回落到工作目录
+chains-config/
+
 # Python 运行期生成物
 **/__pycache__/
 *.pyc
