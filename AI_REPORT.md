@@ -831,10 +831,22 @@
   `README.md`、`AI_REPORT.md`、`build.ps1`，共 40 个文件）。
 - 备份保留策略：按「最近三次」裁剪，保留 `20260919-171531`、`20260919-175034`、
   `20260919-195559`。
-- Git：仓库此前**没有** `.git`。本轮初始化仓库并只纳入源码 / 测试 / 文档 / 构建脚本，
-  `.gitignore` 排除构建产物（`target/`、根目录 JAR）、本地备份（`.backups/`）、
-  运行期缓存（`lib/chains-config/`）与第三方大体积依赖（`lib/`、`libs-repo/` 下各 184 MB 的
-  `java-chains-cli` 包，不进版本库，由 `src/pom.xml` 的本地仓库声明引用）。
+- Git：仓库此前**没有** `.git`。本轮初始化 `main` 分支并纳入源码 / 测试 / 文档 / 构建脚本，
+  两次提交：
+
+  | 提交 | 内容 |
+  | --- | --- |
+  | `7002085` | 初始化仓库并纳入现有代码（44 个文件、14763 行） |
+  | `c76640b` | `.gitignore` 补充 java-chains 回落缓存目录 |
+
+  `.gitignore` 排除构建产物（`target/`、根目录 `JavaSecExpToolKit.jar`）、本地备份
+  （`.backups/`）、运行期缓存（`chains-config/`）与运行时依赖目录 `lib/`。
+- 关于 `lib/`：它由 `mvn` 从 `libs-repo/` 复制而来，属可再生产物，因此不入版本库。
+  已实测验证：移走 `lib/` 后重新构建可完整重建，重建出的依赖与原件 SHA-256 一致
+  （`F26E5E14...56B60D`）。
+- 关于第三方依赖体积：`java-chains-cli-2.0.0-beta4.jar` 单包 **176 MB**，超过常规仓库单文件上限，
+  因此配置 `.gitattributes` 让 `libs-repo/**/*.jar` 走 **Git LFS**（已确认暂存区内是指针文件
+  而非实体，见 oid `f26e5e14...`）。
 
 ## 当前限制
 
