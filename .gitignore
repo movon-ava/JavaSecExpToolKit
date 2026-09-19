@@ -1,0 +1,13 @@
+# 构建产物：由 build.ps1 / mvn -f src\pom.xml clean package 生成，不入版本库
+target/
+JavaSecExpToolKit.jar
+
+# 运行时依赖目录：构建时由 Maven 从 libs-repo/ 复制而来，可重新生成
+lib/
+
+# 本地修改快照：只用于回滚，保留最近三次即可，不入版本库
+.backups/
+
+# Python 运行期生成物
+**/__pycache__/
+*.pyc

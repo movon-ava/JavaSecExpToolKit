@@ -1,0 +1,2 @@
+# 第三方依赖（java-chains 2.0.0-beta4，单包约 176 MB，超出常规仓库单文件上限）走 Git LFS
+libs-repo/**/*.jar filter=lfs diff=lfs merge=lfs -text

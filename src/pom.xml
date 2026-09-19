@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>local.javasectoolkit</groupId>
+    <artifactId>JavaSecExpToolKit</artifactId>
+    <version>0.1.0</version>
+    <packaging>jar</packaging>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven.compiler.release>8</maven.compiler.release>
+        <!-- 项目内本地仓库：存放未发布到中央仓库的第三方依赖（java-chains） -->
+        <toolkit.libs.repo>file:///${project.basedir}/../libs-repo</toolkit.libs.repo>
+        <toolkit.dependency.dir>${project.basedir}/../lib</toolkit.dependency.dir>
+    </properties>
+
+    <repositories>
+        <repository>
+            <id>toolkit-libs</id>
+            <name>JavaSecExpToolKit local libraries</name>
+            <url>${toolkit.libs.repo}</url>
+            <releases><enabled>true</enabled></releases>
+            <snapshots><enabled>false</enabled></snapshots>
+        </repository>
+    </repositories>
+
+    <dependencies>
+        <!-- Shiro 利用 / 反序列化链生成引擎：java-chains 2.0.0-beta4 -->
+        <dependency>
+            <groupId>org.vulhub</groupId>
+            <artifactId>java-chains-cli</artifactId>
+            <version>2.0.0-beta4</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <sourceDirectory>${project.basedir}</sourceDirectory>
+        <directory>${project.basedir}/../target</directory>
+        <finalName>JavaSecExpToolKit</finalName>
+        <resources>
+            <resource>
+                <directory>${project.basedir}/../python</directory>
+                <targetPath>python</targetPath>
+                <includes>
+                    <include>fj_probe.py</include>
+                </includes>
+            </resource>
+            <resource>
+                <directory>${project.basedir}/shiro/res</directory>
+                <targetPath>shiro/res</targetPath>
+                <includes>
+                    <include>shiro-keys.txt</include>
+                </includes>
+            </resource>
+        </resources>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.13.0</version>
+                <configuration>
+                    <release>${maven.compiler.release}</release>
+                    <encoding>${project.build.sourceEncoding}</encoding>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <version>3.6.1</version>
+                <executions>
+                    <execution>
+                        <id>copy-runtime-dependencies</id>
+                        <phase>prepare-package</phase>
+                        <goals>
+                            <goal>copy-dependencies</goal>
+                        </goals>
+                        <configuration>
+                            <outputDirectory>${toolkit.dependency.dir}</outputDirectory>
+                            <includeScope>runtime</includeScope>
+                            <overWriteIfNewer>true</overWriteIfNewer>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>3.4.2</version>
+                <configuration>
+                    <outputDirectory>${project.basedir}/..</outputDirectory>
+                    <archive>
+                        <manifest>
+                            <mainClass>Main</mainClass>
+                            <addClasspath>true</addClasspath>
+                            <classpathPrefix>lib/</classpathPrefix>
+                        </manifest>
+                    </archive>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>
