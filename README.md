@@ -1,290 +1,270 @@
 # JavaSecExpToolKit
 
-Java + Python desktop toolkit for authorized security testing: Fastjson
-fingerprinting, a local intercepting proxy, capture/format conversion, and a
-Shiro exploitation module.
+面向**授权**安全测试的 Java + Python 桌面工具集：Fastjson 指纹识别、本地拦截代理、
+抓包与格式转换，以及 Shiro 利用模块。
 
-## Scope
+语言：[中文](README.md) | [English](README.en.md)
 
-The Fastjson probe performs non-destructive probing against an authorized HTTP
-JSON endpoint. It sends normal JSON, malformed JSON, and harmless `@type`
-markers to compare response characteristics, and supports five modes:
+## 适用范围
 
-- `detect` — identify Fastjson and separate it from Jackson / Gson / org.json / Hutool
-- `version` — AutoType state, echoed `fastjson-version`, and offline boolean probes (`version_detail` / `version_range`)
-- `expect` — whether the endpoint binds an expected Java class
-- `dns` — harmless DNS probes (`Inet4Address` / `InetSocketAddress` / `URL` key / `Exception`)
-- `ceye` — confirm DNS records through the CEYE API
+Fastjson 探测对授权范围内的 HTTP JSON 接口做**无害探测**：发送正常 JSON、残缺 JSON 与
+无副作用的 `@type` 标记，对比响应特征，共五种模式：
 
-Each mode prints a rendered Chinese report by default (`--format text`): section title, target,
-conclusion, per-probe detail with status and matched markers, notes, stage summary, and known
-limitations. Use `--format json` for the raw structured result.
+- `detect`（识别）— 判断是否 Fastjson，并与 Jackson / Gson / org.json / Hutool 区分
+- `version`（版本）— AutoType 状态、回显的 `fastjson-version`、离线布尔探针（`version_detail` / `version_range`）
+- `expect`（期望类）— 反序列化点是否绑定了具体的 Java 类型
+- `dns`（DNS 探针）— 四种无害 DNS 探针（`Inet4Address` / `InetSocketAddress` / URL 键 / `Exception`）
+- `ceye`（CEYE 确认）— 通过 CEYE 接口确认 DNS 记录
 
-Transport-layer failures are reported instead of guessed: if every probe is rejected at the HTTP
-layer (for example a login page answering `405 Allow: GET, HEAD` with an empty body) and no parser
-marker shows up, `detect` reports "cannot probe" with confidence `0.0` and `version` leaves the
-version undetermined instead of inferring a bogus range.
+每个模式默认输出**中文报告**（`--format text`）：分段标题、目标、探测结论、逐条探针明细
+（状态码与命中特征）、提示、阶段小结与已知限制。需要结构化结果时用 `--format json`。
 
-A login interceptor is reported as such instead of being misread as "this path only accepts GET".
-When every probe is rejected at the HTTP layer and none of them matched a parser marker, the engine
-re-sends one payload-free `GET` and checks the **full** response body for login-page markers
-(`/user/login`, `name="password"`, ...). This matters because those markers sit well past the
-500-character excerpt kept in `evidence`. The conclusion then carries a mode-specific prefix
-(`无法探测：` / `版本未能收敛：` / `未能完成探测：`) plus the reason, and `login_gate` is set in the
-JSON result. If a session cookie was supplied and the target still bounced the request, the
-conclusion says so explicitly, which separates "no cookie given" from "cookie expired".
+**传输层失败按实际情况说明，而不是猜**：若全部探针都在 HTTP 层被拒绝（例如登录页对任何请求
+都回 `405` + `Allow: GET, HEAD` + 空响应体），且没有任何解析器特征，`detect` 会给出
+「无法探测」且置信度为 `0.0`，`version` 保持「未能收敛」，不再推出一个假版本区间。
 
-Send `--session-cookie 'JWT_TOKEN=...; JSESSIONID=...'` (or `--headers '{"Cookie":"..."}'`) when
-the endpoint needs a session. `--session-cookie` merges into the `Cookie` header by name and never
-overwrites a cookie that was already captured, so a `JWT_TOKEN` from the proxy and a `JSESSIONID`
-from the config both survive.
+**登录拦截会被单独识别**，而不是被误读成「该路径只接受 GET」。当探针被整层拒绝且没有任何
+命中特征时，引擎会**额外补发一条不带 payload 的 `GET`**，并用**完整响应体**检查登录页特征
+（`/user/login`、`name="password"` 等）。必须用完整响应体：这些标记出现在正文深处，
+远超 `evidence` 里 500 字的截断长度。结论会带模式前缀（`无法探测：` / `版本未能收敛：` /
+`未能完成探测：`）与原因，JSON 结果里写入 `login_gate`。若已填写会话 Cookie 仍被拦，
+结论会明确指出，以区分「没填 Cookie」与「Cookie 已失效」。
 
-The Fastjson probe modes never deliver a payload: no exploit chains, command
-execution, file writes, or memory shells.
+接口需要登录态时，用 `--session-cookie 'JWT_TOKEN=...; JSESSIONID=...'`（或
+`--headers '{"Cookie":"..."}'`）。`--session-cookie` 按名字并入 `Cookie` 头，**同名不覆盖**，
+因此代理抓到的 `JWT_TOKEN` 与配置里的 `JSESSIONID` 能同时保留。
 
-A separate **Shiro** module does include exploitation (rememberMe detection, key
-cracking, echo-chain delivery and command execution). Use it only against targets
-you are explicitly authorized to test. See [docs/DESIGN-shiro.md](docs/DESIGN-shiro.md).
+Fastjson 探测模式**从不投递 payload**：不做利用链、命令执行、文件读写或内存马。
 
-Two capture features ship with it:
+另有一个独立的 **Shiro** 模块，包含利用能力（rememberMe 识别、密钥爆破、回显链投递与
+命令执行）。**仅可用于你获得明确书面授权的目标**，详见
+[docs/DESIGN-shiro.md](docs/DESIGN-shiro.md)。
 
-- **Capture & convert** — send one request with any method and inspect the raw response
-  (redirects are not followed, so login flows stay visible), then export what you captured as
-  `json`, `curl`, `raw`, `cookie-header`, `cookie-json`, or `cookie-netscape`. Pasting a raw
-  request from Burp or the browser works offline and converts in place, which makes it easy to
-  pull a session cookie out of a login flow and hand it to the probe page.
-- **Proxy** — a local HTTP proxy (default port `8899`, bound to your LAN IP) you point a browser or browser
-  extension at, so requests and responses show up live as you browse, the way Burp works.
-  Plain HTTP is recorded in full (request line, headers, body, status, response headers and
-  body). Tick `拦截请求` to hold a request before it reaches the target, edit the request pane,
-  then press `放行` to send it or `丢弃` to drop it; the response shows up in the pane below.
-  The checkbox takes effect immediately, including on a proxy that is already running, and only
-  one request is held at a time (the rest queue up) so background traffic cannot overwrite what
-  you are editing. The request pane is editable only while interception is on; untick the box and
-  any request still waiting is released unchanged.
-  **HTTPS is tunneled only — `CONNECT` is forwarded byte-for-byte and never decrypted**,
-  so HTTPS browsing keeps working but its content stays invisible (and cannot be intercepted).
+抓包相关能力有两块：
 
-Probes also accept a request method (`--probe-method`, default `POST`). If every probe is
-rejected at the HTTP layer, the engine retries with `GET` / `PUT` / `PATCH` and records which
-methods it tried. Responses that are identical across every probe (a static login page, even a
-`200`) are explicitly not treated as a Fastjson hit.
+- **抓包转换** — 用任意方法发送一次请求并查看原始响应（不跟随跳转，便于观察登录流程），
+  再把结果导出为 `json`、`curl`、`raw`、`cookie-header`、`cookie-json` 或 `cookie-netscape`。
+  直接粘贴 Burp 或浏览器的原始报文可**完全离线**解析，便于从登录流程里取出会话 Cookie
+  交给探测页。
+- **代理抓包** — 本地 HTTP 代理（默认端口 `8899`，默认绑定本机联网 IP），把浏览器或浏览器
+  插件的代理指向它，即可像 Burp 一样实时看到请求与响应。明文 HTTP 完整记录（请求行、请求头、
+  请求体、状态码、响应头、响应体）。勾选 `拦截请求` 可在请求到达目标前拦下、编辑请求包，
+  再按 `放行` 发出或 `丢弃` 放弃；响应显示在下方。该勾选框**立即生效**，包括对已在运行的代理；
+  同一时刻只拦一个请求（其余排队），因此后台流量不会覆盖你正在编辑的内容。请求包仅在拦截
+  开启时可编辑；取消勾选后，仍在等待的请求会被原样放行。
+  **HTTPS 仅做隧道转发：`CONNECT` 按字节透传、不解密**，因此 HTTPS 浏览正常但内容不可见
+  （也无法拦截改包）。
 
-## Requirements
+探测还支持指定请求方法（`--probe-method`，默认 `POST`）。若全部探针都在 HTTP 层被拒绝，
+引擎会用 `GET` / `PUT` / `PATCH` 依次重试，并在报告里记录尝试过的方法。所有探针响应完全一致
+（例如一张静态登录页，哪怕状态码是 `200`）会被明确判定为「未到达解析器」，不会当作命中 Fastjson。
+
+## 环境要求
 
 - Windows
 - Python 3.10+
-- JDK 17 for building and running (the Shiro module needs `--add-opens` on JDK 17; `run.ps1` adds them)
-- Maven 3.9+ (the build script defaults to `E:\java\maven\apache-maven-3.9.4`)
+- JDK 17（构建与运行；Shiro 模块在 JDK 17 下需要 `--add-opens`，`run.ps1` 已代加）
+- Maven 3.9+（构建脚本默认使用 `E:\java\maven\apache-maven-3.9.4`）
 
-The supplied build script uses `E:\java\jdk17` and `E:\java\maven\apache-maven-3.9.4` by default. Override them when needed:
+构建脚本默认使用 `E:\java\jdk17` 与 `E:\java\maven\apache-maven-3.9.4`，需要时显式覆盖：
 
 ```powershell
 .\build.ps1 -JavaHome E:\java\jdk21 -MavenHome E:\java\maven\apache-maven-3.9.4
 .\run.ps1 -JavaHome E:\java\jdk21 -MavenHome E:\java\maven\apache-maven-3.9.4
 ```
 
-To use a specific Python interpreter from the desktop application:
+若要在桌面程序中指定 Python 解释器：
 
 ```powershell
 $env:FJ_PYTHON = "C:\Python313\python.exe"
 .\run.ps1
 ```
 
-## Build and Run
+## 构建与运行
 
-Build the executable JAR with Maven:
+用 Maven 构建可执行 JAR：
+
 ```powershell
 .\build.ps1
 ```
-Run the desktop application directly from the root-level JAR:
+
+直接运行根目录 JAR：
+
 ```powershell
 E:\java\jdk17\bin\java.exe -jar .\JavaSecExpToolKit.jar
 ```
-`run.ps1` remains available as a convenience wrapper and builds the JAR if it is missing.
 
-The Maven POM lives in the Java workspace (`src/pom.xml`), next to the sources, and writes its
-output back to the repository root (`target/`, `JavaSecExpToolKit.jar`). Maven packages
-`python/fj_probe.py` and `src/shiro/res/shiro-keys.txt` inside the JAR, sets `Main` as the entry
-point, and copies runtime dependencies to `lib/`. The build script checks that the generated JAR
-timestamp is not earlier than the key source files. The desktop application still requires
-Python 3.10+ at runtime; set `FJ_PYTHON` when `python` is not on `PATH`.
+`run.ps1` 是便捷包装：JAR 缺失时会先自动构建。
 
-## Navigation
+Maven 的 POM 位于 Java 工作区（`src/pom.xml`，与源码同级），产物写回仓库根目录
+（`target/`、`JavaSecExpToolKit.jar`）。Maven 会把 `python/fj_probe.py` 与
+`src/shiro/res/shiro-keys.txt` 打进 JAR，入口设为 `Main`，并把运行时依赖复制到 `lib/`。
+构建脚本会校验生成的 JAR 时间**不早于**关键源文件。桌面程序运行时仍需要 Python 3.10+；
+`python` 不在 `PATH` 时请设置 `FJ_PYTHON`。
 
-The sidebar is grouped by feature:
+## 导航
 
-- `主页` — workspace overview
-- `配置` — settings, grouped into `通用配置` and per-feature sections
-- `代理` — first-level category holding both traffic tools; click it to expand / collapse
-  the second-level `代理抓包` (local HTTP proxy) and `抓包转换` (capture one request,
-  inspect the raw response, convert formats) items
-- `FastJson` — first-level category; click it to expand / collapse the second-level `Fastjson 探测` item
-- `Shiro` — first-level category; click it to expand / collapse the second-level `Shiro 漏洞利用` item
+侧边栏按功能分组：
 
-First-level categories show a `▾` / `▸` marker pinned to the right edge of the row; clicking one toggles its children without leaving the current page. `打开探测` on the home card expands the group and jumps straight to the probe page.
+- `主页` — 工作区概览
+- `配置` — 设置项，分为 `通用配置` 与各功能分组
+- `代理` — 一级分类，含两个流量工具；点击可展开 / 收起二级项 `代理抓包`（本地 HTTP 代理）
+  与 `抓包转换`（单次抓包、格式转换）
+- `FastJson` — 一级分类；点击可展开 / 收起二级项 `Fastjson 探测`
+- `Shiro` — 一级分类；点击可展开 / 收起二级项 `Shiro 漏洞利用`
 
-## Settings page
+一级分类行右侧固定显示 `▾` / `▸` 标记；点击它只展开 / 收起子项，不会离开当前页面。
+主页卡片上的 `打开探测` 会展开分组并直接跳到探测页。
 
-The `配置` page stores fixed parameters in
-`%USERPROFILE%\.JavaSecExpToolKit\config.properties`, grouped as:
+## 配置页
 
-- `通用配置` — Python interpreter (overrides `FJ_PYTHON` when that env var is unset), default timeout, default probe request method
-- `FastJson 配置` — CEYE domain, CEYE token, CEYE API endpoint, default DNS wait, default base body, default request headers, default DNSLog host, default CEYE filter
+`配置` 页把固定参数保存在 `%USERPROFILE%\.JavaSecExpToolKit\config.properties`，分组如下：
 
-Saved values pre-fill the probe page. The Python engine reads the same file,
-and explicit CLI arguments always win over stored values.
+- `通用配置` — Python 解释器（在 `FJ_PYTHON` 未设置时生效）、默认超时、默认探测请求方法
+- `FastJson 配置` — CEYE 域名、CEYE Token、CEYE API 地址、默认 DNS 等待、默认业务参数、
+  默认请求头、会话 Cookie、默认 DNSLog 主机、默认 CEYE Filter
 
-The probe page has a `请求方法` dropdown (`POST` / `GET` / `PUT` / `PATCH` / `DELETE` / `OPTIONS`,
-default `POST`) that passes `--probe-method`; use `GET` for endpoints that only read JSON from the
-query string. `GET` / `HEAD` probes URL-encode the probe payload into the query string.
+保存后的值会预填到探测页。Python 引擎读取同一份文件；**显式命令行参数始终优先于**存储值。
 
-It also has a `请求头（JSON）` field, always editable, which passes
-`--headers` when non-empty — use it for a logged-in session cookie, e.g.
-`{"Cookie":"JWT_TOKEN=...; JSESSIONID=..."}`.
+探测页有 `请求方法` 下拉框（`POST` / `GET` / `PUT` / `PATCH` / `DELETE` / `OPTIONS`，默认 `POST`），
+对应 `--probe-method`；接口只从查询串读 JSON 时用 `GET`。`GET` / `HEAD` 探针会把 payload
+URL 编码进查询串。
 
-Right below it, `会话 Cookie` (session cookie) passes `--session-cookie` when non-empty. It is the
-field to use when a target bounces unauthenticated requests to a login page: it says only "this is
-the logged-in session" and merges into the `Cookie` header by name. A `Cookie:` line can be pasted
-as-is; the same value is stored as `session_cookie` on the config page and pre-filled every time
-the probe page opens. The Shiro page merges it with `rememberMe` into a single `Cookie` header.
+它还有一个 `请求头（JSON）` 输入框（始终可编辑），非空时下发 `--headers`——可用于已登录会话，
+例如 `{"Cookie":"JWT_TOKEN=...; JSESSIONID=..."}`。
 
-The `探测模式` group holds five independent checkboxes (`Fastjson 识别` / `版本识别` /
-`期望类` / `DNS 探针` / `CEYE 确认`), all selected by default and none prefixed with `启用`.
-Checked modes run in that fixed order and each result is prefixed with a
-`===== <mode> =====` header; unchecking one simply skips that stage. Field availability
-follows the matching checkbox: `业务参数（期望类）` needs `期望类`, `DNSLog 主机` and
-`DNS 等待` need `DNS 探针`, and `CEYE Filter` needs `CEYE 确认`, so an unchecked mode never
-reaches the Python command line.
+紧随其后的 `会话 Cookie` 输入框非空时下发 `--session-cookie`。目标把未登录请求转发到登录页时
+就该用它：它只表达「这是已登录会话」，并按名字并入 `Cookie` 头。可直接粘贴整行 `Cookie:`；
+该值同时以 `session_cookie` 存入配置页，探测页每次打开都会预填。Shiro 页会把它与 `rememberMe`
+合并成同一个 `Cookie` 头。
 
-`DNS 探针` runs `--mode dns` (mapped to `--dns` / `--no-dns`) and `CEYE 确认` runs
-`--mode ceye` (`--ceye` / `--no-ceye`). All five checkboxes are peer modes, so a checked
-DNS probe is not re-attached to detect/version/expect results and cannot be delivered twice
-when five modes run together. Engine-side, CEYE confirmation still depends on the DNS stage
-when used as an attached stage. Running `CEYE 确认` without a token stops early with a
-readable hint instead of an engine error — set CEYE Token on the settings page or export
-`CEYE_TOKEN`.
+`探测模式` 组有五个互相独立的勾选框（`Fastjson 识别` / `版本识别` / `期望类` / `DNS 探针` /
+`CEYE 确认`），默认全部勾选，且都不带 `启用` 前缀。勾选的模式按该固定顺序执行，每段结果以
+`===== <模式> =====` 开头；取消勾选即跳过该阶段。输入框可用性跟随对应勾选框：
+`业务参数（期望类）` 依赖 `期望类`，`DNSLog 主机` 与 `DNS 等待` 依赖 `DNS 探针`，
+`CEYE Filter` 依赖 `CEYE 确认`，因此未勾选的模式不会进入 Python 命令行。
 
-## Project layout
+`DNS 探针` 执行 `--mode dns`（映射为 `--dns` / `--no-dns`），`CEYE 确认` 执行 `--mode ceye`
+（`--ceye` / `--no-ceye`）。五个勾选框是**并列模式**：勾选的 DNS 探针不会被再次挂到
+detect / version / expect 的结果上，五个模式同时执行时也不会重复投递。引擎侧，
+CEYE 确认作为附属阶段时仍依赖 DNS 阶段。未填 Token 就执行 `CEYE 确认` 会提前停止并给出
+可读提示（而不是引擎异常）——请在配置页填写 CEYE Token，或设置 `CEYE_TOKEN` 环境变量。
 
-| Path | Purpose |
+## 项目结构
+
+| 路径 | 用途 |
 | --- | --- |
-| `src/` | Java Swing UI (`Main.java`), `pom.xml`, the local proxy (`proxy/ProxyServer.java`), and the Shiro module (`shiro/`) |
-| `python/` | probe engine (`fj_probe.py`), packaged into the JAR |
-| `tests/` | Python unit tests and Java UI self-checks |
-| `tools/` | maintenance helpers, e.g. `apply_patch.py` |
-| `docs/` | design documentation (`DESIGN.md`, `DESIGN-shiro.md`, `DESIGN-probe-accuracy.md`) |
-| `target/` | Maven build output (Maven writes here via `src/pom.xml`) |
-| `.backups/` | timestamped snapshots, most recent three are kept |
-| root | `build.ps1`, `run.ps1`, `README.md`, `AGENTS.md`, `AI_REPORT.md`, the built `JavaSecExpToolKit.jar`, plus `lib/` (runtime deps) and `libs-repo/` (offline Maven repo for java-chains) |
+| `src/` | Java Swing 界面（`Main.java`）、`pom.xml`、本地代理（`proxy/ProxyServer.java`）与 Shiro 模块（`shiro/`） |
+| `src/ui/` | 各功能页视图（`HomePage` / `ProbePage` / `CapturePage` / `ProxyPage` / `ShiroPage` / `ConfigPage`）与样式（`UiKit`） |
+| `src/probe/` | 引擎调用与命令行拼装（`ProbeEngine` / `ProbeCommand` / `CaptureBridge`） |
+| `src/config/` `src/util/` | `config.properties` 读写；报文解析与平台差异 |
+| `python/` | 探测引擎（`fj_probe.py`），打进 JAR |
+| `tests/` | Python 单元测试与 Java 界面自检 |
+| `tools/` | 维护辅助脚本，例如 `apply_patch.py` |
+| `docs/` | 设计文档（`DESIGN.md`、`DESIGN-shiro.md`、`DESIGN-probe-accuracy.md`） |
+| `target/` | Maven 构建输出（经 `src/pom.xml` 写入） |
+| `.backups/` | 带时间戳的快照，只保留最近三次 |
+| 根目录 | `build.ps1`、`run.ps1`、`README.md`、`README.en.md`、`AGENTS.md`、`AI_REPORT.md`、构建出的 `JavaSecExpToolKit.jar`，以及 `lib/`（运行时依赖）与 `libs-repo/`（java-chains 的离线 Maven 仓库） |
 
-
-## Capture & convert
+## 抓包与格式转换
 
 ```powershell
-# send one POST and keep the raw response, exporting several formats
+# 发送一次 POST 并保留原始响应，同时导出多种格式
 python .\python\fj_probe.py --mode capture --method POST `
   --capture-url http://127.0.0.1:8080/api/json `
   --headers '{"Cookie":"JWT_TOKEN=..."}' --body '{"age":20}' `
   --convert-targets cookie-json,curl
 
-# parse a pasted raw request offline (no network access at all)
+# 离线解析粘贴的原始报文（完全不联网）
 python .\python\fj_probe.py --mode convert --pasted-request "POST /api HTTP/1.1`nHost: x`nCookie: a=1" `
   --convert-targets cookie-json,cookie-header
 ```
 
-## Proxy
+## 代理抓包
 
 ```powershell
-# start the proxy from the UI (代理 → 代理抓包, default port 8899), then point a browser at it.
-# The listen address defaults to this machine's LAN IP and is editable:
-#   <LAN IP>:8899  reachable from the local network (default)
-#   127.0.0.1:8899 this machine only   |   0.0.0.0:8899 all interfaces
-#   HTTPS works through CONNECT but is not decrypted
+# 从界面启动代理（代理 → 代理抓包，默认端口 8899），再把浏览器代理指向它。
+# 监听地址默认是本机联网 IP，可编辑：
+#   <本机 IP>:8899   局域网内可访问（默认）
+#   127.0.0.1:8899   仅本机   |   0.0.0.0:8899   所有网卡
+#   HTTPS 走 CONNECT 隧道，不解密
 ```
 
-`请求包` shows the request currently being sent (or waiting for release when interception is
-on) and `返回包（放行后捕获）` shows the response of the last request that was released.
-`转发到抓包转换` hands the displayed request over to the capture page, whose `填入探测页`
-button then carries the URL, session cookie and body into the probe page.
+`请求包` 显示当前正在发送的请求（开启拦截时为等待放行的请求），`返回包（放行后捕获）`
+显示最近一次放行请求的响应。`转发到抓包转换` 会把当前显示的请求交给抓包转换页，
+再用该页的 `填入探测页` 把 URL、会话 Cookie 与请求体带进探测页。
 
-Already captured request / response text survives navigation: leaving the proxy page and
-coming back keeps the content (the placeholder is only written when the text area is still
-empty). Only `清空记录` clears it.
+已抓到的请求 / 返回内容在切页后**不会丢失**：离开代理页再回来内容仍在
+（占位提示只在文本域为空时写入）。只有 `清空记录` 会清掉它。
 
-`一键发送` on the capture page fills the target page in and jumps there, but **does not start
-the probe by itself** — confirm the mode / body first, then press `开始探测` (`一键检测` on the
-Shiro page). Previously it fired a detection run immediately, which sent traffic to the target
-before the parameters had been reviewed.
+抓包页的 `一键发送` 只回填目标页并跳转，**不会自行开跑**——请先确认模式 / 请求体，
+再按 `开始探测`（Shiro 页是 `一键检测`）。早期版本会立即发起探测，
+在参数尚未确认时就把流量打到目标上。
 
-`--probe-method` example:
+`--probe-method` 示例：
 
 ```powershell
 python .\python\fj_probe.py http://127.0.0.1:8080/api/json --mode detect --probe-method GET
 ```
 
-Probes are sent by `_send_probes()` with a bounded thread pool (`PROBE_CONCURRENCY = 4`), so
-the run time no longer grows linearly with the probe count. On an unreachable target (3 s
-timeout) `detect` dropped from ~20.6 s to ~0.2 s; the report only prints a `响应:` line when
-the response is actually non-empty, and notes already covered by the summary are dropped.
+探针由 `_send_probes()` 通过有界线程池发送（`PROBE_CONCURRENCY = 4`），
+执行时间不再随探针数线性增长。在不可达目标上（超时 3 秒），`detect` 从约 20.6 秒降到约 0.2 秒；
+报告只在响应确实非空时打印 `响应:` 行，且已被结论覆盖的提示不会重复。
 
-## Shiro module
+## Shiro 模块
 
-`主页 → Shiro → Shiro 漏洞利用` covers rememberMe detection, dictionary key cracking
-(1108 built-in keys), echo-chain generation and command execution. Chains are built with
-[java-chains](https://github.com/vulhub/java-chains) `2.0.0-beta4`, which is a declared
-dependency of `src/pom.xml`; `lib/` holds the runtime jar and the manifest adds it to
-`Class-Path`.
+`主页 → Shiro → Shiro 漏洞利用` 覆盖 rememberMe 识别、字典密钥爆破（内置 1108 条）、
+回显链生成与命令执行。链由 [java-chains](https://github.com/vulhub/java-chains) `2.0.0-beta4`
+生成，该依赖声明在 `src/pom.xml`；`lib/` 存放运行时 JAR，清单把它加入 `Class-Path`。
 
-This module executes commands on the target, so use it only where you are authorized.
-`生成 Payload` builds the payload without delivering it, which is useful when you want to
-hand it to another tool. See [docs/DESIGN-shiro.md](docs/DESIGN-shiro.md) for the crypto,
-cracking and chain details.
+该模块会在目标上执行命令，**请仅在你已获授权的场景使用**。`生成 Payload` 只构建 payload
+而不投递，便于交给其它工具。加密、爆破与链的细节见
+[docs/DESIGN-shiro.md](docs/DESIGN-shiro.md)。
 
-The Shiro page keeps **one output pane per action** (`指纹检测` / `密钥爆破` / `生成 Payload` /
-`执行命令`) so a long key-cracking log or a long command output never overwrites the detection
-conclusion or the generated payload.
+Shiro 页为**每个动作保留独立回显框**（`指纹检测` / `密钥爆破` / `生成 Payload` / `执行命令`），
+因此冗长的爆破日志或命令输出不会覆盖检测结论或已生成的 payload。
 
-## CLI smoke test
+## 命令行速查
 
 ```powershell
-# identify
+# 识别
 python .\python\fj_probe.py http://127.0.0.1:8080/api/json --mode detect
 
-# version range
+# 版本区间
 python .\python\fj_probe.py http://127.0.0.1:8080/api/json --mode version
 
-# expected class (base body should look like the real business request)
+# 期望类（业务参数应贴近真实业务请求）
 python .\python\fj_probe.py http://127.0.0.1:8080/api/json --mode expect --base-body '{"age":20,"name":"Bob"}'
 
-# DNS probes with CEYE confirmation
+# DNS 探针 + CEYE 确认
 python .\python\fj_probe.py http://127.0.0.1:8080/api/json --mode dns --dnslog-host abc.ceye.io --ceye-token <token>
 
-# confirmation only
+# 仅做确认
 python .\python\fj_probe.py http://127.0.0.1:8080/api/json --mode ceye --ceye-token <token> --dns-filter fjtest
 
-# turn an optional stage off for any mode
+# 任意模式下关闭可选阶段
 python .\python\fj_probe.py http://127.0.0.1:8080/api/json --mode detect --no-dns --no-ceye
 python .\python\fj_probe.py http://127.0.0.1:8080/api/json --mode dns --dnslog-host abc.ceye.io --no-ceye
 
-# send a logged-in session cookie
+# 携带已登录会话 Cookie
 python .\python\fj_probe.py http://127.0.0.1:8080/api/json --mode detect --headers '{"Cookie":"JWT_TOKEN=..."}'
 
-# same thing through the dedicated switch (merges with --headers instead of replacing it)
+# 用专用参数下发（与 --headers 合并而不是替换）
 python .\python\fj_probe.py http://127.0.0.1:8080/api/json --mode detect --session-cookie "JWT_TOKEN=x; JSESSIONID=y"
 
-# keep the raw structured result instead of the rendered report
+# 保留原始结构化结果，而不是渲染后的报告
 python .\python\fj_probe.py http://127.0.0.1:8080/api/json --mode version --format json
+```
 
-`CEYE_TOKEN` / `CEYE_DOMAIN` / `CEYE_API` environment variables work as well.
+`CEYE_TOKEN` / `CEYE_DOMAIN` / `CEYE_API` 环境变量同样可用。
 
-## Tests
+## 测试
 
 ```powershell
 python -m unittest discover -s tests
 ```
 
-The Java UI self-checks run against the compiled classes and print their own assertions:
+Java 界面自检针对已编译的 class 运行，并自行打印断言：
 
 ```powershell
 E:\java\jdk17\bin\javac.exe -encoding UTF-8 -cp target\classes -d target\classes tests\*.java
@@ -293,11 +273,9 @@ E:\java\jdk17\bin\java.exe -Dfile.encoding=UTF-8 -cp target\classes UiSwitchEndT
 E:\java\jdk17\bin\java.exe -Dfile.encoding=UTF-8 -cp target\classes ProxyServerCheck
 ```
 
-`UiNavigationCheck` verifies the sidebar expand / collapse behaviour and writes page
-screenshots to `target/ui-check/`; `UiSwitchEndToEndCheck` drives the UI switches
-through the real Python engine against a local stub endpoint (including starting the proxy
-from the UI and reading the recorded flow); `ProxyServerCheck` covers the proxy itself —
-plain-HTTP capture, 404 handling, `CONNECT` tunneling with byte pass-through, callbacks,
-`find` / `clear`.
+`UiNavigationCheck` 校验侧边栏展开 / 收起行为，并把页面截图写入 `target/ui-check/`；
+`UiSwitchEndToEndCheck` 通过真实 Python 引擎驱动界面开关（含从界面启动代理并读取记录）；
+`ProxyServerCheck` 覆盖代理本身——明文抓包、404、`CONNECT` 隧道字节透传、回调与
+`find` / `clear`。另有 `ShiroCheck`（Shiro 引擎）与 `UiShiroCheck`（Shiro 页）可一并运行。
 
-Only run this against systems where testing is explicitly authorized.
+**请仅在获得明确测试授权的系统上运行。**
