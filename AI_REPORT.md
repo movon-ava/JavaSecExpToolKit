@@ -838,6 +838,8 @@
   | --- | --- |
   | `7002085` | 初始化仓库并纳入现有代码（44 个文件、14763 行） |
   | `c76640b` | `.gitignore` 补充 java-chains 回落缓存目录 |
+  | `69099b6` | AI 报告补充本轮收尾记录与 Git 管理说明 |
+  | `ceef631` | 统一行尾为 LF，保证打包产物可复现 |
 
   `.gitignore` 排除构建产物（`target/`、根目录 `JavaSecExpToolKit.jar`）、本地备份
   （`.backups/`）、运行期缓存（`chains-config/`）与运行时依赖目录 `lib/`。
@@ -847,6 +849,21 @@
 - 关于第三方依赖体积：`java-chains-cli-2.0.0-beta4.jar` 单包 **176 MB**，超过常规仓库单文件上限，
   因此配置 `.gitattributes` 让 `libs-repo/**/*.jar` 走 **Git LFS**（已确认暂存区内是指针文件
   而非实体，见 oid `f26e5e14...`）。
+
+- **行尾统一（顺带修掉的一个真实隐患）**：本机系统级 `core.autocrlf=true`，克隆时会把文本
+  改写成 CRLF。实测同一提交在克隆目录里构建出的 JAR 是 **176251** 字节、比本地 **176056**
+  字节大 195 字节——即「同一份代码，不同机器产出不同产物」。因此 `.gitattributes` 增加
+  `* text=auto eol=lf`，并把唯一残留 CRLF 的 `src/shiro/res/shiro-keys.txt` 归一化为 LF
+  （读取方用 `BufferedReader.readLine()`，两种行尾均兼容，字典仍是 1108 行）。
+- **可复现性验证**：重新 `git clone` 后构建，编排产物与本地构建**逐条目 SHA-256 完全一致**
+  （69 个条目、无差异），体积同为 **176034** 字节。克隆仓库检出即可直接构建，无需额外步骤。
+
+### 五、最终状态
+
+- JAR：`2026-09-19 20:20:59`，**176034** 字节，晚于 `src/`、`python/`、`tests/` 下全部源文件。
+- 工作区干净（`git status --short` 为空）；被忽略项为 `target/`、`JavaSecExpToolKit.jar`、
+  `lib/`、`.backups/`、`__pycache__/`。
+- `tools/` 只保留 `apply_patch.py`，本轮 24 个中间补丁脚本已清理（在备份快照中留有副本）。
 
 ## 当前限制
 
