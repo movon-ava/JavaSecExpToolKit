@@ -11,7 +11,9 @@ import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JComponent;
+import javax.swing.JComboBox;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JPasswordField;
@@ -23,6 +25,9 @@ import javax.swing.JTextField;
  *
  * <p>只负责搭界面与收集控件，读写与生效逻辑仍由界面层回调处理；
  * 分组信息由调用方以 {@link Group} 列表传入，新增一项配置只需在界面层加一行。
+ *
+ * <p>配置行支持三类控件：文本 / 密码输入框、勾选框、下拉框。三者都按各自的方式
+ * 套用界面样式，避免在界面层再写一遍样式代码。
  */
 public final class ConfigPage {
 
@@ -117,13 +122,28 @@ public final class ConfigPage {
         form.add(UiKit.label(entry.label, Font.BOLD, 13, UiKit.TEXT, sink), c);
         JPanel holder = new JPanel(new BorderLayout(10, 0));
         holder.setOpaque(false);
-        if (entry.field instanceof JTextField) UiKit.styleField((JTextField) entry.field, sink);
-        else if (entry.field instanceof JPasswordField) UiKit.styleField((JPasswordField) entry.field, sink);
-        holder.add(entry.field, BorderLayout.CENTER);
+        holder.add(styled(entry.field, sink), BorderLayout.CENTER);
         holder.add(UiKit.label(entry.hint, Font.PLAIN, 12, UiKit.MUTED, sink), BorderLayout.EAST);
         c.gridx = 1; c.weightx = 1; c.fill = GridBagConstraints.HORIZONTAL; c.insets = new Insets(0, 16, 8, 0);
         form.add(holder, c);
         return row + 1;
+    }
+
+    /** 按控件类型套样式：输入框走字段样式，勾选框走开关样式，下拉框自带边框。 */
+    private static JComponent styled(JComponent field, UiKit.FontSink sink) {
+        if (field instanceof JTextField) UiKit.styleField((JTextField) field, sink);
+        else if (field instanceof JPasswordField) UiKit.styleField((JPasswordField) field, sink);
+        else if (field instanceof JCheckBox) UiKit.styleSwitch((JCheckBox) field, sink);
+        else if (field instanceof JComboBox) {
+            JComboBox<?> combo = (JComboBox<?>) field;
+            combo.setBackground(java.awt.Color.WHITE);
+            combo.setForeground(UiKit.TEXT);
+            combo.setBorder(BorderFactory.createCompoundBorder(
+                    BorderFactory.createLineBorder(UiKit.FIELD_BORDER),
+                    BorderFactory.createEmptyBorder(4, 8, 4, 8)));
+            sink.track(combo, Font.PLAIN, 14);
+        }
+        return field;
     }
 
     private static JPanel actions(Widgets widgets, UiKit.FontSink sink) {
@@ -146,4 +166,3 @@ public final class ConfigPage {
         return panel;
     }
 }
-

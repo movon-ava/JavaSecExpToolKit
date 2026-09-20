@@ -36,6 +36,8 @@ public final class ProbeCommand {
         public String captureUrl = "";
         public String convertTargets = "";
         public String pastedRequest = "";
+        /** 报告详细度：brief 只给结论与关键判定，detail 附探针明细。 */
+        public String report = "brief";
         public boolean capture = true;
     }
 
@@ -60,6 +62,8 @@ public final class ProbeCommand {
         // 界面直接展示引擎渲染的中文报告，JSON 仍可用 CLI --format json 获取
         command.add("--format");
         command.add("text");
+        command.add("--report");
+        command.add("detail".equalsIgnoreCase(options.report) ? "detail" : "brief");
 
         // 五个模式各自独立执行；detect/version/expect 不带 DNS/CEYE，避免全选时重复探测
         boolean dnsMode = "dns".equals(options.mode);
@@ -111,4 +115,3 @@ public final class ProbeCommand {
         command.add(Platform.commandArg(value.trim()));
     }
 }
-

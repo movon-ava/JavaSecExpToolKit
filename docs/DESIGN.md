@@ -164,7 +164,18 @@ Java 侧在单独执行 `CEYE 确认` 且未发现 Token（配置项或 `CEYE_TO
 
 ### 3.5 结果渲染
 
-`format_report(result, mode)` 按模式选择渲染器，统一输出以下结构：
+`format_report(result, mode, detail=False)` 按模式与**详细度**选择渲染器。详细度由
+`--report brief|detail` 控制，**默认 `brief`**（界面固定使用精简报告）：
+
+- **精简报告（默认）**：每段只给「结论首句 + 关键判定」，不留段间空行。实测五个模式
+  一起跑合计 16 行，正好落在探测页结果区的可视高度内，做到一屏看完。判定字段做同类合并：
+  识别给「是否 Fastjson / 置信度」；版本给「可能版本 + 回显版本 + PoC 档位」一行、
+  「AutoType + SafeMode + 置信度」一行；期望类合并在同一行内；DNS 给「主机 + filter + 命中」。
+  登录拦截单独成行（`login_gate` / `login_gate_with_session_cookie` 两个字段），
+  因为它决定使用者下一步是补 Cookie 还是先登录，不能随结论尾句一起被截掉。
+- **详细报告（`detail=True`）**：完整结构，供排查假阳性使用。
+
+详细报告的结构如下：
 
 1. `===== <模式名> =====` 标题与 `目标:` 行；
 2. `探测结论:` **第一分句**（结论本身），紧随其后一行缩进 10 空格的**原因与建议**
@@ -182,6 +193,9 @@ Java 侧在单独执行 `CEYE 确认` 且未发现 Token（配置项或 `CEYE_TO
 
 错误结果（含 `error` 字段）渲染为单行「探测失败: <error>」。Java 结果区直接展示该报告，
 因此探测页不再出现整行原始 JSON。
+
+抓包 / 转换模式例外：它们本身就是「内容即结果」的功能，**始终按详细方式渲染**，
+否则导出格式与响应体会被精简掉。
 
 **本轮针对「回显内容过多」的两处收敛**
 
@@ -644,12 +658,24 @@ C 运行时会把内层引号当分隔符吃掉。表现为 `{"age":20}` 传到 
 
 - `通用配置`：`python`、`timeout`、`probe_method`
 - `FastJson 配置`：`ceye_domain`、`ceye_token`、`ceye_api`、`dns_wait`、
-  `base_body`、`headers`、`dnslog_host`、`dns_filter`
-   `base_body`、`headers`、`session_cookie`、`dnslog_host`、`dns_filter`
+  `base_body`、`headers`、`session_cookie`、`dnslog_host`、`dns_filter`
+- `探测报告配置`：`probe_report`（`brief` / `detail`，默认 `brief`）
+- `代理配置`：`proxy_bind_host`、`proxy_port`、`proxy_intercept`
+- `抓包转换配置`：`capture_method`、`capture_content_type`、`capture_target`
+- `Shiro 配置`：`shiro_url`、`shiro_cookie_name`、`shiro_key`、`shiro_gcm`、
+  `shiro_echo_header`、`shiro_chain`、`shiro_command`
+
+「可长期保存的配置放进配置页」是硬性要求：代理端口、Shiro 密钥、抓包默认方法这类
+每次都要重填的值都必须有配置项，否则只能写死在代码里。
 
 规则：
 
-- 界面「配置」页保存后回填探测页；Python 引擎也会读取同一文件。
+- 界面「配置」页保存后回填**全部功能页**（探测页 + 代理页 + 抓包页 + Shiro 页），
+  统一下发入口是 `applyConfigToForms()`，启动与保存后各调用一次。
+- 代理启动成功后会通过 `rememberProxyEndpoint()` 把**实际使用的**地址与端口写回
+  `proxy_bind_host` / `proxy_port`，因此配置页里的端口反映真实使用情况而不是摆设；
+  端口框留空时按上次成功监听的端口，其次回落到 8899。
+- Python 引擎也会读取同一文件。
 - 显式命令行参数优先于配置值；探测页 `DNSLog 主机` 在未单独填写时回落到 `ceye_domain`。
 - Token 为明文存储，属于已知限制，需用户自行保护。
 
@@ -667,6 +693,11 @@ C 运行时会把内层引号当分隔符吃掉。表现为 `{"age":20}` 传到 
 - **缩放**：字体与侧边栏宽度按窗口尺寸相对 1440×900 基准等比缩放，限制在 0.85–1.45 倍。
 - **结果区**：只读文本域，自动换行；占位提示为「勾选探测模式，输入授权的 JSON 反序列化接口，
   然后点击"开始探测"」。
+- **探测页布局**：与 Shiro 页一致，采用上下分栏。上栏是字段表单（放在 `JScrollPane`
+  中，窗口偏矮时可滚动）+ **固定在滚动区外**的操作行（`开始探测` 按钮与状态文字），
+  下栏是结果区。按钮若跟着表单一起滚走，界面看起来就像没有执行入口；分栏比例
+  `SPLIT_RATIO = 0.38`（表单占 38%），默认 1280×800 窗口下结果区约 16 行可视，
+  刚够五模式精简报告（16 行）。字段区高度上限 300px，超出部分滚动而不挤占结果区。
 - **探测表单字段自上而下**：`探测模式` → `请求方法` → `目标 URL` → `超时（秒）` →
   `业务参数（期望类）` → `请求头（JSON）` → `DNSLog 主机` → `CEYE Filter` → `DNS 等待（秒）`。
   `请求头（JSON）` 始终可编辑（不随模式勾选联动），留空时不传 `--headers`。
@@ -678,7 +709,8 @@ C 运行时会把内层引号当分隔符吃掉。表现为 `{"age":20}` 传到 
   `一键发送`，`一键发送` 左侧是目标下拉框（`Fastjson 探测` / `Shiro 漏洞利用`），
   结果区右上角提供 `复制结果`。
 - **结果区内容**：由引擎渲染的中文报告（见 3.5），多模式时按
-  `detect → version → expect → dns → ceye` 顺序依次拼接。
+  `detect → version → expect → dns → ceye` 顺序依次拼接。报告自带换行，拼接时只在
+  缺失换行时补一个，避免每两段之间多出一个空行——五模式就白占 4 行，正好把结果区顶出屏幕。
 - **代理页**：第一行是 `监听地址` 输入框（默认本机联网 IP）+ `监听端口` 输入框（默认 8899）
   + `启动代理` / `清空记录` / `转发到抓包转换` 三个按钮 + 状态标签；第二行是
   `拦截请求` 勾选框与 `放行` / `丢弃` 两个按钮（未启动代理或未勾选拦截时禁用）；
@@ -736,11 +768,12 @@ C 运行时会把内层引号当分隔符吃掉。表现为 `{"age":20}` 传到 
 | 传输层回归 | `tests/test_probe.py`（`TransportBlockTest`） | 405 空响应端点：不误判 `is_fastjson`、不推出假版本区间、`has_expect_class` 保持未判定 |
 | 登录拦截回归 | `tests/test_probe.py`（`SessionCookieTest`） | 登录拦截按完整响应体识别并写入 `login_gate`；`detect` / `version` / `expect` 各自的结论前缀；带会话 Cookie 后可解锁真实端点；Cookie 合并不覆盖同名项、支持 `Cookie:` 整行；CLI `--session-cookie` 解析 |
 | 会话 Cookie 端到端 | `tests/UiSwitchEndToEndCheck.java` | 探测页填写会话 Cookie 后经 GUI → CLI 下发；抓包一键发送把会话 Cookie 带到探测页与 Shiro 页 |
-| 渲染契约 | `tests/test_probe.py`（`FormatReportTest`） | `--format text` / `--headers` 参数解析、报告分段与关键字段、错误结果渲染 |
-| 界面自检 | `tests/UiNavigationCheck.java` | 导航五个一级项与代理分类展开/收起、箭头位置、五个模式默认勾选与联动、输入框可用性（含 `请求头（JSON）`）、抓包页一键发送控件、代理页监听地址与拦截控件、Shiro 页控件与利用链选项；输出截图到 `target/ui-check/`（截图在 EDT 内取帧，避免重影） |
+| 渲染契约 | `tests/test_probe.py`（`FormatReportTest`） | `--format text` / `--headers` / `--report` 参数解析、报告分段与关键字段、错误结果渲染、**精简模式每段行数上限（一屏显示契约）**、**登录拦截判定不被精简截断** |
+| 配置页契约 | `tests/UiNavigationCheck.java` | 配置页四个新分组齐备、探测报告详细度 / 代理端口 / 抓包默认项 / Shiro 参数控件存在且默认值正确；自检通过 `user.home` 隔离，不写使用者真实配置 |
+| 界面自检 | `tests/UiNavigationCheck.java` | 导航五个一级项与代理分类展开/收起、箭头位置、五个模式默认勾选与联动、输入框可用性（含 `请求头（JSON）`）、抓包页一键发送控件、代理页监听地址与拦截控件、Shiro 页控件与利用链选项、**配置页四个新分组与新增控件**；输出截图到 `target/ui-check/`（截图在 EDT 内取帧，避免重影） |
 | 探测方法回归 | `tests/test_probe.py`（`ProbeMethodTest`） | 默认 POST、可切换方法、非法方法回落 POST、GET 探针 URL 编码、405 自动换方法、静态页不判成功、报告回显方法 |
 | 代理自检 | `tests/ProxyServerCheck.java` | 明文 HTTP 完整记录（请求行/头/体、状态码、响应头/体）、404、CONNECT 隧道双向透传与字节计数、回调、`find` / `clear`、**拦截改包放行后目标收到改写后的头与体**、**丢弃时不连上游且仍留记录**、**运行中装卸拦截器**（未装载直达上游 → 装载立即生效 → 卸载恢复） |
-| 端到端自检 | `tests/UiSwitchEndToEndCheck.java` | 本机桩服务 → 界面参数 → Python 命令行 → 中文报告；覆盖多模式分段、DNS/CEYE 独立 mode 执行、CEYE 缺 Token 提示、405 端点不产生假阳性，以及「界面启动代理 → 经代理发请求 → 请求包与返回包正确记录」、「指定监听地址启动后回填」、「**先启动代理再勾选拦截**（运行时装卸）」、「勾选拦截后请求停住 → 请求包变为可编辑 → 改包放行 → 目标收到改后的体」、「等待放行期间不被无关请求刷屏」、「排队中的请求随后自动接位且不覆盖上一次的返回包」 |
+| 端到端自检 | `tests/UiSwitchEndToEndCheck.java` | 本机桩服务 → 界面参数 → Python 命令行 → 中文报告；覆盖多模式分段、**默认精简报告不含探针明细 / 阶段小结 / 目标行、切到详细模式后重新给出明细**、DNS/CEYE 独立 mode 执行、CEYE 缺 Token 提示、405 端点不产生假阳性，以及「界面启动代理 → 经代理发请求 → 请求包与返回包正确记录」、「指定监听地址启动后回填」、「**先启动代理再勾选拦截**（运行时装卸）」、「勾选拦截后请求停住 → 请求包变为可编辑 → 改包放行 → 目标收到改后的体」、「等待放行期间不被无关请求刷屏」、「排队中的请求随后自动接位且不覆盖上一次的返回包」 |
 | Shiro 模块自检 | `tests/ShiroCheck.java` | JCE 加解密往返、附加请求头解析（同名合并 / 忽略大小写 / 空行与注释）、**会话 Cookie 与 rememberMe 合并发出且基线请求也带会话 Cookie**、`deleteMe` 指纹识别、字典爆破命中、非法链被拒、CCK1 回显链生成且可由本机密钥解密、CB1/CCK1/CCK2 三条链、回显提取 |
 | Shiro 页面自检 | `tests/UiShiroCheck.java` | Shiro 页控件齐备、桩服务上「一键检测」确认存在 Shiro、界面可生成回显链并输出 Base64、**四个功能各有独立回显框且互不串台**（生成 Payload 不写进指纹检测框、指纹结论仍保留） |
 

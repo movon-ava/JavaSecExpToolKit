@@ -96,6 +96,26 @@ public final class Main {
     private final JTextField configSessionCookie = new JTextField("", 32);
     private final JTextField configDnslogHost = new JTextField("", 32);
     private final JTextField configDnsFilter = new JTextField("", 12);
+    // 代理 / 抓包 / Shiro 的持久化配置：这些功能的默认值同样应能在配置页里长期保存
+    private final JTextField configProxyBindHost = new JTextField("", 24);
+    /** 探测报告详细度：精简只给结论与关键判定，详细才附探针明细。 */
+    private final JComboBox<String> configProbeReport = new JComboBox<String>(
+            new String[]{"精简", "详细"});
+    private final JTextField configProxyPort = new JTextField("8899", 8);
+    private final JCheckBox configProxyIntercept = new JCheckBox("启动代理后默认拦截请求", false);
+    private final JTextField configCaptureContentType = new JTextField("application/json", 24);
+    private final JComboBox<String> configCaptureMethod = new JComboBox<String>(
+            new String[]{"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"});
+    private final JComboBox<String> configCaptureTarget = new JComboBox<String>(
+            new String[]{"json", "curl", "raw", "cookie-json", "cookie-header", "cookie-netscape"});
+    private final JTextField configShiroUrl = new JTextField("", 32);
+    private final JTextField configShiroCookieName = new JTextField("rememberMe", 12);
+    private final JTextField configShiroKey = new JTextField("", 26);
+    private final JCheckBox configShiroGcm = new JCheckBox("AES-GCM（Shiro ≥ 1.4.2）", false);
+    private final JTextField configShiroEchoHeader = new JTextField("", 14);
+    private final JComboBox<shiro.ShiroExploit.ChainKind> configShiroChain =
+            new JComboBox<shiro.ShiroExploit.ChainKind>(shiro.ShiroExploit.ChainKind.values());
+    private final JTextField configShiroCommand = new JTextField("", 22);
     private final JLabel configStatus = new JLabel("配置保存在用户目录下");
     private final JTextArea result = new JTextArea();
     private final JButton detect = new JButton("开始探测");
@@ -208,7 +228,7 @@ public final class Main {
         dnsEnabled.addActionListener(e -> updateStageFieldState());
         ceyeEnabled.addActionListener(e -> updateStageFieldState());
         modeExpect.addActionListener(e -> updateStageFieldState());
-        applyConfigToProbeForm();
+        applyConfigToForms();
         frame.addComponentListener(new ComponentAdapter() {
             @Override public void componentResized(ComponentEvent event) { updateScale(); }
         });
@@ -367,6 +387,23 @@ public final class Main {
     }
 
     /**
+     * 记住最近一次成功监听的地址与端口。
+     *
+     * <p>使用者常会反复调整端口；把它写回同一份配置，下次启动与下次打开配置页都能看到
+     * 实际用过的值——否则配置页里的「代理端口」只是个从不生效的摆设。
+     */
+    private void rememberProxyEndpoint(String host, int port) {
+        if (host == null || host.trim().isEmpty() || port <= 0) return;
+        config.setProperty("proxy_bind_host", host.trim());
+        config.setProperty("proxy_port", String.valueOf(port));
+        try {
+            AppConfig.save(config);
+        } catch (IOException e) {
+            configStatus.setText("代理已启动，但记录监听参数失败：" + e.getMessage());
+        }
+    }
+
+    /**
      * 同步拦截开关到运行中的代理，并决定放行 / 丢弃是否可用。
      *
      * 拦截器必须在这里装卸，而不能只在启动时判断一次：代理先启动、随后才勾选「拦截请求」
@@ -444,6 +481,7 @@ public final class Main {
         lastProxyPort = requested;
         proxyBindHost.setText(server.host());
         proxyPort.setText(String.valueOf(server.port()));
+        rememberProxyEndpoint(server.host(), server.port());
         proxyToggle.setText("停止代理");
         proxyStatus.setText("代理运行中：" + server.displayHost() + ":" + server.port());
         updateProxyInterceptState();
@@ -673,7 +711,34 @@ public final class Main {
                                 new ConfigPage.Row("默认请求头", configHeaders, "JSON 对象，例如 {\"Cookie\":\"JWT=xxx\"}"),
                                 new ConfigPage.Row("会话 Cookie", configSessionCookie, "已登录会话，例如 JWT_TOKEN=x; JSESSIONID=y"),
                                 new ConfigPage.Row("默认 DNSLog 主机", configDnslogHost, "例如 abc.ceye.io"),
-                                new ConfigPage.Row("默认 CEYE Filter", configDnsFilter, "最长 20 字符")})};
+                                new ConfigPage.Row("默认 CEYE Filter", configDnsFilter, "最长 20 字符")}),
+                new ConfigPage.Group("探测报告配置",
+                        "决定探测结果区显示多少内容；想一屏看完选「精简」，排查假阳性时选「详细」。",
+                        new ConfigPage.Row[]{
+                                new ConfigPage.Row("报告详细度", configProbeReport,
+                                        "精简=结论与关键判定；详细=附探针明细与已知限制")}),
+                new ConfigPage.Group("代理配置",
+                        "「代理抓包」的默认监听参数；留空时按本机联网 IP 与 8899 端口启动。",
+                        new ConfigPage.Row[]{
+                                new ConfigPage.Row("默认监听地址", configProxyBindHost, "留空则用本机联网 IP"),
+                                new ConfigPage.Row("默认监听端口", configProxyPort, "1-65535，默认 8899"),
+                                new ConfigPage.Row("启动后默认拦截请求", configProxyIntercept, "等同于代理页勾选「拦截请求」")}),
+                new ConfigPage.Group("抓包转换配置",
+                        "「抓包转换」页的默认请求参数；URL 与请求体每次都不同，故不保存。",
+                        new ConfigPage.Row[]{
+                                new ConfigPage.Row("默认请求方法", configCaptureMethod, "抓包使用的 HTTP 方法"),
+                                new ConfigPage.Row("默认 Content-Type", configCaptureContentType, "例如 application/json"),
+                                new ConfigPage.Row("默认转换目标", configCaptureTarget, "抓包后自动导出的格式")}),
+                new ConfigPage.Group("Shiro 配置",
+                        "「Shiro 漏洞利用」的默认参数；密钥留空则沿用内置常见密钥。",
+                        new ConfigPage.Row[]{
+                                new ConfigPage.Row("默认目标 URL", configShiroUrl, "例如 http://127.0.0.1:8080/"),
+                                new ConfigPage.Row("默认 Cookie 名", configShiroCookieName, "通常为 rememberMe"),
+                                new ConfigPage.Row("默认密钥", configShiroKey, "Base64；留空则用内置密钥"),
+                                new ConfigPage.Row("默认使用 AES-GCM", configShiroGcm, "Shiro ≥ 1.4.2 常用"),
+                                new ConfigPage.Row("默认回显请求头", configShiroEchoHeader, "例如 X-Authorization"),
+                                new ConfigPage.Row("默认利用链", configShiroChain, "回显链的 gadget 前缀"),
+                                new ConfigPage.Row("默认命令", configShiroCommand, "例如 whoami")})};
         widgets.status = configStatus;
         widgets.onSave = this::saveConfigFromForm;
         widgets.onReset = this::resetConfigForm;
@@ -952,8 +1017,11 @@ public final class Main {
             StringBuilder text = new StringBuilder();
             for (String mode : modes) {
                 // 引擎已按模式输出中文报告（含分段标题），这里只负责按固定顺序拼接
-                try { text.append(runProbe(url, probeTimeout, mode)); } catch (Exception e) { text.append("启动探测失败: " + e); }
-                text.append(System.lineSeparator());
+                String segment;
+                try { segment = runProbe(url, probeTimeout, mode); } catch (Exception e) { segment = "启动探测失败: " + e; }
+                text.append(segment);
+                // 报告自带换行；仅在缺失时补一个，避免段间空行挤占结果区
+                if (!segment.endsWith("\n")) text.append(System.lineSeparator());
             }
             final String finalOutput = text.toString();
             SwingUtilities.invokeLater(() -> { result.setText(finalOutput); detect.setEnabled(true); status.setText("探测完成"); });
@@ -1172,6 +1240,7 @@ public final class Main {
         options.baseBody = baseBody.getText().trim();
         options.headers = requestHeaders.getText().trim();
         options.sessionCookie = sessionCookie.getText().trim();
+        options.report = config.getProperty("probe_report", "brief");
         options.dnslogHost = dnslogHost.getText().trim();
         options.dnsWait = dnsWait.getText().trim();
         options.dnsFilter = dnsFilter.getText().trim();
@@ -1195,7 +1264,8 @@ public final class Main {
         }
     }
 
-    private void applyConfigToProbeForm() {
+    /** 启动与保存后统一下发配置：探测页 + 代理 / 抓包转换 / Shiro 页。 */
+    private void applyConfigToForms() {
         timeout.setText(config.getProperty("timeout", "8"));
         String configuredMethod = config.getProperty("probe_method", "POST").trim().toUpperCase();
         for (int index = 0; index < probeMethod.getItemCount(); index++) {
@@ -1210,8 +1280,91 @@ public final class Main {
         sessionCookie.setText(config.getProperty("session_cookie", ""));
         dnslogHost.setText(dnslogHostFromConfig());
         dnsFilter.setText(config.getProperty("dns_filter", ""));
+        applyConfigToToolForms();
         resetConfigForm();
         updateStageFieldState();
+    }
+
+    /**
+     * 把代理 / 抓包转换 / Shiro 的持久化配置应用到对应页面控件。
+     *
+     * <p>这些功能此前只在页面里写死默认值，关掉程序就丢；统一在这里读取，与探测页
+     * 共享同一次「配置 → 界面」的下发时机（启动时与保存后各一次）。
+     */
+    private void applyConfigToToolForms() {
+        String bindHost = config.getProperty("proxy_bind_host", "").trim();
+        if (!bindHost.isEmpty()) proxyBindHost.setText(bindHost);
+        String port = config.getProperty("proxy_port", "").trim();
+        if (!port.isEmpty()) proxyPort.setText(port);
+        proxyIntercept.setSelected(flagFrom(config, "proxy_intercept", false));
+
+        selectOption(captureMethod, config.getProperty("capture_method", "POST"));
+        setComboByValue(configProbeReport, REPORT_VALUES, REPORT_LABELS,
+                config.getProperty("probe_report", "brief"));
+        String contentType = config.getProperty("capture_content_type", "").trim();
+        if (!contentType.isEmpty()) captureContentType.setText(contentType);
+        selectOption(captureTarget, config.getProperty("capture_target", "json"));
+
+        String shiroTarget = config.getProperty("shiro_url", "").trim();
+        if (!shiroTarget.isEmpty()) shiroUrl.setText(shiroTarget);
+        String cookieName = config.getProperty("shiro_cookie_name", "").trim();
+        if (!cookieName.isEmpty()) shiroCookieName.setText(cookieName);
+        String key = config.getProperty("shiro_key", "").trim();
+        if (!key.isEmpty()) shiroKey.setText(key);
+        shiroGcm.setSelected(flagFrom(config, "shiro_gcm", false));
+        String echoHeader = config.getProperty("shiro_echo_header", "").trim();
+        if (!echoHeader.isEmpty()) shiroEchoHeader.setText(echoHeader);
+        selectChain(config.getProperty("shiro_chain", ""));
+        String command = config.getProperty("shiro_command", "").trim();
+        if (!command.isEmpty()) shiroCommand.setText(command);
+    }
+
+    /** 勾选框型配置：只认 true/false，其他值按默认值处理。 */
+    private static boolean flagFrom(Properties values, String key, boolean fallback) {
+        String raw = values.getProperty(key, "").trim().toLowerCase(Locale.ROOT);
+        if (raw.isEmpty()) return fallback;
+        return "true".equals(raw) || "1".equals(raw) || "yes".equals(raw);
+    }
+
+    /** 报告详细度的配置值 / 显示文本，一一对应。 */
+    private static final String[] REPORT_VALUES = {"brief", "detail"};
+    private static final String[] REPORT_LABELS = {"精简", "详细"};
+
+    /** 下拉框按候选项文本选中；配置值不存在时保持原选择。 */
+    private static void selectOption(JComboBox<String> combo, String value) {
+        String wanted = value == null ? "" : value.trim();
+        if (wanted.isEmpty()) return;
+        for (int index = 0; index < combo.getItemCount(); index++) {
+            if (combo.getItemAt(index).equalsIgnoreCase(wanted)) {
+                combo.setSelectedIndex(index);
+                return;
+            }
+        }
+    }
+
+    /** 配置值（英文）与显示文本（中文）分离的下拉框：按下标对应选中。 */
+    private static void setComboByValue(JComboBox<String> combo, String[] values,
+                                        String[] labels, String wanted) {
+        String target = wanted == null ? "" : wanted.trim().toLowerCase(Locale.ROOT);
+        for (int index = 0; index < values.length && index < labels.length; index++) {
+            if (values[index].equals(target)) {
+                combo.setSelectedItem(labels[index]);
+                return;
+            }
+        }
+        combo.setSelectedIndex(0);
+    }
+
+    /** 按枚举名选中利用链；找不到则保持默认。 */
+    private void selectChain(String name) {
+        String wanted = name == null ? "" : name.trim();
+        if (wanted.isEmpty()) return;
+        for (shiro.ShiroExploit.ChainKind kind : shiro.ShiroExploit.ChainKind.values()) {
+            if (kind.name().equalsIgnoreCase(wanted) || kind.label.equals(wanted)) {
+                shiroChain.setSelectedItem(kind);
+                return;
+            }
+        }
     }
 
     /** DNSLog 主机优先取专用配置，未单独填写时回落到 CEYE 域名（两者同为 dnslog 域）。 */
@@ -1252,7 +1405,38 @@ public final class Main {
         configSessionCookie.setText(config.getProperty("session_cookie", ""));
         configDnslogHost.setText(config.getProperty("dnslog_host", ""));
         configDnsFilter.setText(config.getProperty("dns_filter", ""));
+        configProxyBindHost.setText(config.getProperty("proxy_bind_host", ""));
+        configProxyPort.setText(config.getProperty("proxy_port", "8899"));
+        configProxyIntercept.setSelected(flagFrom(config, "proxy_intercept", false));
+        selectOption(configCaptureMethod, config.getProperty("capture_method", "POST"));
+        configCaptureContentType.setText(config.getProperty("capture_content_type", "application/json"));
+        selectOption(configCaptureTarget, config.getProperty("capture_target", "json"));
+        setComboByValue(configProbeReport, REPORT_VALUES, REPORT_LABELS,
+                config.getProperty("probe_report", "brief"));
+        configShiroUrl.setText(config.getProperty("shiro_url", ""));
+        configShiroCookieName.setText(config.getProperty("shiro_cookie_name", "rememberMe"));
+        configShiroKey.setText(config.getProperty("shiro_key", ""));
+        configShiroGcm.setSelected(flagFrom(config, "shiro_gcm", false));
+        configShiroEchoHeader.setText(config.getProperty("shiro_echo_header", ""));
+        selectConfigChain(config.getProperty("shiro_chain", ""));
+        configShiroCommand.setText(config.getProperty("shiro_command", ""));
         configStatus.setText("已载入当前配置");
+    }
+
+    /** 配置页的利用链下拉框按下拉项选中。 */
+    private void selectConfigChain(String name) {
+        String wanted = name == null ? "" : name.trim();
+        if (wanted.isEmpty()) {
+            configShiroChain.setSelectedIndex(0);
+            return;
+        }
+        for (shiro.ShiroExploit.ChainKind kind : shiro.ShiroExploit.ChainKind.values()) {
+            if (kind.name().equalsIgnoreCase(wanted) || kind.label.equals(wanted)) {
+                configShiroChain.setSelectedItem(kind);
+                return;
+            }
+        }
+        configShiroChain.setSelectedIndex(0);
     }
 
     private void saveConfigFromForm() {
@@ -1268,9 +1452,27 @@ public final class Main {
         config.setProperty("session_cookie", configSessionCookie.getText().trim());
         config.setProperty("dnslog_host", configDnslogHost.getText().trim());
         config.setProperty("dns_filter", configDnsFilter.getText().trim());
+        config.setProperty("proxy_bind_host", configProxyBindHost.getText().trim());
+        config.setProperty("proxy_port", Platform.valueOr(configProxyPort.getText(), "8899"));
+        config.setProperty("proxy_intercept", String.valueOf(configProxyIntercept.isSelected()));
+        config.setProperty("capture_method", String.valueOf(configCaptureMethod.getSelectedItem()));
+        config.setProperty("capture_content_type", Platform.valueOr(configCaptureContentType.getText(),
+                "application/json"));
+        config.setProperty("capture_target", String.valueOf(configCaptureTarget.getSelectedItem()));
+        config.setProperty("probe_report",
+                REPORT_VALUES[Math.max(0, configProbeReport.getSelectedIndex())]);
+        config.setProperty("shiro_url", configShiroUrl.getText().trim());
+        config.setProperty("shiro_cookie_name", Platform.valueOr(configShiroCookieName.getText(),
+                shiro.ShiroEngine.REMEMBER_ME));
+        config.setProperty("shiro_key", configShiroKey.getText().trim());
+        config.setProperty("shiro_gcm", String.valueOf(configShiroGcm.isSelected()));
+        config.setProperty("shiro_echo_header", configShiroEchoHeader.getText().trim());
+        Object chain = configShiroChain.getSelectedItem();
+        config.setProperty("shiro_chain", chain == null ? "" : ((shiro.ShiroExploit.ChainKind) chain).name());
+        config.setProperty("shiro_command", configShiroCommand.getText().trim());
         try {
             AppConfig.save(config);
-            applyConfigToProbeForm();
+            applyConfigToForms();
             configStatus.setText("已保存到 " + AppConfig.FILE);
         } catch (IOException e) {
             configStatus.setText("保存失败：" + e.getMessage());

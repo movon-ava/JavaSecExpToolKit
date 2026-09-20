@@ -16,8 +16,16 @@ Fastjson 探测对授权范围内的 HTTP JSON 接口做**无害探测**：发�
 - `dns`（DNS 探针）— 四种无害 DNS 探针（`Inet4Address` / `InetSocketAddress` / URL 键 / `Exception`）
 - `ceye`（CEYE 确认）— 通过 CEYE 接口确认 DNS 记录
 
-每个模式默认输出**中文报告**（`--format text`）：分段标题、目标、探测结论、逐条探针明细
-（状态码与命中特征）、提示、阶段小结与已知限制。需要结构化结果时用 `--format json`。
+每个模式默认输出**中文报告**（`--format text`）。报告详细度由 `--report` 控制：
+
+- `--report brief`（**默认**）— 精简报告：每段只给结论首句与关键判定（是否 Fastjson、
+  可能版本、PoC 档位、AutoType / SafeMode、置信度），不留段间空行。五个模式一起跑
+  合计 16 行，界面结果区一屏就能看完。
+- `--report detail` — 详细报告：额外附上目标、结论尾句（原因与建议）、逐条探针明细
+  （状态码与命中特征）、提示、阶段小结与已知限制，用于排查假阳性。
+
+抓包 / 转换模式始终按详细方式渲染（它们本身就是「内容即结果」）。需要结构化结果时用
+`--format json`，`summary` 等字段与详细度无关，始终完整。
 
 **传输层失败按实际情况说明，而不是猜**：若全部探针都在 HTTP 层被拒绝（例如登录页对任何请求
 都回 `405` + `Allow: GET, HEAD` + 空响应体），且没有任何解析器特征，`detect` 会给出
@@ -123,8 +131,14 @@ Maven 的 POM 位于 Java 工作区（`src/pom.xml`，与源码同级），产�
 - `通用配置` — Python 解释器（在 `FJ_PYTHON` 未设置时生效）、默认超时、默认探测请求方法
 - `FastJson 配置` — CEYE 域名、CEYE Token、CEYE API 地址、默认 DNS 等待、默认业务参数、
   默认请求头、会话 Cookie、默认 DNSLog 主机、默认 CEYE Filter
+- `探测报告配置` — 报告详细度（`精简` / `详细`，默认 `精简`）
+- `代理配置` — 默认监听地址、默认监听端口、启动后是否默认拦截请求
+- `抓包转换配置` — 默认请求方法、默认 Content-Type、默认转换目标
+- `Shiro 配置` — 默认目标 URL、Cookie 名、密钥、AES-GCM、回显请求头、利用链、命令
 
-保存后的值会预填到探测页。Python 引擎读取同一份文件；**显式命令行参数始终优先于**存储值。
+保存后的值会预填到**全部功能页**（探测页 + 代理页 + 抓包页 + Shiro 页）。代理启动后会
+把**实际使用的**地址与端口写回配置，所以配置页里的代理端口反映真实使用情况。
+Python 引擎读取同一份文件；**显式命令行参数始终优先于**存储值。
 
 探测页有 `请求方法` 下拉框（`POST` / `GET` / `PUT` / `PATCH` / `DELETE` / `OPTIONS`，默认 `POST`），
 对应 `--probe-method`；接口只从查询串读 JSON 时用 `GET`。`GET` / `HEAD` 探针会把 payload
@@ -251,6 +265,9 @@ python .\python\fj_probe.py http://127.0.0.1:8080/api/json --mode detect --heade
 
 # 用专用参数下发（与 --headers 合并而不是替换）
 python .\python\fj_probe.py http://127.0.0.1:8080/api/json --mode detect --session-cookie "JWT_TOKEN=x; JSESSIONID=y"
+
+# 完整详细报告（默认是精简报告）
+python .\python\fj_probe.py http://127.0.0.1:8080/api/json --mode detect --report detail
 
 # 保留原始结构化结果，而不是渲染后的报告
 python .\python\fj_probe.py http://127.0.0.1:8080/api/json --mode version --format json

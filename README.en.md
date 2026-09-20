@@ -18,9 +18,20 @@ markers to compare response characteristics, and supports five modes:
 - `dns` — harmless DNS probes (`Inet4Address` / `InetSocketAddress` / `URL` key / `Exception`)
 - `ceye` — confirm DNS records through the CEYE API
 
-Each mode prints a rendered Chinese report by default (`--format text`): section title, target,
-conclusion, per-probe detail with status and matched markers, notes, stage summary, and known
-limitations. Use `--format json` for the raw structured result.
+Each mode prints a rendered Chinese report by default (`--format text`). Report verbosity is
+controlled by `--report`:
+
+- `--report brief` (**default**) — condensed report: the first sentence of the conclusion plus
+  the key verdicts (is it Fastjson, likely version, PoC tier, AutoType / SafeMode, confidence),
+  with no blank separators. All five modes together take 16 lines, so the UI result pane shows
+  them in a single screen.
+- `--report detail` — full report: adds the target, the conclusion's trailing sentences (reason
+  and advice), per-probe detail with status and matched markers, notes, stage summary, and known
+  limitations. Use it when chasing false positives.
+
+Capture and convert always render in detail mode because their content *is* the result. Use
+`--format json` for the raw structured result; fields such as `summary` are always complete
+regardless of verbosity.
 
 Transport-layer failures are reported instead of guessed: if every probe is rejected at the HTTP
 layer (for example a login page answering `405 Allow: GET, HEAD` with an empty body) and no parser
@@ -137,9 +148,15 @@ The `配置` page stores fixed parameters in
 
 - `通用配置` — Python interpreter (overrides `FJ_PYTHON` when that env var is unset), default timeout, default probe request method
 - `FastJson 配置` — CEYE domain, CEYE token, CEYE API endpoint, default DNS wait, default base body, default request headers, session cookie, default DNSLog host, default CEYE filter
+- `探测报告配置` — report verbosity (`精简` / `详细`, default `精简`)
+- `代理配置` — default listen address, default listen port, whether the proxy starts with interception on
+- `抓包转换配置` — default request method, default Content-Type, default convert target
+- `Shiro 配置` — default target URL, cookie name, key, AES-GCM, echo header, gadget chain, command
 
-Saved values pre-fill the probe page. The Python engine reads the same file,
-and explicit CLI arguments always win over stored values.
+Saved values pre-fill **every feature page** (probe, proxy, capture, Shiro). After the proxy
+starts, the address and port actually used are written back into the settings, so the port shown
+on the settings page reflects real usage. The Python engine reads the same file, and explicit
+CLI arguments always win over stored values.
 
 The probe page has a `请求方法` dropdown (`POST` / `GET` / `PUT` / `PATCH` / `DELETE` / `OPTIONS`,
 default `POST`) that passes `--probe-method`; use `GET` for endpoints that only read JSON from the
@@ -280,6 +297,9 @@ python .\python\fj_probe.py http://127.0.0.1:8080/api/json --mode detect --heade
 
 # same thing through the dedicated switch (merges with --headers instead of replacing it)
 python .\python\fj_probe.py http://127.0.0.1:8080/api/json --mode detect --session-cookie "JWT_TOKEN=x; JSESSIONID=y"
+
+# full detail report (the default is the condensed report)
+python .\python\fj_probe.py http://127.0.0.1:8080/api/json --mode detect --report detail
 
 # keep the raw structured result instead of the rendered report
 python .\python\fj_probe.py http://127.0.0.1:8080/api/json --mode version --format json

@@ -901,6 +901,101 @@
 - 端到端验证：从**远端全新克隆**后可正常检出（LFS 落为实体 184569201 字节），
   直接 `build.ps1` 构建成功，产物 **176034** 字节，且与本地产物**逐条目 SHA-256 完全一致**。
 
+## 2026-09-20（配置页补全新增功能配置 + Fastjson 精简报告与一屏显示）
+
+### 一、需求
+
+1. 新增功能的配置没有写进配置页，像代理端口、IP 这类值只能在页面里临时填。
+2. Fastjson 探测结果太多：只需要「是否 Fastjson、可能版本」等关键信息，不要探针明细，
+   最好能一页显示。
+
+### 二、根因分析
+
+- **配置页缺失**：`ConfigPage` 原先只认文本 / 密码输入框，代理、抓包转换、Shiro 三块
+  功能的默认值直接写死在 `Main.java` 的控件初始化里（如 `proxyPort = "8899"`、
+  `shiroKey = "kPH+bIxk5..."`），关掉程序即丢。`applyConfigToProbeForm()` 也只覆盖探测页。
+- **结果过多**：`format_report()` 只有一种详细输出——目标行、结论尾句、逐条探针明细、
+  提示、阶段小结、已知限制全打。五模式一起跑 120 行，远超结果区可视高度。
+- **一屏显示还差一层**：即使报告压到 16 行，探测页结果区实测可视高度仍接近 0，
+  因为 508px 的表单被放在 `BorderLayout.NORTH`，把中间区域挤没了。这是**布局缺陷**，
+  不是报告内容问题，只改报告长度解决不了。
+
+### 三、改动
+
+**1) 配置页补全（`src/ui/ConfigPage.java`、`src/Main.java`）**
+
+- `ConfigPage` 新增勾选框（`UiKit.styleSwitch`）与下拉框样式支持，原先只处理文本框。
+- 新增 4 个分组、14 个持久化键：
+  - `探测报告配置`：`probe_report`
+  - `代理配置`：`proxy_bind_host`、`proxy_port`、`proxy_intercept`
+  - `抓包转换配置`：`capture_method`、`capture_content_type`、`capture_target`
+  - `Shiro 配置`：`shiro_url`、`shiro_cookie_name`、`shiro_key`、`shiro_gcm`、
+    `shiro_echo_header`、`shiro_chain`、`shiro_command`
+- `applyConfigToProbeForm()` 扩展为 `applyConfigToForms()`，启动与保存后统一下发到
+  探测页 + 代理页 + 抓包页 + Shiro 页。
+- 代理启动成功后经 `rememberProxyEndpoint()` 把**实际绑定的**地址与端口写回配置，
+  配置页的端口因此反映真实使用情况。
+- 新增辅助方法：`flagFrom()`、`selectOption()`、`setComboByValue()`、
+  `selectConfigChain()`、`selectChain()`。
+
+**2) 精简报告（`python/fj_probe.py`、`src/probe/ProbeCommand.java`）**
+
+- 新增 `--report brief|detail`，**默认 `brief`**；界面固定走精简。
+- 新增 `_brief_conclusion()`（只取结论首句）、`_brief_method_line()`（默认 POST 不占行）、
+  `_brief_flag()`（三态布尔）、`BRIEF_RENDERERS` 渲染表。
+- 精简模式不留段间空行；判定字段做同类合并（版本三项一行、AutoType+SafeMode+置信度一行）。
+- 新增 `_brief_login_gate_line()`：登录拦截单独成行。这条判定原本只在结论尾句里，
+  精简后会被截掉，但它决定使用者下一步是补 Cookie 还是先登录，因此提升为独立行，
+  并在结果 JSON 里新增 `login_gate_with_session_cookie` 字段。
+- 抓包 / 转换模式强制保持详细（内容即结果）。
+
+**3) 一屏显示（`src/ui/ProbePage.java`、`src/Main.java`）**
+
+- 探测页照 `ShiroPage` 的做法改为上下分栏：上栏是表单滚动区 + **固定在滚动区外**的
+  操作行，下栏是结果区；`SPLIT_RATIO = 0.38`，表单首选高度 300px、下限 120px。
+  按钮不能跟着表单滚走，否则界面看起来像没有执行入口。
+- 多模式拼接报告时只在缺失换行时补一个，去掉原先每两段之间多出的空行（五模式白占 4 行）。
+
+**4) 测试隔离（`tests/UiNavigationCheck.java` 等三个 UI 自检）**
+
+- 自检会把 `user.home` 指向临时目录再加载 `Main`。修改前自检启动代理会把测试用的
+  **随机端口**写进使用者真实的 `config.properties`，属于真实缺陷。
+- 已清理被写入的 `proxy_port` / `proxy_bind_host`（原文件备份
+  `%USERPROFILE%\.JavaSecExpToolKit\config.properties.bak-20260919`）。
+
+### 四、验证
+
+| 检查点 | 结果 |
+| --- | --- |
+| Python 测试 | `Ran 74 tests ... OK`（新增 2 项：每段行数上限、登录拦截判定不被截断） |
+| Java 编译 | `javac` 退出码 0（主源码 + 测试类） |
+| `ProxyServerCheck` | 代理自检通过 |
+| `ShiroCheck` | Shiro 模块自检通过 |
+| `UiNavigationCheck` | 全部界面自检通过（新增 21 条配置页断言） |
+| `UiShiroCheck` | Shiro 界面自检通过 |
+| `UiSwitchEndToEndCheck` | 端到端自检通过（含精简 / 详细报告对比断言） |
+| 精简报告行数 | 五模式合计 **16 行**（detect 3 / version 4 / expect 3 / dns 3 / ceye 3） |
+| 详细报告行数 | 五模式合计 120 行（对比保留） |
+| 结果区可视行数 | 默认 1280×800 窗口下 **16 行**（改造前为 0 行） |
+| JAR 构建 | `2026-09-20 10:24:17`，`181933` bytes，晚于全部 `src` / `python` 源文件 |
+| 备份 | `.backups/20260919-205153`（本轮改动前快照） |
+
+### 五、涉及文件
+
+| 文件 | 说明 |
+| --- | --- |
+| `src/Main.java` | 配置页新增 4 组控件与新键读写、代理端口回写、多模式拼接去空行 |
+| `src/ui/ConfigPage.java` | 勾选框与下拉框样式支持 |
+| `src/ui/ProbePage.java` | 表单滚动 + 上下分栏 + 固定操作行 |
+| `src/probe/ProbeCommand.java` | `Options.report` 与 `--report` 参数下发 |
+| `python/fj_probe.py` | `--report` 开关、精简渲染器、登录拦截独立行 |
+| `tests/test_probe.py` | 精简契约断言（行数上限、结论首句、登录拦截） |
+| `tests/UiNavigationCheck.java` | 配置页分组与控件断言、`user.home` 隔离 |
+| `tests/UiSwitchEndToEndCheck.java` | 精简 / 详细模式对比断言、`user.home` 隔离 |
+| `tests/UiShiroCheck.java` | `user.home` 隔离 |
+| `README.md` / `README.en.md` | `--report` 说明、配置页新分组、代理端口回写 |
+| `docs/DESIGN.md` | 3.5 报告详细度、配置章节、界面章节布局说明 |
+
 ## 当前限制
 
 - **Fastjson 探测**仍只做识别：版本区间存在 `1.2.70-1.2.72` 与 `1.2.73-1.2.80` 无法细分的

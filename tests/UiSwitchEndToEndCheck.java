@@ -24,6 +24,12 @@ import javax.swing.JTextField;
 public final class UiSwitchEndToEndCheck {
 
     public static void main(String[] args) throws Exception {
+        // 自检会真实写配置（启动代理会记住监听端口、保存探测报告详细度）：
+        // 先把 user.home 指向临时目录，避免污染使用者真实的 config.properties。
+        java.io.File isolatedHome = java.nio.file.Files.createTempDirectory("javasec-ui-check").toFile();
+        isolatedHome.deleteOnExit();
+        System.setProperty("user.home", isolatedHome.getAbsolutePath());
+
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/api", new FastjsonLikeHandler());
         server.createContext("/loginpage", new MethodNotAllowedHandler());
@@ -47,10 +53,23 @@ public final class UiSwitchEndToEndCheck {
             check("识别模式输出可读文本报告",
                     detectOnly.contains("===== Fastjson 识别 =====") && detectOnly.contains("探测结论:"));
             check("识别模式判定命中 Fastjson",
-                    detectOnly.contains("是否 Fastjson: 是") && detectOnly.contains("指纹得分: fastjson="));
-            check("识别模式不再附带 DNS/CEYE 阶段",
-                    detectOnly.contains("阶段: DNS 探针 未执行 / CEYE 确认 未执行"));
-            check("结果区中文未乱码", detectOnly.contains("探针明细:") && !detectOnly.contains("\ufffd"));
+                    detectOnly.contains("是否 Fastjson: 是") && detectOnly.contains("置信度:"));
+            // 默认精简报告：只给结论与关键判定，多模式一起跑也能一屏看完
+            check("默认精简报告不含探针明细", !detectOnly.contains("探针明细:"));
+            check("默认精简报告不含阶段小结", !detectOnly.contains("阶段:"));
+            check("默认精简报告不含目标行", !detectOnly.contains("目标: " + url));
+            check("结果区中文未乱码", !detectOnly.contains("\ufffd"));
+
+            // 配置页的「报告详细度」切到详细后，同一目标应重新给出探针明细
+            setConfigProperty(main, "probe_report", "detail");
+            String detailed = runProbe(main, url, "detect");
+            System.out.println("详细报告行数 -> " + detailed.split("\\R").length);
+            check("详细报告含探针明细",
+                    detailed.contains("探针明细:") && detailed.contains("指纹得分: fastjson="));
+            check("详细报告含阶段小结",
+                    detailed.contains("阶段: DNS 探针 未执行 / CEYE 确认 未执行"));
+            check("详细报告含目标行", detailed.contains("目标: " + url));
+            setConfigProperty(main, "probe_report", "brief");
 
             // 独立模式：DNS 探针与 CEYE 确认可单独执行，与其他模式同等对待
             setSelected(main, "dnsEnabled", true);
@@ -96,7 +115,7 @@ public final class UiSwitchEndToEndCheck {
             String blockedVersion = runProbe(main, blockedUrl, "version");
             System.out.println("405 端点版本 -> " + conclusion(blockedVersion));
             check("405 端点版本未能收敛而非给出假区间",
-                    blockedVersion.contains("版本未能收敛") && blockedVersion.contains("布尔探针区间: 未能收敛"));
+                    blockedVersion.contains("版本未能收敛") && blockedVersion.contains("可能版本: 未能收敛"));
             check("405 端点不再出现假版本区间", !blockedVersion.contains("1.2.70-1.2.80"));
 
             // 登录拦截：靶场未登录时把请求 forward 到登录页，POST 只拿到 405 空响应、
@@ -359,6 +378,14 @@ public final class UiSwitchEndToEndCheck {
     /** Python 子进程句柄回收需要时间，脚本退出前留出缓冲时间。 */
     private static void awaitCleanup() throws Exception {
         Thread.sleep(200);
+    }
+
+    /** 直接改配置对象里的值，模拟配置页保存后的效果（不落盘，避免污染使用者的配置）。 */
+    private static void setConfigProperty(Object main, String key, String value) throws Exception {
+        Field field = main.getClass().getDeclaredField("config");
+        field.setAccessible(true);
+        java.util.Properties properties = (java.util.Properties) field.get(main);
+        properties.setProperty(key, value);
     }
 
     private static String runProbe(Object main, String url, String mode) throws Exception {

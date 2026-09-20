@@ -32,6 +32,12 @@ public final class UiShiroCheck {
     private static final String GOOD_KEY = "kPH+bIxk5D2deZiIxcaaaA==";
 
     public static void main(String[] args) throws Exception {
+        // 自检会真实写配置（启动代理会记住监听端口、保存探测报告详细度）：
+        // 先把 user.home 指向临时目录，避免污染使用者真实的 config.properties。
+        java.io.File isolatedHome = java.nio.file.Files.createTempDirectory("javasec-ui-check").toFile();
+        isolatedHome.deleteOnExit();
+        System.setProperty("user.home", isolatedHome.getAbsolutePath());
+
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/", new MockShiroHandler());
         server.start();

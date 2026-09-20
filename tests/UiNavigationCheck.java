@@ -23,6 +23,12 @@ import javax.swing.JTextField;
 public final class UiNavigationCheck {
 
     public static void main(String[] args) throws Exception {
+        // 自检会真实写配置（启动代理会记住监听端口、保存探测报告详细度）：
+        // 先把 user.home 指向临时目录，避免污染使用者真实的 config.properties。
+        java.io.File isolatedHome = java.nio.file.Files.createTempDirectory("javasec-ui-check").toFile();
+        isolatedHome.deleteOnExit();
+        System.setProperty("user.home", isolatedHome.getAbsolutePath());
+
         final Object main = newMain();
         final JFrame frame = (JFrame) field(main, "frame");
         onEdt(new Runnable() {
@@ -125,6 +131,32 @@ public final class UiNavigationCheck {
         select(main, "config");
         check("跳转配置页不回落到主页", !contentLabels(main).contains("安全测试工具箱"));
         check("配置页含默认请求头输入框", fieldQuiet(main, "configHeaders") instanceof JTextField);
+        // 配置页要把各功能可长期保存的参数都收进来，否则代理端口、Shiro 密钥这类
+        // 每次都要重填的默认值只能写在代码里。
+        List<String> configTexts = contentLabels(main);
+        System.out.println("配置页分组: " + configTexts);
+        check("配置页含探测报告配置分组", configTexts.contains("探测报告配置"));
+        check("配置页含代理配置分组", configTexts.contains("代理配置"));
+        check("配置页含抓包转换配置分组", configTexts.contains("抓包转换配置"));
+        check("配置页含 Shiro 配置分组", configTexts.contains("Shiro 配置"));
+        check("配置页含报告详细度下拉框", fieldQuiet(main, "configProbeReport") instanceof JComboBox);
+        check("报告详细度默认精简",
+                "精简".equals(String.valueOf(((JComboBox<?>) fieldQuiet(main, "configProbeReport")).getSelectedItem())));
+        check("配置页含代理监听地址输入框", fieldQuiet(main, "configProxyBindHost") instanceof JTextField);
+        check("配置页含代理监听端口输入框", fieldQuiet(main, "configProxyPort") instanceof JTextField);
+        check("代理监听端口默认为 8899", "8899".equals(((JTextField) fieldQuiet(main, "configProxyPort")).getText()));
+        check("配置页含代理拦截勾选框", fieldQuiet(main, "configProxyIntercept") instanceof AbstractButton);
+        check("配置页含抓包默认方法下拉框", fieldQuiet(main, "configCaptureMethod") instanceof JComboBox);
+        check("配置页含抓包默认 Content-Type 输入框",
+                fieldQuiet(main, "configCaptureContentType") instanceof JTextField);
+        check("配置页含抓包默认转换目标下拉框", fieldQuiet(main, "configCaptureTarget") instanceof JComboBox);
+        check("配置页含 Shiro 目标 URL 输入框", fieldQuiet(main, "configShiroUrl") instanceof JTextField);
+        check("配置页含 Shiro Cookie 名输入框", fieldQuiet(main, "configShiroCookieName") instanceof JTextField);
+        check("配置页含 Shiro 密钥输入框", fieldQuiet(main, "configShiroKey") instanceof JTextField);
+        check("配置页含 Shiro GCM 勾选框", fieldQuiet(main, "configShiroGcm") instanceof AbstractButton);
+        check("配置页含 Shiro 回显请求头输入框", fieldQuiet(main, "configShiroEchoHeader") instanceof JTextField);
+        check("配置页含 Shiro 利用链下拉框", fieldQuiet(main, "configShiroChain") instanceof JComboBox);
+        check("配置页含 Shiro 命令输入框", fieldQuiet(main, "configShiroCommand") instanceof JTextField);
         snapshot(frame, "target/ui-check/03-config.png");
 
         select(main, "capture");

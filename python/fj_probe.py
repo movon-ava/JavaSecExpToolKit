@@ -568,11 +568,14 @@ def _annotate_login_gate(ctx: dict, result: dict) -> dict:
     evidence = result.get("evidence") or []
     if any((item.get("matched") or []) for item in evidence):
         return result
-    reason = _detect_login_gate(ctx, bool(ctx["extras"].get("session_cookie")))
+    used_session_cookie = bool(ctx["extras"].get("session_cookie"))
+    reason = _detect_login_gate(ctx, used_session_cookie)
     if not reason:
         return result
     prefix = _LOGIN_GATE_PREFIXES.get(result.get("mode", "detect"), "无法探测：")
     result["login_gate"] = True
+    # 独立字段：精简报告只保留结论首句，这条判定改成单独一行才不会丢
+    result["login_gate_with_session_cookie"] = used_session_cookie
     result["summary"] = "{0}{1}".format(prefix, reason)
     result["notes"] = ["登录拦截：{0}".format(reason), LOGIN_GATE_HINT]
     return result
@@ -2306,6 +2309,130 @@ RENDERERS = {
 }
 
 
+def _brief_conclusion(text: str) -> str:
+    """精简报告只保留结论的第一句。
+
+    建议性尾句（「请确认 URL」）与阶段记账（「附加步骤：已跳过…」）是排查时的上下文，
+    放在详细报告里即可；精简模式把结论压到一行，五个模式一起跑才看得完。
+    """
+    head, _ = _split_conclusion(text)
+    return head
+
+
+def _brief_method_line(result: dict) -> str:
+    """精简报告里只在请求方法非默认值时提示一行。
+
+    POST 是默认方法，每段报告都重复「探测方法: POST」纯属噪音；真正需要提示的是
+    自动换方法或人工指定成 GET/PUT 的情况。
+    """
+    method = (result.get("request_method") or "POST").strip().upper()
+    return "" if method == "POST" else "探测方法: {0}".format(method)
+
+
+def _brief_login_gate_line(result: dict) -> str:
+    """登录拦截提示：精简报告里单独成行，不被结论首句截断。"""
+    if not result.get("login_gate"):
+        return ""
+    if result.get("login_gate_with_session_cookie"):
+        return "登录拦截: 已携带会话 Cookie 仍被拦截，Cookie 可能已过期或权限不足"
+    return "登录拦截: 目标存在登录拦截，请先登录并携带会话 Cookie 后重试"
+
+
+def _brief_detect(result: dict) -> List[str]:
+    lines = ["探测结论: {0}".format(_brief_conclusion(result.get("summary", "")))]
+    method = _brief_method_line(result)
+    if method:
+        lines.append(method)
+    gate = _brief_login_gate_line(result)
+    if gate:
+        lines.append(gate)
+    lines.append(
+        "是否 Fastjson: {0}    置信度: {1}".format(
+            "是" if result.get("is_fastjson") else "否", result.get("confidence")
+        )
+    )
+    return lines
+
+
+def _brief_flag(value: Optional[bool], yes: str, no: str) -> str:
+    """三态布尔渲染：None 表示该探针未跑或不足以判定。"""
+    if value is None:
+        return "未判定"
+    return yes if value else no
+
+
+def _brief_version(result: dict) -> List[str]:
+    autotype = result.get("autotype_enabled")
+    autotype_text = "未判定" if autotype is None else ("开启" if autotype else "关闭")
+    safemode = result.get("safemode_enabled")
+    safemode_text = "未判定" if safemode is None else ("已启用" if safemode else "未启用")
+    # 两行覆盖关键判定：版本类信息一行，配置与置信度一行
+    lines = ["探测结论: {0}".format(_brief_conclusion(result.get("summary", "")))]
+    gate = _brief_login_gate_line(result)
+    if gate:
+        lines.append(gate)
+    lines.extend([
+        "可能版本: {0}    回显版本: {1}    PoC 档位: {2}".format(
+            result.get("version_detail") or "未能收敛",
+            result.get("reported_version") or "未回显",
+            result.get("version_range") or "未能收敛",
+        ),
+        "AutoType: {0}    SafeMode: {1}    置信度: {2}".format(
+            autotype_text, safemode_text, result.get("confidence")
+        ),
+    ])
+    return lines
+
+
+def _brief_expect(result: dict) -> List[str]:
+    has_expect = result.get("has_expect_class")
+    not_map = result.get("expect_not_map")
+    lines = ["探测结论: {0}".format(_brief_conclusion(result.get("summary", "")))]
+    method = _brief_method_line(result)
+    if method:
+        lines.append(method)
+    hint = "；版本倾向 <1.2.68（Feature 类不存在）" if result.get("version_lt_1_2_68_hint") else ""
+    lines.append(
+        "是否存在期望类: {0}    期望类型非 Map: {1}    置信度: {2}{3}".format(
+            _brief_flag(has_expect, "存在", "不存在"),
+            _brief_flag(not_map, "是", "否"),
+            result.get("confidence"),
+            hint,
+        )
+    )
+    return lines
+
+
+def _brief_dns(result: dict) -> List[str]:
+    hits = result.get("dns_hits") or {}
+    return [
+        "探测结论: {0}".format(_brief_conclusion(result.get("summary", ""))),
+        "DNSLog 主机: {0}    filter: {1}    命中: {2}".format(
+            result.get("dnslog_host") or "未填写",
+            result.get("dns_filter") or "-",
+            "、".join(k for k, v in hits.items() if v) or "无",
+        ),
+    ]
+
+
+def _brief_ceye(result: dict) -> List[str]:
+    return [
+        "探测结论: {0}".format(_brief_conclusion(result.get("summary", ""))),
+        "确认命中: {0}    记录条数: {1}".format(
+            "是" if result.get("confirmed") else "否", result.get("count", 0)
+        ),
+    ]
+
+
+BRIEF_RENDERERS = {
+    "detect": _brief_detect,
+    "version": _brief_version,
+    "expect": _brief_expect,
+    "dns": _brief_dns,
+    "ceye": _brief_ceye,
+}
+
+
 def _split_conclusion(text: str) -> Tuple[str, str]:
     """把「结论 + 原因 + 建议」拼成的长句拆成两段。
 
@@ -2373,16 +2500,30 @@ def _dedupe_notes(notes: Sequence[str], summary: str) -> List[str]:
     return kept
 
 
-def format_report(result: dict, mode: str = "") -> str:
-    """把结果 JSON 渲染成便于人工阅读的中文报告（界面默认使用）。"""
+def format_report(result: dict, mode: str = "", detail: bool = False) -> str:
+    """把结果 JSON 渲染成便于人工阅读的中文报告（界面默认使用）。
+
+    默认输出**精简报告**：每段只保留结论首句与关键判定字段（是否 Fastjson、可能版本、
+    AutoType 等），让一次多模式探测能在**一屏内**看完。``detail=True`` 才附上目标、
+    结论尾句、探针明细、阶段小结与已知限制，供排查假阳性时使用。
+
+    抓包 / 转换模式例外：它们本身就是「内容即结果」的功能，始终按详细方式渲染，
+    否则导出格式与响应体会被精简掉。
+    """
     if result.get("error"):
         return "探测失败: {0}".format(result["error"])
     key = (mode or result.get("mode") or "detect").strip().lower()
-    renderer = RENDERERS.get(key, _render_detect)
+    if key in ("capture", "convert"):
+        detail = True
     title = MODE_TITLES.get(key, key)
-    lines = ["===== {0} =====".format(title), "目标: {0}".format(result.get("target", ""))]
+    lines = ["===== {0} =====".format(title)]
+    if not detail:
+        # 精简报告不留段间空行，行数省给判定字段
+        return "\n".join(lines + BRIEF_RENDERERS.get(key, _brief_detect)(result))
+    # 以下是详细报告：目标、结论（含尾句）、提示、阶段与已知限制
+    lines.append("目标: {0}".format(result.get("target", "")))
     lines.append("")
-    lines.extend(_wrap_conclusion(renderer(result)))
+    lines.extend(_wrap_conclusion(RENDERERS.get(key, _render_detect)(result)))
     notes = _dedupe_notes(result.get("notes") or [], result.get("summary", ""))
     if notes:
         lines.append("")
@@ -2455,6 +2596,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="输出格式：json 供程序读取，text 为人工阅读报告",
     )
     parser.add_argument(
+        "--report",
+        default="brief",
+        choices=("brief", "detail"),
+        help="text 报告的详细程度：brief 只给结论与关键判定，detail 附探针明细与已知限制",
+    )
+    parser.add_argument(
         "--dns",
         dest="dns_enabled",
         action="store_true",
@@ -2512,7 +2659,7 @@ def _main() -> int:
             extras=extras,
         )
         if args.format == "text":
-            print(format_report(result, args.mode))
+            print(format_report(result, args.mode, args.report == "detail"))
         else:
             print(json.dumps(result, ensure_ascii=False))
         return 0

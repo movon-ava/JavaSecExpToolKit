@@ -570,7 +570,7 @@ class ReportReadabilityTest(unittest.TestCase):
         }
 
     def test_empty_response_is_not_repeated_per_probe(self):
-        report = fj_probe.format_report(self._detect_result(), "detect")
+        report = fj_probe.format_report(self._detect_result(), "detect", detail=True)
         self.assertNotIn("（空响应）", report)
         # 每条探针仍要有一行结论（否则使用者无法确认探针真的跑过）
         self.assertIn("标准 JSON", report)
@@ -579,20 +579,102 @@ class ReportReadabilityTest(unittest.TestCase):
     def test_failure_excerpt_is_still_shown(self):
         result = self._detect_result()
         result["evidence"][0]["response_excerpt"] = "com.alibaba.fastjson.JSONException: syntax error"
-        report = fj_probe.format_report(result, "detect")
+        report = fj_probe.format_report(result, "detect", detail=True)
         self.assertIn("syntax error", report)
 
-    def test_conclusion_is_split_into_two_segments(self):
-        report = fj_probe.format_report(self._detect_result(), "detect")
-        conclusion = [line for line in report.splitlines() if line.startswith("探测结论:")][0]
-        # 结论行只保留第一个分句，原因与建议另起一行缩进
-        self.assertNotIn("请确认 URL", conclusion)
-        self.assertIn("请确认 URL", report)
+    def test_brief_conclusion_keeps_only_first_segment(self):
+        """精简模式把结论压到一行，建议性尾句留给详细模式。"""
+        brief = fj_probe.format_report(self._detect_result(), "detect")
+        conclusion = [line for line in brief.splitlines() if line.startswith("探测结论:")][0]
+        self.assertIn("未观察到任何 JSON 解析器特征", conclusion)
+        self.assertNotIn("请确认 URL", brief)
+
+        detailed = fj_probe.format_report(self._detect_result(), "detect", detail=True)
+        detailed_conclusion = [
+            line for line in detailed.splitlines() if line.startswith("探测结论:")
+        ][0]
+        # 详细模式仍按分句拆行：结论一行，原因与建议缩进另起一行
+        self.assertNotIn("请确认 URL", detailed_conclusion)
+        self.assertIn("请确认 URL", detailed)
+
+    def test_brief_report_keeps_every_mode_within_four_lines(self):
+        """一屏显示的关键是行数：五模式精简报告每段最多 4 行。
+
+        结果区在默认窗口下约 16 行，五个模式一起跑必须装得下，因此这里把上限
+        写成断言，避免后续往精简渲染器里悄悄加行。
+        """
+        cases = {
+            "detect": {
+                "mode": "detect",
+                "summary": "响应包含 Fastjson 特征",
+                "is_fastjson": True,
+                "confidence": 0.9,
+            },
+            "version": {
+                "mode": "version",
+                "summary": "布尔探针区间 1.2.70-1.2.80",
+                "version_detail": "1.2.70-1.2.80",
+                "version_range": "<=1.2.80",
+                "reported_version": None,
+                "autotype_enabled": None,
+                "safemode_enabled": True,
+                "confidence": 0.8,
+            },
+            "expect": {
+                "mode": "expect",
+                "summary": "判定不存在期望类（或期望为 Map）",
+                "has_expect_class": False,
+                "expect_not_map": False,
+                "confidence": 0.8,
+            },
+            "dns": {
+                "mode": "dns",
+                "summary": "DNS 探针已跳过（开关关闭）",
+                "dnslog_host": "abc.ceye.io",
+                "dns_hits": {},
+            },
+            "ceye": {
+                "mode": "ceye",
+                "summary": "CEYE 确认已跳过（开关关闭）",
+                "confirmed": False,
+                "count": 0,
+            },
+        }
+        total = 0
+        for mode, result in cases.items():
+            report = fj_probe.format_report(result, mode)
+            lines = report.splitlines()
+            total += len(lines)
+            self.assertLessEqual(len(lines), 4, "{0} 精简报告超出行数上限: {1}".format(mode, lines))
+            self.assertTrue(lines[0].startswith("===== "), "{0} 缺少分段标题".format(mode))
+        self.assertLessEqual(total, 20, "五模式合计行数过多: {0}".format(total))
+
+    def test_brief_report_keeps_login_gate_verdict(self):
+        """登录拦截判定不能因精简而被丢掉：它决定使用者下一步补 Cookie 还是先登录。"""
+        result = {
+            "mode": "detect",
+            "summary": "无法探测：目标返回登录页（命中特征：请先登录）；已携带会话 Cookie 仍被拦截",
+            "is_fastjson": False,
+            "confidence": 0.0,
+            "login_gate": True,
+            "login_gate_with_session_cookie": True,
+        }
+        brief = fj_probe.format_report(result, "detect")
+        self.assertIn("已携带会话 Cookie 仍被拦截", brief)
+        self.assertIn("登录拦截:", brief)
+
+        result["login_gate_with_session_cookie"] = False
+        self.assertIn("请先登录并携带会话 Cookie", fj_probe.format_report(result, "detect"))
+
+        # 未触发登录拦截时不应出现这一行
+        clean = {"mode": "detect", "summary": "响应包含 Fastjson 特征", "is_fastjson": True,
+                 "confidence": 0.9}
+        self.assertNotIn("登录拦截:", fj_probe.format_report(clean, "detect"))
 
     def test_notes_duplicated_in_summary_are_not_repeated(self):
         result = self._detect_result()
         result["notes"] = [result["summary"][:20] + "（重复）"]
-        report = fj_probe.format_report(result, "detect")
+        report = fj_probe.format_report(result, "detect", detail=True)
         self.assertNotIn("提示:", report)
 
     def test_notes_with_different_label_but_same_body_are_not_repeated(self):
@@ -605,7 +687,7 @@ class ReportReadabilityTest(unittest.TestCase):
         result = self._detect_result()
         body = result["summary"].split("：", 1)[1][:20]
         result["notes"] = ["探测未生效：" + body]
-        report = fj_probe.format_report(result, "detect")
+        report = fj_probe.format_report(result, "detect", detail=True)
         self.assertNotIn("提示:", report)
 
     def test_strip_label_keeps_body_without_label(self):
@@ -621,7 +703,7 @@ class ReportReadabilityTest(unittest.TestCase):
             "结果是远程响应指纹，不等同于漏洞确认。",
             "仅适用于已获授权的测试目标。",
         ]
-        report = fj_probe.format_report(result, "detect")
+        report = fj_probe.format_report(result, "detect", detail=True)
         limitation_lines = [
             line for line in report.splitlines()[report.splitlines().index("已知限制:") + 1:]
         ]
@@ -635,6 +717,10 @@ class FormatReportTest(unittest.TestCase):
         parser = fj_probe._build_parser()
         default_args = parser.parse_args(["http://127.0.0.1:1/api"])
         self.assertEqual(default_args.format, "json")
+        # 报告详细程度默认精简，避免多模式探测铺满结果区
+        self.assertEqual(default_args.report, "brief")
+        detail_args = parser.parse_args(["http://127.0.0.1:1/api", "--report", "detail"])
+        self.assertEqual(detail_args.report, "detail")
         text_args = parser.parse_args(
             ["http://127.0.0.1:1/api", "--format", "text",
              "--headers", '{"Cookie":"JWT=abc"}']
@@ -655,9 +741,15 @@ class FormatReportTest(unittest.TestCase):
         }
         report = fj_probe.format_report(detect, "detect")
         self.assertIn("===== Fastjson 识别 =====", report)
-        self.assertIn("目标: http://127.0.0.1:1/api", report)
         self.assertIn("是否 Fastjson: 是", report)
         self.assertNotIn("\ufffd", report)
+        # 默认是精简报告：只给结论与关键判定，不出现探针明细与目标行
+        self.assertNotIn("探针明细:", report)
+        self.assertNotIn("目标: http://127.0.0.1:1/api", report)
+        # 明确要求 detail 时才展开
+        detailed = fj_probe.format_report(detect, "detect", detail=True)
+        self.assertIn("目标: http://127.0.0.1:1/api", detailed)
+        self.assertIn("探针明细:", detailed)
 
     def test_format_report_renders_error_and_version(self):
         report = fj_probe.format_report({"error": "ValueError: 缺少 Token"}, "ceye")
@@ -679,7 +771,10 @@ class FormatReportTest(unittest.TestCase):
         text = fj_probe.format_report(version, "version")
         self.assertIn("===== 版本识别 =====", text)
         self.assertIn("回显版本: 未回显", text)
-        self.assertIn("布尔探针区间: 未能收敛", text)
+        self.assertIn("可能版本: 未能收敛", text)
+        detailed = fj_probe.format_report(version, "version", detail=True)
+        self.assertIn("布尔探针区间: 未能收敛", detailed)
+        self.assertIn("探针明细:", detailed)
 
 
 class PostOnlyJsonHandler(BaseHTTPRequestHandler):
@@ -877,8 +972,28 @@ class ProbeMethodTest(unittest.TestCase):
 
     def test_text_report_shows_method(self):
         result = run(self.post_url, "detect", 5.0)
-        report = fj_probe.format_report(result, "detect")
-        self.assertIn("探测方法: POST", report)
+        # 精简报告省略默认方法（POST）这一行，只在非默认方法时提示
+        brief = fj_probe.format_report(result, "detect")
+        self.assertNotIn("探测方法: POST", brief)
+        self.assertIn("是否 Fastjson:", brief)
+        # 明细报告仍然保留方法行
+        detailed = fj_probe.format_report(result, "detect", detail=True)
+        self.assertIn("探测方法: POST", detailed)
+
+    def test_brief_report_shows_non_default_method(self):
+        # 自动换方法后 request_method 会回落成实际成功的方法，因此这里直接构造
+        # 「最终确实用 GET 探测」的结果，验证精简报告在非默认方法时才提示这一行
+        result = {
+            "mode": "detect",
+            "target": "http://127.0.0.1:1/api",
+            "request_method": "GET",
+            "is_fastjson": True,
+            "confidence": 0.9,
+            "summary": "响应包含 Fastjson 特征",
+        }
+        self.assertIn("探测方法: GET", fj_probe.format_report(result, "detect"))
+        result["request_method"] = "POST"
+        self.assertNotIn("探测方法:", fj_probe.format_report(result, "detect"))
 
     def test_get_payload_is_url_encoded(self):
         """GET 探测要把 JSON 转义后放进查询串，否则请求行含空格会直接抛 InvalidURL。"""

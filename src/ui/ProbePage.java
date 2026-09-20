@@ -15,8 +15,11 @@ import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.JScrollPane;
+import javax.swing.JSplitPane;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
+import javax.swing.SwingUtilities;
 
 /**
  * Fastjson 探测页：五个探测模式的参数表单与结果区。
@@ -49,6 +52,17 @@ public final class ProbePage {
         public Runnable onModeChanged;
     }
 
+    /** 表单区高度：表单可滚动，超出部分不挤占结果区。 */
+    private static final int FORM_HEIGHT = 300;
+    private static final int FORM_MIN_HEIGHT = 120;
+    /**
+     * 上下分栏比例：表单区占 38%（默认窗口下结果区约 17 行，刚够五模式精简报告）。
+     *
+     * <p>探测字段多数是「填一次就不再改」的值，结果区却是每次都要读的地方；
+     * 五模式一起跑时报告仍要装得下，因此结果区分到更大比例。
+     */
+    private static final double SPLIT_RATIO = 0.38;
+
     private ProbePage() {
     }
 
@@ -71,12 +85,32 @@ public final class ProbePage {
         heading.add(scope, BorderLayout.EAST);
         page.add(heading, BorderLayout.NORTH);
 
+        // 表单本身约 500px 高：直接放 BorderLayout.NORTH 会吃掉全部高度，结果区被压成
+        // 一条细线。这里把表单放进滚动面板再上下分栏，保证两个区域始终有可用高度。
+        JScrollPane formScroll = new JScrollPane(form(widgets, sink));
+        formScroll.setBorder(BorderFactory.createEmptyBorder());
+        formScroll.getViewport().setBackground(UiKit.BACKGROUND);
+        formScroll.setPreferredSize(new Dimension(0, FORM_HEIGHT));
+        formScroll.setMinimumSize(new Dimension(0, FORM_MIN_HEIGHT));
+
+        // 按钮不能跟着表单一起滚：滚走之后界面看起来像没有执行入口
+        JPanel upper = new JPanel(new BorderLayout(0, 14));
+        upper.setOpaque(false);
+        upper.add(formScroll, BorderLayout.CENTER);
+        upper.add(actionsPanel(widgets, sink), BorderLayout.SOUTH);
+
         JPanel work = new JPanel(new BorderLayout(0, 18));
         work.setOpaque(false);
         work.setBorder(BorderFactory.createEmptyBorder(28, 0, 0, 0));
-        work.add(form(widgets, sink), BorderLayout.NORTH);
-        work.add(resultPanel(widgets, sink), BorderLayout.CENTER);
+        final JSplitPane split = new JSplitPane(JSplitPane.VERTICAL_SPLIT, upper, resultPanel(widgets, sink));
+        split.setResizeWeight(SPLIT_RATIO);
+        split.setDividerSize(10);
+        split.setBorder(null);
+        split.setOpaque(false);
+        work.add(split, BorderLayout.CENTER);
         page.add(work, BorderLayout.CENTER);
+        // 分栏在首次布局时按首选尺寸分配，需在布局完成后按比例重新定位
+        SwingUtilities.invokeLater(() -> split.setDividerLocation(SPLIT_RATIO));
         return page;
     }
 
@@ -118,20 +152,24 @@ public final class ProbePage {
         field(form, c, sink, 8, "CEYE Filter", widgets.dnsFilter, 8);
         field(form, c, sink, 9, "DNS 等待（秒）", widgets.dnsWait, 8);
 
-        c.gridx = 0; c.gridy = 10; c.gridwidth = 2; c.weightx = 1;
-        c.fill = GridBagConstraints.HORIZONTAL; c.insets = new Insets(10, 0, 0, 0);
-        JPanel actions = new JPanel(new BorderLayout(12, 0));
-        actions.setOpaque(false);
-        UiKit.stylePrimaryButton(widgets.detect, sink);
-        actions.add(widgets.detect, BorderLayout.WEST);
-        widgets.status.setForeground(UiKit.MUTED);
-        sink.track(widgets.status, Font.PLAIN, 13);
-        actions.add(widgets.status, BorderLayout.CENTER);
-        form.add(actions, c);
-
         // 输入框可用性随模式勾选的默认状态刷新
         if (widgets.onModeChanged != null) widgets.onModeChanged.run();
         return form;
+    }
+
+    /**
+     * 固定的操作行：开始探测按钮 + 状态文字。
+     *
+     * <p>放在表单滚动区之外，无论表单滚到哪里按钮都可见。
+     */
+    private static JPanel actionsPanel(Widgets widgets, UiKit.FontSink sink) {
+        JPanel panel = UiKit.surface(new BorderLayout(12, 0));
+        UiKit.stylePrimaryButton(widgets.detect, sink);
+        panel.add(widgets.detect, BorderLayout.WEST);
+        widgets.status.setForeground(UiKit.MUTED);
+        sink.track(widgets.status, Font.PLAIN, 13);
+        panel.add(widgets.status, BorderLayout.CENTER);
+        return panel;
     }
 
     /** 一行「标签 + 输入框」。 */
