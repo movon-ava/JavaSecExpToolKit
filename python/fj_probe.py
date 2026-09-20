@@ -207,6 +207,54 @@ def _join_continuations(raw_lines: List[str]) -> List[str]:
     return joined
 
 
+_HOP_BY_HOP_HEADERS = frozenset(
+    {
+        "connection",
+        "keep-alive",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "proxy-connection",
+        "te",
+        "trailer",
+        "transfer-encoding",
+        "upgrade",
+        "via",
+        "expect",
+    }
+)
+
+
+def _sanitize_request_headers(headers: Dict[str, str]) -> Dict[str, str]:
+    """把「抓包得到的请求头」整理成可以重新发出去的一组头。
+
+    直接从代理 / Burp 抄来的头不能照搬，有三类会让探测**必然失败**：
+
+    1. ``Content-Length`` 描述的是**原请求**的体长。探测时由标准库按新体重算，
+       沿用旧值会让目标一直傻等一个永远到不来的请求体，表现为所有探针超时；
+    2. ``Accept-Encoding: gzip`` 会让目标压缩响应，而 ``urllib`` 不会自动解压，
+       于是所有探针拿到同一份乱码，判定成「响应完全一致 → 未到达解析器」；
+    3. hop-by-hop 头（``Connection`` / ``Proxy-Connection`` / ``Transfer-Encoding``
+       等）只对原来的那条连接有效，跟着发出去反而会破坏新连接。
+
+    ``Host`` 与业务头（``Cookie`` / ``Authorization`` / 自定义头）原样保留：
+    它们正是需要复现的登录态与业务上下文。
+    """
+    cleaned: Dict[str, str] = {}
+    for key, value in (headers or {}).items():
+        name = str(key)
+        lowered = name.strip().lower()
+        if not lowered:
+            continue
+        if lowered in _HOP_BY_HOP_HEADERS or lowered == "content-length":
+            continue
+        if lowered == "accept-encoding":
+            # 只声明 identity：拿到的就是明文，判定逻辑才不需要额外解压
+            cleaned[name] = "identity"
+            continue
+        cleaned[name] = str(value)
+    return cleaned
+
+
 def _request(
     target: str,
     payload: str,
@@ -231,10 +279,13 @@ def _request(
         if payload:
             encoded = urllib.parse.quote(payload, safe="")
             url = target + ("&" if "?" in target else "?") + encoded
+    outgoing = _sanitize_request_headers(headers)
+    if content_type:
+        outgoing["Content-Type"] = content_type
     request = urllib.request.Request(
         url,
         data=data,
-        headers={"Content-Type": content_type, **headers},
+        headers=outgoing,
         method=verb,
     )
     started = time.perf_counter()
@@ -308,7 +359,7 @@ def _request_raw(
     content_type: str = "",
 ) -> Tuple[Optional[int], Optional[float], str, Dict[str, str], Optional[str]]:
     """按指定方法发送原始请求，返回 (状态码, 耗时, 响应体, 响应头, 错误)。"""
-    merged = {str(k): str(v) for k, v in (headers or {}).items()}
+    merged = _sanitize_request_headers({str(k): str(v) for k, v in (headers or {}).items()})
     if content_type and not any(key.lower() == "content-type" for key in merged):
         merged["Content-Type"] = content_type
     request = urllib.request.Request(
@@ -357,6 +408,92 @@ def _decode_chunked(raw: str) -> str:
         chunks.append(text[index : index + size])
         index += size + 2
     return "".join(chunks) if chunks else raw
+
+
+def _header_key(headers: Dict[str, str], name: str) -> str:
+    """返回已存在的同名请求头原始键名（不区分大小写），没有则返回空串。
+
+    `_header_lookup()` 返回的是**值**；合并同名头需要的是键名，两者不能混用。
+    """
+    target = (name or "").lower()
+    for key in (headers or {}):
+        if str(key).lower() == target:
+            return str(key)
+    return ""
+
+
+_HEADER_NAME_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
+
+
+def _looks_like_cookie_text(text: str) -> bool:
+    """判断一段文本是不是 Cookie 值（``a=1; b=2``）。
+
+    抓包页的 cookie-header 导出、以及浏览器里直接复制的 Cookie 都是这个形态；
+    它没有 ``Key: Value`` 的冒号结构，必须与「请求头行」区分开。
+    """
+    pairs = _cookie_pairs(text)
+    if not pairs:
+        return False
+    # 每个分片都应当是 name=value，否则更像是一句说明文字
+    chunks = [chunk.strip() for chunk in re.split(r"[;\n]", text or "") if chunk.strip()]
+    return all("=" in chunk for chunk in chunks)
+
+
+def parse_header_input(raw: str) -> Dict[str, str]:
+    """解析请求头输入，兼容三种常见写法。
+
+    1. JSON 对象：``{"Cookie":"JWT=x"}``（界面「一键发送」自动生成的形式）；
+    2. 每行 ``Key: Value``：从抓包页 / 浏览器复制出来的请求头块；
+    3. 裸 Cookie 值：``JWT_TOKEN=a; JSESSIONID=b``——这正是抓包页 ``cookie-header``
+       转换目标的输出，也是最容易被直接粘贴的一种。
+
+    不兼容裸 Cookie 时，粘贴该格式会让 ``json.loads`` 抛错，探测连请求都发不出去。
+    """
+    body = (raw or "").strip()
+    if not body:
+        return {}
+
+    if body.startswith("{"):
+        try:
+            parsed = json.loads(body)
+        except ValueError as exc:
+            raise ValueError("请求头既不是合法 JSON，也无法按请求头行解析：{0}".format(exc))
+        if not isinstance(parsed, dict):
+            raise ValueError("headers 必须是 JSON 对象")
+        return {str(key): str(value) for key, value in parsed.items()}
+
+    headers: Dict[str, str] = {}
+    others: List[str] = []
+    for line in body.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        item = line.strip()
+        if not item or item.startswith("#"):
+            continue
+        colon = item.find(":")
+        name = item[:colon].strip() if colon > 0 else ""
+        if colon > 0 and _HEADER_NAME_RE.match(name):
+            value = item[colon + 1 :].strip()
+            existing = _header_key(headers, name)
+            if existing:
+                headers[existing] = "{0}; {1}".format(headers[existing], value)
+            else:
+                headers[name] = value
+            continue
+        others.append(item)
+
+    if others:
+        # 没有冒号的行按 Cookie 处理：字段会自动换行，长 Cookie 粘贴进来常带换行，
+        # 逐行判断会把续行当成非法内容，因此先合并再整体判断。
+        merged = "; ".join(value.rstrip(";") for value in others)
+        if not _looks_like_cookie_text(merged):
+            raise ValueError("无法识别的请求头内容（既不是 JSON，也不是 Key: Value 或 Cookie）：{0}".format(
+                others[0][:60]
+            ))
+        existing = _header_key(headers, "Cookie")
+        if existing:
+            headers[existing] = "{0}; {1}".format(headers[existing], merged)
+        else:
+            headers["Cookie"] = merged
+    return headers
 
 
 def _cookie_pairs(cookie_text: str) -> List[Tuple[str, str]]:
@@ -2552,7 +2689,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("target", nargs="?", default="", help="已授权的 HTTP JSON 端点")
     parser.add_argument("--mode", default="detect", choices=sorted(MODE_LABELS))
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT)
-    parser.add_argument("--headers", default="{}", help='JSON 对象，例如 {"Authorization":"Bearer x"}')
+    parser.add_argument(
+        "--headers",
+        default="{}",
+        help='请求头：JSON 对象 {"Cookie":"JWT=x"}、每行 Key: Value，或直接粘贴的裸 Cookie 值',
+    )
     parser.add_argument("--base-body", default="", help="期望类 / 版本对照的业务参数")
     parser.add_argument("--dnslog-host", default="", help="DNSLog / CEYE 域名，例如 abc.ceye.io")
     parser.add_argument("--dns-filter", default="", help="CEYE filter，最长 20 字符")
@@ -2624,9 +2765,7 @@ def _main() -> int:
     args = parser.parse_args()
 
     try:
-        raw_headers = json.loads(args.headers or "{}")
-        if not isinstance(raw_headers, dict):
-            raise ValueError("headers 必须是 JSON 对象")
+        raw_headers = parse_header_input(args.headers or "")
         raw_query = json.loads(args.query or "{}")
         if not isinstance(raw_query, dict):
             raise ValueError("query 必须是 JSON 对象")

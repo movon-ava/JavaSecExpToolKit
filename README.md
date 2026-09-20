@@ -134,7 +134,7 @@ Maven 的 POM 位于 Java 工作区（`src/pom.xml`，与源码同级），产�
 - `探测报告配置` — 报告详细度（`精简` / `详细`，默认 `精简`）
 - `代理配置` — 默认监听地址、默认监听端口、启动后是否默认拦截请求
 - `抓包转换配置` — 默认请求方法、默认 Content-Type、默认转换目标
-- `Shiro 配置` — 默认目标 URL、Cookie 名、密钥、AES-GCM、回显请求头、利用链、命令
+- `Shiro 配置` — 默认目标 URL、Cookie 名、密钥、AES-GCM、回显请求头、利用链、命令、默认请求体
 
 保存后的值会预填到**全部功能页**（探测页 + 代理页 + 抓包页 + Shiro 页）。代理启动后会
 把**实际使用的**地址与端口写回配置，所以配置页里的代理端口反映真实使用情况。
@@ -179,6 +179,31 @@ CEYE 确认作为附属阶段时仍依赖 DNS 阶段。未填 Token 就执行 `C
 | `target/` | Maven 构建输出（经 `src/pom.xml` 写入） |
 | `.backups/` | 带时间戳的快照，只保留最近三次 |
 | 根目录 | `build.ps1`、`run.ps1`、`README.md`、`README.en.md`、`AGENTS.md`、`AI_REPORT.md`、构建出的 `JavaSecExpToolKit.jar`，以及 `lib/`（运行时依赖）与 `libs-repo/`（java-chains 的离线 Maven 仓库） |
+
+## 抓包格式直接探测
+
+从代理或 Burp 复制出来的报文，无需改写就能直接探测。`附加请求头` 支持四种写法：
+
+- 每行 `Key: Value`：抓包页「一键发送」自动生成的形式；
+- 裸 Cookie 值：`JWT_TOKEN=a; JSESSIONID=b`——抓包页 `cookie-header` 转换目标的
+  原始输出，粘贴进来就能用；
+- 整行 `Cookie: a=1; b=2`；
+- JSON 对象 `{"Cookie":"JWT=x"}`，即界面自产的形式。
+
+同名头会合并而不是互相覆盖，因此抓包到的会话 Cookie 与 `rememberMe`
+能共存于同一个 `Cookie` 头；无法识别的内容会给出可读错误，不静默丢弃。
+
+两类请求头会被自动排除，因为它们会让探测**必然失败**：
+
+- `Content-Length` 描述的是原请求的体长，沿用旧值会让目标一直等一个
+  永远不会到来的请求体，表现为所有探针超时；
+- `Accept-Encoding: gzip` 会让目标压缩响应，而引擎按明文解析，
+  会误判成「所有探针响应一致 → 未到达解析器」。转发时会换成 `identity`，
+  hop-by-hop 头（`Connection` / `Proxy-Connection` 等）同样不会跟着转发。
+
+未勾选「拦截请求」时，代理页面板展示的就是最近一条流量，此时
+`转发到抓包转换` 也能正常导出。`一键发送` 会把 URL、方法、请求头**与
+请求体**一起带过去：抓包得到的 POST 体通常就是接口的业务参数，不带上只能拿到校验错误。
 
 ## 抓包与格式转换
 
@@ -234,6 +259,10 @@ python .\python\fj_probe.py http://127.0.0.1:8080/api/json --mode detect --probe
 该模块会在目标上执行命令，**请仅在你已获授权的场景使用**。`生成 Payload` 只构建 payload
 而不投递，便于交给其它工具。加密、爆破与链的细节见
 [docs/DESIGN-shiro.md](docs/DESIGN-shiro.md)。
+
+页面上的 `请求体` 会进入检测与利用请求：部分接口必须带业务参数才能走到
+rememberMe 解密分支，不带只会拿到校验错误；`GET` / `HEAD` 等方法不发送请求体，
+避免被标准库静默降级成 POST。
 
 Shiro 页为**每个动作保留独立回显框**（`指纹检测` / `密钥爆破` / `生成 Payload` / `执行命令`），
 因此冗长的爆破日志或命令输出不会覆盖检测结论或已生成的 payload。

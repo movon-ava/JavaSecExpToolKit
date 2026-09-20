@@ -151,7 +151,7 @@ The `配置` page stores fixed parameters in
 - `探测报告配置` — report verbosity (`精简` / `详细`, default `精简`)
 - `代理配置` — default listen address, default listen port, whether the proxy starts with interception on
 - `抓包转换配置` — default request method, default Content-Type, default convert target
-- `Shiro 配置` — default target URL, cookie name, key, AES-GCM, echo header, gadget chain, command
+- `Shiro 配置` — default target URL, cookie name, key, AES-GCM, echo header, gadget chain, command, default request body
 
 Saved values pre-fill **every feature page** (probe, proxy, capture, Shiro). After the proxy
 starts, the address and port actually used are written back into the settings, so the port shown
@@ -203,6 +203,35 @@ readable hint instead of an engine error — set CEYE Token on the settings page
 | `target/` | Maven build output (Maven writes here via `src/pom.xml`) |
 | `.backups/` | timestamped snapshots, most recent three are kept |
 | root | `build.ps1`, `run.ps1`, `README.md`, `README.en.md`, `AGENTS.md`, `AI_REPORT.md`, the built `JavaSecExpToolKit.jar`, plus `lib/` (runtime deps) and `libs-repo/` (offline Maven repo for java-chains) |
+
+## Using captured traffic as-is
+
+Traffic copied out of the proxy or Burp can be probed without rewriting it. The
+`附加请求头` (extra headers) field accepts four shapes:
+
+- one `Key: Value` per line, which is what the capture page's one-click send generates;
+- a bare cookie value `JWT_TOKEN=a; JSESSIONID=b`, which is exactly what the `cookie-header`
+  convert target prints and therefore the most likely thing to be pasted;
+- a whole `Cookie: a=1; b=2` line;
+- a JSON object `{"Cookie":"JWT=x"}`, the shape the UI itself produces.
+
+Headers with the same name merge instead of overwriting each other, so a captured session cookie
+and `rememberMe` share one `Cookie` header. Input that cannot be recognised produces a readable
+error rather than being silently dropped.
+
+Two headers are always stripped because they make probing **fail for certain**:
+
+- `Content-Length` describes the *original* request body. Keeping the stale value makes the target
+  wait forever for a body that never arrives, which shows up as every probe timing out.
+- `Accept-Encoding: gzip` makes the target compress its response while the engine parses plain
+  text, which reads as "all probes returned the same response, the parser was never reached".
+  Forwarding rewrites it to `identity`; hop-by-hop headers (`Connection`, `Proxy-Connection`, ...)
+  are dropped as well.
+
+When `拦截请求` (intercept) is off, the proxy panel shows the most recent flow and
+`转发到抓包转换` still exports it. One-click send carries the URL,
+method, headers **and body** across: a captured POST body is usually the endpoint's business
+payload, and omitting it only yields a validation error.
 
 ## Capture & convert
 
@@ -265,6 +294,11 @@ This module executes commands on the target, so use it only where you are author
 `生成 Payload` builds the payload without delivering it, which is useful when you want to
 hand it to another tool. See [docs/DESIGN-shiro.md](docs/DESIGN-shiro.md) for the crypto,
 cracking and chain details.
+
+The `请求体` (request body) field is sent with detection and exploitation requests: some
+endpoints only reach the rememberMe decryption branch when their business parameters are
+present. `GET` / `HEAD` never send a body, so the standard library cannot silently downgrade
+them to POST.
 
 The Shiro page keeps **one output pane per action** (`指纹检测` / `密钥爆破` / `生成 Payload` /
 `执行命令`) so a long key-cracking log or a long command output never overwrites the detection

@@ -16,6 +16,32 @@ public final class HttpText {
     private HttpText() {
     }
 
+    /**
+     * 判断一个请求头是否可以原样转发给「重新发起的探测请求」。
+     *
+     * <p>抓包得到的请求头不能照搬的有两类：
+     * <ul>
+     *   <li>hop-by-hop 头（{@code Proxy-Connection} / {@code Connection} /
+     *       {@code Keep-Alive} 等）只对原连接有效；</li>
+     *   <li>{@code Content-Length} 描述的是原请求体长度。探测请求自己决定体，
+     *       若沿用旧值，目标会一直等一个不会到来的请求体而超时。</li>
+     * </ul>
+     */
+    public static boolean forwardable(String name) {
+        if (name == null) return false;
+        String lower = name.trim().toLowerCase(Locale.ROOT);
+        return !"proxy-connection".equals(lower)
+                && !"connection".equals(lower)
+                && !"keep-alive".equals(lower)
+                && !"content-length".equals(lower)
+                && !"transfer-encoding".equals(lower)
+                && !"te".equals(lower)
+                && !"trailer".equals(lower)
+                && !"upgrade".equals(lower)
+                && !"via".equals(lower)
+                && !"expect".equals(lower);
+    }
+
     /** 按名字（不区分大小写）取请求头 / 响应头，缺失返回 null。 */
     public static String header(Map<String, String> headers, String name) {
         if (headers == null) return null;
@@ -76,6 +102,37 @@ public final class HttpText {
         int split = normalized.indexOf("\n\n");
         if (split < 0) return new byte[0];
         return normalized.substring(split + 2).getBytes(StandardCharsets.UTF_8);
+    }
+
+    /**
+     * 取出原始报文里空行之后的请求体文本；没有空行或没有体时返回空串。
+     *
+     * <p>与 {@link #bodyBytes(String)} 区别：这里直接给文本，且会按
+     * {@code transfer-encoding: chunked} 还原，供「把抓包得到的报文转成探测参数」使用。
+     */
+    public static String bodyText(String raw) {
+        if (raw == null) return "";
+        String normalized = raw.replace("\r\n", "\n");
+        int split = normalized.indexOf("\n\n");
+        if (split < 0) return "";
+        String head = normalized.substring(0, split);
+        String body = normalized.substring(split + 2);
+        if (body.isEmpty()) return "";
+        if (isChunked(head)) {
+            byte[] decoded = dechunk(body.getBytes(StandardCharsets.ISO_8859_1));
+            if (decoded != null && decoded.length > 0) return new String(decoded, StandardCharsets.UTF_8);
+        }
+        return body;
+    }
+
+    /** 请求头块里是否声明了 {@code transfer-encoding: chunked}。 */
+    public static boolean isChunked(String headText) {
+        if (headText == null) return false;
+        for (String line : headText.split("\n")) {
+            String lower = line.toLowerCase(Locale.ROOT);
+            if (lower.startsWith("transfer-encoding:") && lower.contains("chunked")) return true;
+        }
+        return false;
     }
 
     /** 还原分块编码：长度行 + 数据交替，遇到 0 长度块结束。 */

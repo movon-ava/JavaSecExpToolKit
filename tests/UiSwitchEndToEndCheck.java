@@ -368,7 +368,50 @@ public final class UiSwitchEndToEndCheck {
             Thread.sleep(200);
             check("代理可再次点击停止", !((javax.swing.JLabel) read(main, "proxyStatus")).getText().contains("运行中"));
 
+
+            // 抓包 -> Shiro 链路：未勾选「拦截请求」时，面板展示的就是最近一条流量，
+            // 必须能直接导出到抓包页并一键发送到 Shiro——否则「抓包格式直接探测」
+            // 在最常见的观察模式下根本不成立。
+            clickCheckBox(main, "proxyIntercept", false);
+            invokeVoid(main, "toggleProxy");
+            Thread.sleep(400);
+            proxyPort = Integer.parseInt(((JTextField) read(main, "proxyPort")).getText());
+            sendViaProxy(url, proxyPort, "JWT_TOKEN=capture-to-shiro");
+            awaitProxyText(main, "proxyRequestText", "capture-to-shiro", 10000);
+            invokeVoid(main, "exportProxyDetail");
+            Thread.sleep(300);
+            check("观察模式下也能把抓到的请求导到抓包页",
+                    ((JTextArea) read(main, "pastedRequest")).getText().contains("capture-to-shiro"));
+            check("导出的请求头不再带跳转头",
+                    !((JTextField) read(main, "captureHeaders")).getText().contains("Proxy-Connection"));
+            setCombo(main, "captureSendTo", "Shiro 漏洞利用");
+            invokeVoid(main, "sendCaptureTo");
+            Thread.sleep(300);
+            String shiroHeaders = ((JTextArea) read(main, "shiroHeaders")).getText();
+            System.out.println("一键发送后 Shiro 附加请求头 -> " + shiroHeaders.replace("\n", " | "));
+            check("一键发送后 Shiro 附加请求头非空", !shiroHeaders.trim().isEmpty());
+            check("附加请求头带上了抓包到的会话 Cookie",
+                    shiroHeaders.contains("capture-to-shiro"));
+            check("附加请求头不照搬抓包里的 Host",
+                    !shiroHeaders.toLowerCase(java.util.Locale.ROOT).contains("host:"));
+            invokeVoid(main, "toggleProxy");
+            Thread.sleep(200);
+
+            // 抓包头里常带的两个陷阱必须被过滤：旧 Content-Length 会让所有探针
+            // 等到超时，Accept-Encoding: gzip 会让探针拿到一堆乱码。
+            setText(main, "target", url);
+            setText(main, "requestHeaders",
+                    "{\"Content-Length\":\"9999\",\"Accept-Encoding\":\"gzip, deflate\","
+                            + "\"Proxy-Connection\":\"keep-alive\",\"Cookie\":\"JWT_TOKEN=trap\"}");
+            String trapped = runProbe(main, url, "detect");
+            System.out.println("抓包头陷阱 -> " + conclusion(trapped));
+            check("抓包头里的旧 Content-Length / gzip / 跳转头不会让探测失败",
+                    !trapped.contains("无法探测"));
+            check("抓包头陷阱下仍能判定 Fastjson",
+                    trapped.contains("是否 Fastjson: 是"));
+            setText(main, "requestHeaders", "");
             System.out.println("端到端自检通过");
+
         } finally {
             server.stop(0);
             awaitCleanup();
@@ -595,6 +638,7 @@ public final class UiSwitchEndToEndCheck {
         if (!condition) {
             throw new IllegalStateException("自检失败: " + message);
         }
+
         System.out.println("  [ok] " + message);
     }
 

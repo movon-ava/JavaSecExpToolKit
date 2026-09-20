@@ -4,6 +4,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import util.HttpText;
 import util.JsonText;
 
 /**
@@ -22,6 +23,8 @@ public final class CaptureBridge {
         public String pastedRequest = "";
         /** 抓包结果（引擎输出，含 cookie-header 字段）。 */
         public String captureResult = "";
+        /** 抓包页「请求体」输入框。 */
+        public String body = "";
     }
 
     private CaptureBridge() {
@@ -60,7 +63,7 @@ public final class CaptureBridge {
         StringBuilder lines = new StringBuilder();
         if (entries != null) {
             for (Map.Entry<String, String> entry : entries.entrySet()) {
-                if (entry.getKey().equalsIgnoreCase("host")) continue;
+                if (!forwardable(entry.getKey())) continue;
                 lines.append(entry.getKey()).append(": ").append(entry.getValue()).append("\n");
             }
         } else {
@@ -68,8 +71,7 @@ public final class CaptureBridge {
                     .matcher(input.pastedRequest == null ? "" : input.pastedRequest);
             while (matcher.find()) {
                 String name = matcher.group(1);
-                if (name.equalsIgnoreCase("host") || name.equalsIgnoreCase("content-length")
-                        || name.equalsIgnoreCase("proxy-connection")) continue;
+                if (!forwardable(name)) continue;
                 lines.append(name).append(": ").append(matcher.group(2).trim()).append("\n");
             }
         }
@@ -83,6 +85,32 @@ public final class CaptureBridge {
             lines.append("Cookie: ").append(cookieHeader).append("\n");
         }
         return lines.toString().trim();
+    }
+
+    /**
+     * 抓包页当前输入对应的请求体。
+     *
+     * <p>优先用粘贴的原始报文（那是从代理直接带过来的真实报文），
+     * 其次用「请求体」输入框；拿不到时返回空串。
+     */
+    public static String requestBody(Input input) {
+        String pasted = trim(input.pastedRequest);
+        if (!pasted.isEmpty()) {
+            String body = HttpText.bodyText(pasted);
+            if (!body.isEmpty()) return body;
+        }
+        return trim(input.body);
+    }
+
+    /**
+     * 该请求头能否原样带给探测 / Shiro 页。
+     *
+     * <p>{@code Host} 由目标 URL 自己决定；其余跳转头与
+     * {@code Content-Length} 由 {@link HttpText#forwardable(String)} 统一排除——
+     * 否则抓包得到的长度会跟着探测请求一起发出去，目标会等一个永远不到的请求体。
+     */
+    private static boolean forwardable(String name) {
+        return name != null && !name.equalsIgnoreCase("host") && HttpText.forwardable(name);
     }
 
     /** Cookie 文本转成探测页的请求头 JSON。 */

@@ -157,6 +157,7 @@ public final class UiNavigationCheck {
         check("配置页含 Shiro 回显请求头输入框", fieldQuiet(main, "configShiroEchoHeader") instanceof JTextField);
         check("配置页含 Shiro 利用链下拉框", fieldQuiet(main, "configShiroChain") instanceof JComboBox);
         check("配置页含 Shiro 命令输入框", fieldQuiet(main, "configShiroCommand") instanceof JTextField);
+        check("配置页含 Shiro 请求体输入框", fieldQuiet(main, "configShiroBody") instanceof JTextField);
         snapshot(frame, "target/ui-check/03-config.png");
 
         select(main, "capture");

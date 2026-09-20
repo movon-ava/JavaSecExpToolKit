@@ -68,13 +68,38 @@ public final class ShiroCheck {
     private static void headerParsing() {
         java.util.Map<String, String> headers = ShiroEngine.parseHeaders(
                 "Cookie: JWT_TOKEN=abc\nX-Trace: 1\ncookie: JSESSIONID=xyz\nHost: example.org");
-        check("附加请求头按行解析", headers.size() == 3);
-        check("同名 Cookie 合并而不是互相覆盖",
+        check("\u9644\u52a0\u8bf7\u6c42\u5934\u6309\u884c\u89e3\u6790", headers.size() == 2);
+        check("\u540c\u540d Cookie \u5408\u5e76\u800c\u4e0d\u662f\u4e92\u76f8\u8986\u76d6",
                 "JWT_TOKEN=abc; JSESSIONID=xyz".equals(headers.get("Cookie")));
-        check("大小写不同的同名头视为同一个头", headers.get("Cookie") != null);
-        check("普通头原样保留", "1".equals(headers.get("X-Trace")));
-        check("空行与注释被忽略",
-                ShiroEngine.parseHeaders("\n# 注释\n\n").isEmpty());
+        check("\u5927\u5c0f\u5199\u4e0d\u540c\u7684\u540c\u540d\u5934\u89c6\u4e3a\u540c\u4e00\u4e2a\u5934", headers.get("Cookie") != null);
+        check("\u666e\u901a\u5934\u539f\u6837\u4fdd\u7559", "1".equals(headers.get("X-Trace")));
+        check("Host \u7531\u76ee\u6807 URL \u51b3\u5b9a\uff0c\u4e0d\u7167\u642c\u6293\u5305\u91cc\u7684\u503c",
+                headers.get("Host") == null);
+        check("\u7a7a\u884c\u4e0e\u6ce8\u91ca\u88ab\u5ffd\u7565",
+                ShiroEngine.parseHeaders("\n# \u6ce8\u91ca\n\n").isEmpty());
+
+        // \u6293\u5305\u9875\u7684 cookie-header \u8f6c\u6362\u76ee\u6807\u5bfc\u51fa\u7684\u662f\u88f8 Cookie\uff1a
+        // \u6ca1\u6709 Key: Value \u7ed3\u6784\uff0c\u65e7\u903b\u8f91\u4f1a\u6574\u884c\u4e22\u5f03\uff0c\u767b\u5f55\u6001\u5c31\u53d1\u4e0d\u51fa\u53bb
+        java.util.Map<String, String> raw = ShiroEngine.parseHeaders(
+                "JWT_TOKEN=abc.def; JSESSIONID=xyz");
+        check("\u88f8 Cookie \u503c\u88ab\u5f52\u5165 Cookie \u5934",
+                ("JWT_TOKEN=abc.def; JSESSIONID=xyz").equals(raw.get("Cookie")));
+        check("\u88f8 Cookie \u4e0d\u4f1a\u88ab\u5f53\u6210\u8bf7\u6c42\u5934\u540d", raw.size() == 1);
+
+        java.util.Map<String, String> swapped = ShiroEngine.parseHeaders(
+                "Cookie: JWT_TOKEN=abc\nJWT_TOKEN=abc.def; JSESSIONID=xyz");
+        check("\u8bf7\u6c42\u5934\u4e0e\u88f8 Cookie \u6df7\u7528\u65f6\u4e00\u5e76\u5408\u5e76\u5230 Cookie",
+                swapped.get("Cookie") != null
+                        && swapped.get("Cookie").contains("JWT_TOKEN=abc")
+                        && swapped.get("Cookie").contains("JSESSIONID=xyz"));
+
+        java.util.Map<String, String> guarded = ShiroEngine.parseHeaders(
+                "Content-Length: 9999\nAccept-Encoding: gzip, deflate\nProxy-Connection: keep-alive\n"
+                        + "Cookie: JWT_TOKEN=abc");
+        check("\u8fc7\u671f Content-Length \u4e0d\u4f1a\u88ab\u7167\u642c\u53d1\u51fa\u53bb", guarded.get("Content-Length") == null);
+        check("\u58f0\u660e gzip \u7684 Accept-Encoding \u4e0d\u4f1a\u88ab\u7167\u642c\u53d1\u51fa\u53bb", guarded.get("Accept-Encoding") == null);
+        check("\u8df3\u8f6c\u5934 Proxy-Connection \u4e0d\u4f1a\u88ab\u7167\u642c\u53d1\u51fa\u53bb", guarded.get("Proxy-Connection") == null);
+        check("\u4e1a\u52a1\u5934 Cookie \u4ecd\u7136\u4fdd\u7559", "JWT_TOKEN=abc".equals(guarded.get("Cookie")));
     }
 
     private static void detectAndCrack() throws Exception {

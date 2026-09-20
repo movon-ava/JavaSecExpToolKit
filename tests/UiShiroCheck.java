@@ -79,6 +79,16 @@ public final class UiShiroCheck {
         JComboBox<?> chain = (JComboBox<?>) field(main, "shiroChain");
         check("利用链下拉框有 3 个选项", chain.getItemCount() == 3);
 
+        // 页签只能在首次构建时添加：每次进入页面都 addTab 会让页签数翻倍
+        // （4 → 8 → 12），连续切页后界面会出现重复回显区。
+        repeatNav(main, "shiro.exploit");
+        repeatNav(main, "home");
+        repeatNav(main, "shiro.exploit");
+        repeatNav(main, "home");
+        repeatNav(main, "shiro.exploit");
+        javax.swing.JTabbedPane tabs2 = (javax.swing.JTabbedPane) field(main, "shiroOutputTabs");
+        check("反复进出 Shiro 页后页签数仍为 4", tabs2.getTabCount() == 4);
+
         final String url = "http://127.0.0.1:" + port + "/index";
         onEdt(new Runnable() {
             public void run() {
@@ -107,6 +117,18 @@ public final class UiShiroCheck {
         server.stop(0);
         System.out.println("Shiro 界面自检通过");
         System.exit(0);
+    }
+
+    /** 模拟真实导航切换（走 selectNav），用于验证页面重建不会累积状态。 */
+    private static void repeatNav(Object main, String key) throws Exception {
+        final Object target = main;
+        final String item = key;
+        SwingUtilities.invokeAndWait(new Runnable() {
+            public void run() {
+                invoke(target, "selectNav", new Class<?>[]{String.class}, item);
+            }
+        });
+        Thread.sleep(250);
     }
 
     private static String waitFor(Object main, String field, String needle, long timeoutMs) throws Exception {

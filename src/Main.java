@@ -116,6 +116,8 @@ public final class Main {
     private final JComboBox<shiro.ShiroExploit.ChainKind> configShiroChain =
             new JComboBox<shiro.ShiroExploit.ChainKind>(shiro.ShiroExploit.ChainKind.values());
     private final JTextField configShiroCommand = new JTextField("", 22);
+    /** 默认请求体：目标接口需要业务参数时，探测与利用都要带上它。 */
+    private final JTextField configShiroBody = new JTextField("", 22);
     private final JLabel configStatus = new JLabel("配置保存在用户目录下");
     private final JTextArea result = new JTextArea();
     private final JButton detect = new JButton("开始探测");
@@ -162,6 +164,8 @@ public final class Main {
     private final JComboBox<shiro.ShiroExploit.ChainKind> shiroChain = new JComboBox<shiro.ShiroExploit.ChainKind>(shiro.ShiroExploit.ChainKind.values());
     private final JTextField shiroCommand = new JTextField("whoami", 22);
     private final JTextArea shiroHeaders = new JTextArea(3, 32);
+    /** 请求体：抓包得到的 POST 体往往是目标接口的必填参数，不带上就只能拿到校验错误。 */
+    private final JTextArea shiroBody = new JTextArea(3, 32);
     private final JButton shiroDetect = new JButton("\u4e00\u952e\u68c0\u6d4b");
     private final JButton shiroCrack = new JButton("\u5bc6\u94a5\u7206\u7834");
     private final JButton shiroStop = new JButton("\u505c\u6b62");
@@ -599,6 +603,9 @@ public final class Main {
             if (flow.id != awaitingResponseFlowId) return;
             awaitingResponseFlowId = 0;
         } else {
+            // 观察模式下请求面板展示的就是这条流：必须记下来，否则未勾选「拦截请求」时
+            // 点「转发到抓包转换」永远提示「还没有可转换的请求包」，抓包结果根本带不出去。
+            lastProxyFlow = flow;
             proxyRequestText.setText(FlowRenderer.rawRequest(flow));
             proxyRequestText.setCaretPosition(0);
         }
@@ -628,7 +635,10 @@ public final class Main {
         StringBuilder headers = new StringBuilder("{");
         boolean first = true;
         for (Map.Entry<String, String> header : flow.requestHeaders.entrySet()) {
-            if (header.getKey().equalsIgnoreCase("host")) continue;
+            // 跳转头与原请求的 Content-Length 不能跟着转发：前者只对原连接有效，
+            // 后者会让目标一直等一个不会到来的请求体。这里过滤后，
+            // 抓包页导出的头就是可以直接拿去探测的一组。
+            if (!HttpText.forwardable(header.getKey())) continue;
             if (!first) headers.append(",");
             first = false;
             headers.append("\"").append(header.getKey()).append("\":\"")
@@ -738,7 +748,8 @@ public final class Main {
                                 new ConfigPage.Row("默认使用 AES-GCM", configShiroGcm, "Shiro ≥ 1.4.2 常用"),
                                 new ConfigPage.Row("默认回显请求头", configShiroEchoHeader, "例如 X-Authorization"),
                                 new ConfigPage.Row("默认利用链", configShiroChain, "回显链的 gadget 前缀"),
-                                new ConfigPage.Row("默认命令", configShiroCommand, "例如 whoami")})};
+                                new ConfigPage.Row("默认命令", configShiroCommand, "例如 whoami"),
+                                new ConfigPage.Row("默认请求体", configShiroBody, "目标接口的业务参数")})};
         widgets.status = configStatus;
         widgets.onSave = this::saveConfigFromForm;
         widgets.onReset = this::resetConfigForm;
@@ -760,6 +771,7 @@ public final class Main {
         widgets.echoHeader = shiroEchoHeader;
         widgets.command = shiroCommand;
         widgets.headers = shiroHeaders;
+        widgets.body = shiroBody;
         widgets.detect = shiroDetect;
         widgets.crack = shiroCrack;
         widgets.stop = shiroStop;
@@ -781,6 +793,7 @@ public final class Main {
         options.method = String.valueOf(shiroRequestMethod.getSelectedItem());
         options.cookieName = Platform.valueOr(shiroCookieName.getText().trim(), shiro.ShiroEngine.REMEMBER_ME);
         options.extraHeaders = shiroHeaders.getText();
+        options.body = shiroBody.getText();
         options.timeoutSeconds = Integer.parseInt(Platform.valueOr(timeout.getText(), "8"));
         return options;
     }
@@ -1175,7 +1188,9 @@ public final class Main {
         shiroRequestMethod.setSelectedItem(method);
         String lines = CaptureBridge.headerLines(captureInput(), cookieHeader);
         if (!lines.isEmpty()) shiroHeaders.setText(lines);
-        selectNav("shiro.exploit");
+        // 请求体必须一并带过去：抓包得到的 POST 体通常就是接口的业务参数，
+        // 不带上则目标只会返回校验错误，探测结论不可信。
+        shiroBody.setText(CaptureBridge.requestBody(captureInput()));
         captureStatus.setText("已发送到 Shiro 漏洞利用，确认参数后点「一键检测」");
     }
 
@@ -1185,6 +1200,7 @@ public final class Main {
         input.headersJson = captureHeaders.getText();
         input.pastedRequest = pastedRequest.getText();
         input.captureResult = captureResult.getText();
+        input.body = captureBody.getText();
         return input;
     }
 
@@ -1317,6 +1333,8 @@ public final class Main {
         selectChain(config.getProperty("shiro_chain", ""));
         String command = config.getProperty("shiro_command", "").trim();
         if (!command.isEmpty()) shiroCommand.setText(command);
+        String shiroBodyText = config.getProperty("shiro_body", "").trim();
+        if (!shiroBodyText.isEmpty()) shiroBody.setText(shiroBodyText);
     }
 
     /** 勾选框型配置：只认 true/false，其他值按默认值处理。 */
@@ -1420,6 +1438,7 @@ public final class Main {
         configShiroEchoHeader.setText(config.getProperty("shiro_echo_header", ""));
         selectConfigChain(config.getProperty("shiro_chain", ""));
         configShiroCommand.setText(config.getProperty("shiro_command", ""));
+        configShiroBody.setText(config.getProperty("shiro_body", ""));
         configStatus.setText("已载入当前配置");
     }
 
@@ -1470,6 +1489,7 @@ public final class Main {
         Object chain = configShiroChain.getSelectedItem();
         config.setProperty("shiro_chain", chain == null ? "" : ((shiro.ShiroExploit.ChainKind) chain).name());
         config.setProperty("shiro_command", configShiroCommand.getText().trim());
+        config.setProperty("shiro_body", configShiroBody.getText().trim());
         try {
             AppConfig.save(config);
             applyConfigToForms();

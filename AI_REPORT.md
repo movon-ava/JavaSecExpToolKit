@@ -1010,3 +1010,85 @@
 - **会话 Cookie 需人工获取**：工具不会自动登录（验证码等交互无法自动化），Cookie 要由使用者
   从浏览器或「代理抓包」取得；会话过期时会话失效，结论只能区分「未携带」与「已携带仍被拦」。
 - 配置文件以明文保存在用户目录，请自行注意 Token 的存放安全。
+
+## 2026-09-20（抓包格式直接可探测）
+
+**需求**：修复 bug，保证通过代理抓包发包后的格式能直接探测。
+
+### 一、根因（先诊断后动手，均已实测复现）
+
+用户反馈的现象是「Shiro 一键检测返回未确认 Shiro」。实测后发现不是一个点的问题，
+而是**从抓包到探测这条链路上有四处独立缺口**，且前三处都不报错——只是“静默地给出一个错误结论”。
+
+**根因 1**：`ShiroEngine.parseHeaders()` 只认 `Key: Value`。抓包页 `cookie-header`
+转换目标导出的是**裸 Cookie 值**（无冒号），旧逻辑把整行丢弃，登录态根本发不出去。
+复现：填入 `9P5EjboW6ee0jsRDfkEdQKBA7ZXFkl4kYoN2...` 后解析结果为空。
+
+**根因 2**：探测页 / Shiro 页粘贴非 JSON 请求头时引擎直接弹出
+`JSONDecodeError: Expecting value: line 1 column 1`，探测根本未发出。
+
+**根因 3**：`ShiroPage.outputPanel()` 每次进页面都 `addTab`，页签数 4 → 8 → 12，
+回显区看起来像被拆成了好几份（用户截图里的 8 个页签）。
+
+**根因 4（最隐蔽）**：`ShiroEngine.send()` 不但从不发送请求体（`Options.body` UI 没接），
+而且 `exportProxyDetail()` 依赖的 `lastProxyFlow` **只在拦截放行时赋值**，
+因此未勾选「拦截请求」（即最常用的观察模式）时点「转发到抓包转换」
+一律报「还没有可转换的请求包」——抓包结果根本带不出去。
+
+此外在做变量对照时发现两个**影响更大、但完全不报错**的问题（已用桩服务实测）：
+抓包得到的请求头里常带 `Content-Length` 与 `Accept-Encoding: gzip`，直接照搬会让
+**所有**探针失败：
+
+- 旧 `Content-Length` 描述的是原请求体长，目标一直等一个不会到来的体 →
+  `无法探测：所有探针均无法连接到目标（TimeoutError: timed out）`；
+- `Accept-Encoding: gzip` 让目标压缩响应，而 `urllib` 不会自动解压 →
+  `无法探测：所有探针返回同一份响应（相同前缀 83/83 字节）`。
+
+### 二、修改
+
+| 文件 | 修改 |
+| --- | --- |
+| `python/fj_probe.py` | 新增 `_header_key()` / `_looks_like_cookie_text()` / `parse_header_input()`：请求头支持 JSON、`Key: Value`、裸 Cookie 三种写法，无冒号行先合并再判断；新增 `_sanitize_request_headers()` 统一剔除旧 `Content-Length`、hop-by-hop 头，并把 `Accept-Encoding` 改为 `identity` |
+| `src/shiro/ShiroEngine.java` | `parseHeaders()` 重写为容错版（新增 `isHeaderName()` / `looksLikeCookie()` / `sendableHeader()`）；`send()` 新增 `allowsBody()`，避免 `GET`/`HEAD` 写体被 JDK 静默降级成 POST |
+| `src/Main.java` | 观察模式下也记录 `lastProxyFlow`；`exportProxyDetail()` 过滤不可转发头；Shiro 页新增「请求体」字段与 `shiro_body` 配置；一键发送带过请求体 |
+| `src/util/HttpText.java` | 新增 `forwardable()`（可转发头判定）与 `bodyText()` / `isChunked()` |
+| `src/probe/CaptureBridge.java` | 新增 `requestBody()`；`headerLines()` 改用 `forwardable()` 过滤 |
+| `src/ui/ShiroPage.java` | 页签加 `getTabCount() == 0` 守卫（仅首次构建 addTab）；新增请求体输入框 |
+| `tests/ShiroCheck.java` | 请求头断言更新到新行为，新增裸 Cookie、混用、跳转头 / gzip / 旧长度剔除断言 |
+| `tests/UiSwitchEndToEndCheck.java` | 新增「观察模式导出」「一键发送到 Shiro 带会话 Cookie」「抓包头陷阱」端到端断言 |
+| `tests/UiShiroCheck.java` | 新增「反复进出页面页签数仍为 4」断言 |
+| `tests/UiNavigationCheck.java` | 新增「配置页含 Shiro 请求体输入框」断言 |
+| `tests/test_probe.py` | 新增 `HeaderInputTest` / `CaptureHeaderSanitizeTest`（共 10 项） |
+| `README.md` / `README.en.md` | 新增「抓包格式直接探测」章节；配置项补 `默认请求体` |
+| `docs/DESIGN.md` / `docs/DESIGN-shiro.md` | 记录四处缺口、净化规则与验证载体 |
+
+### 三、验证
+
+| 检查点 | 结果 |
+| --- | --- |
+| Python 测试 | `Ran 84 tests ... OK`（新增 10 项） |
+| `ShiroCheck` | 自检通过（含新增 11 条请求头断言） |
+| `ProxyServerCheck` | 代理自检通过 |
+| `UiNavigationCheck` | 全部界面自检通过 |
+| `UiShiroCheck` | Shiro 界面自检通过 |
+| `UiSwitchEndToEndCheck` | 端到端自检通过（含新增链路断言） |
+| 裸 Cookie 实测 | 修前解析为空；修后 `{'Cookie': 'JWT_TOKEN=abc.def; JSESSIONID=xyz'}` |
+| gzip 实测 | 修前「否 / 置信度 0.0」；修后「是 / 0.917」 |
+| Content-Length 实测 | 修前「无法探测：超时」；修后正常判定 |
+| 页签计数 | 修前 4 → 8 → 12；修后 4 → 4 → 4 |
+| JAR 构建 | `2026-09-20 21:26:28`，`185903` bytes，晚于全部 `src` / `python` / `tests` 源文件 |
+| 备份 | `.backups/20260920-204834`（改动前快照），目录仅保留最近三次 |
+
+### 四、测试环境发现（与本次修改无关，仅作记录）
+
+目标 `211.154.20.67:7779`（Java Security 靶场）对非法 rememberMe **从不回写
+`deleteMe`**：扫了 17 个路径 × GET/POST × （无 Cookie / 随机 Cookie），
+全部只回 `JSESSIONID`；未登录时 `/index/shiro` 直接返回登录页。
+因此在该靶场上「未确认 Shiro」是目标行为导致，属于探测原理的固有局限
+（需先登录拿到会话 Cookie，且目标仍需会回写 `deleteMe`）。
+本轮修复的是“抓到的包能不能真正发出去”，这一点已用桩服务端到端验证。
+
+### 五、涉及文件
+
+见上表。本轮未新增任何第三方依赖；中间脉生成的临时脚本已全部删除，
+`tools/` 仅保留 `apply_patch.py`。

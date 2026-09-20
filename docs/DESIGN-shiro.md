@@ -80,6 +80,15 @@ Shiro 在 `Cookie: rememberMe=<Base64>` 无法解密时，会返回
 - 目标若自行改写了 rememberMe 的处理逻辑（例如统一返回登录页），识别会失败。
 - 目标是前后端分离且 rememberMe 由前端 Java 服务处理时，需要填对实际接口路径。
 
+一个常见的“误判成不是 Shiro”来自探测请求根本没到达目标，而不是目标不是 Shiro：
+
+- 抓包得到的请求头若沿用了**原**请求的 `Content-Length`，目标会一直等一个
+  不会到来的请求体，所有探针均超时；
+- `Accept-Encoding: gzip` 会让响应被压缩，而引擎按明文览。
+
+`ShiroEngine.sendableHeader()` 会剔除这些头（另包括 `Host` 与 hop-by-hop 头），
+因此直接粘贴抓包内容即可。
+
 ---
 
 ## 四、加解密设计（`ShiroEngine`）
@@ -215,7 +224,8 @@ Shiro 页（`主页 → Shiro → Shiro 漏洞利用`）字段与按钮：
 | `回显请求头` | 默认 `X-Authorization`，回显马从该头读命令 |
 | `利用链` | `CB19` / `CCK1` / `CCK2` |
 | `命令` | 要执行的命令，默认 `whoami` |
-| `附加请求头` | 需要登录态时填 `Cookie: JWT_TOKEN=…` 等 |
+| `附加请求头` | 需要登录态时填 `Cookie: JWT_TOKEN=…` 等；也能直接粘贴裸 Cookie 值 |
+| `请求体` | 接口需要业务参数时必填；`GET` / `HEAD` 不发送请求体 |
 | `一键检测` | 指纹识别 |
 | `密钥爆破` / `停止` | 字典爆破与中断，带进度条 |
 | `生成 Payload` | 只生成并打印 Base64 payload，**不投递** |
@@ -240,14 +250,18 @@ Shiro 页（`主页 → Shiro → Shiro 漏洞利用`）字段与按钮：
 若都写进同一个文本域，「检测结论 → 爆破出的密钥 → 生成的链 → 命令回显」这条链路
 会被互相冲掉，回头排查时找不到原始结论。
 
+页签只在**首次**构建页面时 `addTab`（`if (widgets.outputTabs.getTabCount() == 0)`）。
+`shiroOutputTabs` 由界面层持有并在多次进入页面之间复用，若每次进入都重新 `addTab`，
+页签会按 4 → 8 → 12 翻倍，回显区看起来就像被拆成了好几份。
+
 ---
 
 ## 九、验证
 
 | 载体 | 覆盖内容 |
 | --- | --- |
-| `tests/ShiroCheck.java` | CBC/GCM 加解密往返、`deleteMe` 指纹、爆破命中、非法链被拒、CCK1 回显链生成且可由本机密钥解密、CB1/CCK1/CCK2 三条链、回显提取 |
-| `tests/UiShiroCheck.java` | Shiro 页控件齐备、桩服务上「一键检测」确认存在 Shiro、界面可生成回显链并输出 Base64、四个功能各有独立回显框（生成 Payload 不写进指纹检测框、指纹结论仍保留、页签数为 4） |
+| `tests/ShiroCheck.java` | CBC/GCM 加解密往返、`deleteMe` 指纹、爆破命中、非法链被拒、CCK1 回显链生成且可由本机密钥解密、CB1/CCK1/CCK2 三条链、回显提取、请求头容错与净化 |
+| `tests/UiShiroCheck.java` | Shiro 页控件齐备、桩服务上「一键检测」确认存在 Shiro、界面可生成回显链并输出 Base64、四个功能各有独立回显框（生成 Payload 不写进指纹检测框、指纹结论仍保留）、反复进出页面页签数仍为 4 |
 
 `ShiroCheck` 的关键设计：**用本机密钥解自己生成的 payload**，验证「链能构建 +
 能被正确密钥解密」。这同时证明了 java-chains 的 `shiropayload` 载体与
@@ -263,6 +277,11 @@ java --add-opens java.xml/com.sun.org.apache.xalan.internal.xsltc.trax=ALL-UNNAM
 ```
 
 `run.ps1` 已包含这两个 `--add-opens`，正常使用不会踩到。
+
+「代理抓包 -> 一键发送 -> 带会话探测」这条跨模块链路由
+`tests/UiSwitchEndToEndCheck.java` 覆盖：它真实启动代理、真实发一条带 Cookie 的请求、
+真实点「转发到抓包转换」与「一键发送」，并用一组“抓包头陷阱”（旧
+`Content-Length` + `Accept-Encoding: gzip` + `Proxy-Connection`）断言探测仍能得出正确结论。
 
 ---
 

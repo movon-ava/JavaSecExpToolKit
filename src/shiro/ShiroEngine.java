@@ -152,7 +152,10 @@ public final class ShiroEngine {
             // 而 rememberMe 只是在此基础上追加，不能把会话 Cookie 覆盖掉。
             if (!cookie.isEmpty()) connection.setRequestProperty("Cookie", cookie);
             String body = options.body == null ? "" : options.body;
-            if (!body.isEmpty()) {
+            // 只有「允许带请求体」的方法才写体：HttpURLConnection 在 GET / HEAD
+            // 上投递体会静默把方法改成 POST，目标看到的方法与界面不一致，
+            // 而且一個 GET 探测会变成 POST 探测（很多接口对此返回 405）。
+            if (!body.isEmpty() && allowsBody(methodOf(options))) {
                 connection.setDoOutput(true);
                 OutputStream output = connection.getOutputStream();
                 output.write(body.getBytes(StandardCharsets.UTF_8));
@@ -168,6 +171,42 @@ public final class ShiroEngine {
         } finally {
             if (connection != null) connection.disconnect();
         }
+    }
+
+    /**
+     * 判断一个抓包得到的请求头能否原样发出去。
+     *
+     * <p>三类必须丢掉，否则「抓包格式直接探测」会失败：
+     * <ul>
+     *   <li>{@code Content-Length}：描述的是**原**请求体长度，沿用旧值会让
+     *       目标一直等一个不会到来的请求体，表现为所有探测超时；</li>
+     *   <li>{@code Accept-Encoding}：声明 gzip 后目标会压缩响应，而引擎按明文解析，
+     *       判定会误判成「未到达接口」；</li>
+     *   <li>hop-by-hop 头（{@code Connection} / {@code Proxy-Connection} 等）只对原连接有效。</li>
+     * </ul>
+     */
+    private static boolean sendableHeader(String name) {
+        if (name == null) return false;
+        String lower = name.trim().toLowerCase(Locale.ROOT);
+        if (lower.isEmpty() || "host".equals(lower)) return false;
+        return !"content-length".equals(lower)
+                && !"accept-encoding".equals(lower)
+                && !"connection".equals(lower)
+                && !"keep-alive".equals(lower)
+                && !"proxy-connection".equals(lower)
+                && !"proxy-authorization".equals(lower)
+                && !"transfer-encoding".equals(lower)
+                && !"upgrade".equals(lower)
+                && !"te".equals(lower)
+                && !"trailer".equals(lower)
+                && !"via".equals(lower)
+                && !"expect".equals(lower);
+    }
+
+    /** 该方法能否携带请求体；GET / HEAD 携带体会被 JDK 静默降级成 POST。 */
+    private static boolean allowsBody(String method) {
+        return !"GET".equals(method) && !"HEAD".equals(method) && !"OPTIONS".equals(method)
+                && !"TRACE".equals(method);
     }
 
     private static String methodOf(Options options) {
@@ -216,24 +255,78 @@ public final class ShiroEngine {
         }
     }
 
-    /** 解析「每行一个 Key: Value」形式的附加请求头。 */
+    /**
+     * 解析附加请求头，兼容三种常见写法：
+     *
+     * <ol>
+     *   <li>每行 {@code Key: Value}（抓包页「一键发送」生成的形式）；</li>
+     *   <li>裸 Cookie 值 {@code a=1; b=2}——抓包页 {@code cookie-header} 转换目标的
+     *       原始输出，也是最容易被直接粘贴进来的一种；</li>
+     *   <li>单独一行 {@code Cookie: a=1; b=2}。</li>
+     * </ol>
+     *
+     * <p>第 2 种必须支持：它没有冒号结构，若按旧逻辑整行丢弃，请求就会**不带登录态**
+     * 发出，检测与爆破都会失败，而界面看起来一切正常。
+     */
     public static Map<String, String> parseHeaders(String raw) {
         Map<String, String> headers = new LinkedHashMap<String, String>();
         if (raw == null) return headers;
+        StringBuilder plain = new StringBuilder();
         for (String line : raw.split("\r?\n")) {
             String text = line.trim();
             if (text.isEmpty() || text.startsWith("#")) continue;
             int colon = text.indexOf(':');
-            if (colon <= 0) continue;
-            String name = text.substring(0, colon).trim();
-            String value = text.substring(colon + 1).trim();
-            // 同名请求头合并而不是互相覆盖：从抓包页带过来的会话 Cookie 与
-            // 使用者手工填的 Cookie 应当同时生效，否则登录态会莫名丢失
-            String previous = findIgnoreCase(headers, name);
-            if (previous != null) headers.put(previous, headers.get(previous) + "; " + value);
-            else headers.put(name, value);
+            String name = colon > 0 ? text.substring(0, colon).trim() : "";
+            if (colon > 0 && isHeaderName(name) && sendableHeader(name)) {
+                String value = text.substring(colon + 1).trim();
+                // 同名请求头合并而不是互相覆盖：从抓包页带过来的会话 Cookie 与
+                // 使用者手工填的 Cookie 应当同时生效，否则登录态会莫名丢失
+                String previous = findIgnoreCase(headers, name);
+                if (previous != null) headers.put(previous, headers.get(previous) + "; " + value);
+                else headers.put(name, value);
+                continue;
+            }
+            // 没有冒号：按 Cookie 累积。字段会自动换行，长 Cookie 粘贴进来常带换行，
+            // 逐行判断会把续行当成非法内容，因此先合并再统一处理。
+            if (plain.length() > 0) plain.append("; ");
+            plain.append(text);
+        }
+        if (plain.length() > 0 && looksLikeCookie(plain.toString())) {
+            String merged = plain.toString();
+            String previous = findIgnoreCase(headers, "Cookie");
+            if (previous != null) headers.put(previous, headers.get(previous) + "; " + merged);
+            else headers.put("Cookie", merged);
         }
         return headers;
+    }
+
+    /** 请求头名字符集校验：抓包里的名字只会是字母、数字、连字符与下划线。 */
+    private static boolean isHeaderName(String name) {
+        if (name.isEmpty()) return false;
+        for (int index = 0; index < name.length(); index++) {
+            char current = name.charAt(index);
+            boolean allowed = (current >= 'A' && current <= 'Z') || (current >= 'a' && current <= 'z')
+                    || (current >= '0' && current <= '9') || current == '-' || current == '_';
+            if (!allowed) return false;
+        }
+        return true;
+    }
+
+    /**
+     * 判断一段文本是不是 Cookie 值：以 {@code ;} 或换行分隔的每一段都得是 {@code name=value}。
+     *
+     * <p>这样「这是一个 Cookie」这类说明文字不会被误当成 Cookie 发出去。
+     */
+    private static boolean looksLikeCookie(String text) {
+        String[] chunks = text.split("[;\n]");
+        boolean any = false;
+        for (String chunk : chunks) {
+            String item = chunk.trim();
+            if (item.isEmpty()) continue;
+            if (item.indexOf('=') <= 0) return false;
+            any = true;
+        }
+        return any;
     }
 
     /** 按不区分大小写的名字查找已存在的请求头，返回其原始键名。 */

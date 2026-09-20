@@ -284,6 +284,31 @@ Java 侧在单独执行 `CEYE 确认` 且未发现 Token（配置项或 `CEYE_TO
 （`HttpURLConnection` 对同名头是覆盖语义，分两次 `set` 只会留下最后一个），
 因此需要登录态的 Shiro 目标也能被正确检测。
 
+**抓包格式直接可用（本轮修复）**
+
+「从代理 / Burp 复制出来的东西能不能直接发」看似只是格式问题，
+但四处缺口会让探测在「界面看起来一切正常」的前提下失败：
+
+| 缺口 | 现象 | 修正 |
+| --- | --- | --- |
+| `parseHeaders` 只认 `Key: Value` | 粘贴 `cookie-header` 导出的**裸 Cookie** 时整行丢弃，登录态发不出去 | 无冒号行先合并再判断是否为 Cookie，是则并入 `Cookie` 头 |
+| 沿用抓包头里的 `Content-Length` | 描述的是原请求体长，目标一直等不到体 → **所有探针超时** | `_sanitize_request_headers()` / `ShiroEngine.sendableHeader()` 统一剔除 |
+| 沿用抓包头里的 `Accept-Encoding: gzip` | 目标压缩响应，引擎按明文解析 → 误判成「未到达解析器」 | 改为 `identity` |
+| `exportProxyDetail()` 依赖 `lastProxyFlow`，而它只在拦截放行时赋值 | 未勾选「拦截请求」时点「转发到抓包转换」一律报「还没有可转换的请求包」 | 观察模式下也记下当前流 |
+
+后两条对探测结果的影响是“静默”的：第二条会让所有探针超时并被归类为「无法探测」，
+第三条会让所有探针拿到同一份压缩乱码并被归类为「所有探针响应一致」——
+两者都不是“报错”，而是“给出一个错的结论”，因此必须在发送前剔除。
+
+同一组头也会在 `CaptureBridge.headerLines()`（转发到 Shiro 页）与
+`exportProxyDetail()`（导出到抓包页）里过滤，保证“导出的头就是能直接拿去探测的一组”。
+
+请求体同样属于“格式直接可用”：`&lt;一键发送&gt;` 会把抓包得到的体一并带给 Shiro 页
+（`CaptureBridge.requestBody()`），`ShiroEngine.send()` 则按方法判断是否允许发体——
+`HttpURLConnection` 在 `GET` / `HEAD` 上写入体会静默把方法改成 POST，
+让一个 GET 探测变成 POST 探测（很多接口会因此返回 405）。
+代理面板在观察模式下展示的就是最近一条流量，因此该模式下的导出也成立。
+
 ---
 
 ### 3.7 请求方法与「静态页不是解析器」
@@ -662,8 +687,8 @@ C 运行时会把内层引号当分隔符吃掉。表现为 `{"age":20}` 传到 
 - `探测报告配置`：`probe_report`（`brief` / `detail`，默认 `brief`）
 - `代理配置`：`proxy_bind_host`、`proxy_port`、`proxy_intercept`
 - `抓包转换配置`：`capture_method`、`capture_content_type`、`capture_target`
-- `Shiro 配置`：`shiro_url`、`shiro_cookie_name`、`shiro_key`、`shiro_gcm`、
-  `shiro_echo_header`、`shiro_chain`、`shiro_command`
+- `Shiro 配置`：`shiro_url`、`shiro_cookie_name`、`shiro_key`、`shiro_gcm`、`shiro_echo_header`、
+  `shiro_chain`、`shiro_command`、`shiro_body`
 
 「可长期保存的配置放进配置页」是硬性要求：代理端口、Shiro 密钥、抓包默认方法这类
 每次都要重填的值都必须有配置项，否则只能写死在代码里。

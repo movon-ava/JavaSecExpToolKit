@@ -1010,6 +1010,75 @@ class ProbeMethodTest(unittest.TestCase):
         self.assertIn("未到达 JSON 解析器", result["summary"])
 
 
+class HeaderInputTest(unittest.TestCase):
+    """请求头输入的容错与净化。
+
+    直接从代理 / Burp 复制出来的报文，常见三种形态：整行
+    ``Cookie: a=1``、裸 Cookie 值 ``a=1; b=2``、以及界面自产的 JSON。
+    只要其中一种被整行丢弃，探测就会在“看起来正常”的情况下失败。
+    """
+
+    def test_raw_cookie_value_becomes_cookie_header(self):
+        headers = fj_probe.parse_header_input("JWT_TOKEN=abc.def; JSESSIONID=xyz")
+        self.assertEqual(headers, {"Cookie": "JWT_TOKEN=abc.def; JSESSIONID=xyz"})
+
+    def test_raw_cookie_value_split_by_newlines(self):
+        headers = fj_probe.parse_header_input("JWT_TOKEN=abc.def;\nJSESSIONID=xyz")
+        self.assertEqual(headers["Cookie"], "JWT_TOKEN=abc.def; JSESSIONID=xyz")
+
+    def test_header_lines_merge_same_name(self):
+        headers = fj_probe.parse_header_input("Cookie: a=1\nX-Trace: 1\ncookie: b=2")
+        self.assertEqual(headers["Cookie"], "a=1; b=2")
+        self.assertEqual(headers["X-Trace"], "1")
+
+    def test_json_object_is_still_supported(self):
+        headers = fj_probe.parse_header_input('{"Cookie":"JWT=1"}')
+        self.assertEqual(headers, {"Cookie": "JWT=1"})
+
+    def test_plain_prose_is_rejected_with_readable_error(self):
+        with self.assertRaises(ValueError):
+            fj_probe.parse_header_input("这是一句说明文字")
+
+    def test_trailing_semicolon_does_not_break_cookie(self):
+        headers = fj_probe.parse_header_input("JWT_TOKEN=abc;")
+        self.assertEqual(headers["Cookie"], "JWT_TOKEN=abc")
+
+
+class CaptureHeaderSanitizeTest(unittest.TestCase):
+    """抓包得到的请求头不能照搬发出去。
+
+    旧 ``Content-Length`` 会让目标等一个永远不到的请求体（所有探针超时），
+    ``Accept-Encoding: gzip`` 会让响应被压缩而被误判成“未到达解析器”。
+    """
+
+    def test_content_length_is_dropped(self):
+        cleaned = fj_probe._sanitize_request_headers(
+            {"Content-Length": "9999", "Cookie": "JWT=1"}
+        )
+        self.assertNotIn("Content-Length", cleaned)
+        self.assertEqual(cleaned["Cookie"], "JWT=1")
+
+    def test_gzip_negotiation_is_replaced_with_identity(self):
+        cleaned = fj_probe._sanitize_request_headers({"Accept-Encoding": "gzip, deflate"})
+        self.assertEqual(cleaned["Accept-Encoding"], "identity")
+
+    def test_hop_by_hop_headers_are_dropped(self):
+        cleaned = fj_probe._sanitize_request_headers(
+            {"Connection": "keep-alive", "Proxy-Connection": "keep-alive", "X-Trace": "1"}
+        )
+        self.assertNotIn("Connection", cleaned)
+        self.assertNotIn("Proxy-Connection", cleaned)
+        self.assertEqual(cleaned["X-Trace"], "1")
+
+    def test_business_headers_survive(self):
+        cleaned = fj_probe._sanitize_request_headers(
+            {"Cookie": "JWT=1", "Host": "example.org", "X-Custom": "v"}
+        )
+        self.assertEqual(cleaned["Cookie"], "JWT=1")
+        self.assertEqual(cleaned["Host"], "example.org")
+        self.assertEqual(cleaned["X-Custom"], "v")
+
+
 class ConvertModeTest(unittest.TestCase):
     """报文转换：解析粘贴的原始请求，导出 Cookie 与其他格式。"""
 

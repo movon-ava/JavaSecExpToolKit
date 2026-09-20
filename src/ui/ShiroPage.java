@@ -43,6 +43,7 @@ public final class ShiroPage {
         public JTextField echoHeader;
         public JTextField command;
         public JTextArea headers;
+        public JTextArea body;
         public JButton detect;
         public JButton crack;
         public JButton stop;
@@ -182,6 +183,25 @@ public final class ShiroPage {
         headerScroll.setBorder(BorderFactory.createEmptyBorder());
         headerScroll.setPreferredSize(new Dimension(0, 76));
         form.add(headerScroll, c);
+        row++;
+
+        c.gridx = 0; c.gridy = row; c.weightx = 0; c.fill = java.awt.GridBagConstraints.NONE;
+        c.anchor = java.awt.GridBagConstraints.NORTHWEST; c.insets = new java.awt.Insets(0, 0, 10, 0);
+        form.add(UiKit.label("请求体", Font.BOLD, 13, UiKit.TEXT, sink), c);
+        c.gridx = 1; c.weightx = 1; c.fill = java.awt.GridBagConstraints.BOTH;
+        c.insets = new java.awt.Insets(0, 16, 10, 0);
+        widgets.body.setLineWrap(true);
+        widgets.body.setWrapStyleWord(true);
+        widgets.body.setForeground(UiKit.TEXT);
+        widgets.body.setBackground(java.awt.Color.WHITE);
+        widgets.body.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(UiKit.FIELD_BORDER),
+                BorderFactory.createEmptyBorder(6, 8, 6, 8)));
+        sink.track(widgets.body, Font.PLAIN, 13);
+        JScrollPane bodyScroll = new JScrollPane(widgets.body);
+        bodyScroll.setBorder(BorderFactory.createEmptyBorder());
+        bodyScroll.setPreferredSize(new Dimension(0, 76));
+        form.add(bodyScroll, c);
         return form;
     }
 
@@ -236,11 +256,15 @@ public final class ShiroPage {
         widgets.runOutput.setText("点「执行命令」会投递回显链并取回命令结果，全过程打印在这里。"
                 + System.lineSeparator());
 
-        widgets.outputTabs.addTab("指纹检测", outputScroll(widgets.detectOutput, sink));
-        widgets.outputTabs.addTab("密钥爆破", outputScroll(widgets.crackOutput, sink));
-        widgets.outputTabs.addTab("生成 Payload", outputScroll(widgets.buildOutput, sink));
-        widgets.outputTabs.addTab("执行命令", outputScroll(widgets.runOutput, sink));
-        sink.track(widgets.outputTabs, Font.PLAIN, 13);
+        // 页签只在首次构建时添加：outputTabs 由界面层持有并在多次进入页面之间复用，
+        // 每次构建都 addTab 会让页签数翻倍（4 → 8 → 12）。
+        if (widgets.outputTabs.getTabCount() == 0) {
+            widgets.outputTabs.addTab("指纹检测", outputScroll(widgets.detectOutput, sink));
+            widgets.outputTabs.addTab("密钥爆破", outputScroll(widgets.crackOutput, sink));
+            widgets.outputTabs.addTab("生成 Payload", outputScroll(widgets.buildOutput, sink));
+            widgets.outputTabs.addTab("执行命令", outputScroll(widgets.runOutput, sink));
+            sink.track(widgets.outputTabs, Font.PLAIN, 13);
+        }
 
         panel.add(widgets.outputTabs, BorderLayout.CENTER);
         panel.setMinimumSize(new Dimension(0, 170));
