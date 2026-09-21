@@ -55,6 +55,7 @@ public final class PayloadCheck {
         createAll(payloads);
         failures();
         dualForm();
+        labels();
         safety(payloads);
         endToEnd();
 
@@ -124,6 +125,40 @@ public final class PayloadCheck {
         check("首节点逐个都通过引擎链校验：" + invalid, invalid.isEmpty());
         check("未知载体没有可选首节点", PayloadEngine.firstNodes("nosuchpayload").isEmpty());
         check("单节点链不算合法链", !PayloadEngine.isChainValid(Arrays.asList("javanativepayload")));
+    }
+
+    /**
+     * 节点显示名断言：列式选链要在列内展示可读名称，取不到时回退成标识。
+     *
+     * <p>要求的是「结论确定」：上游实测有 3 个节点没有登记显示名，
+     * 这类节点必须返回空串让调用方回退，而不是返回标识——若直接返回标识，
+     * 调用方就分不清「引擎真的登记了这个名字」与「引擎没有名字」。
+     */
+    private static void labels() {
+        check("已知节点有显示名", !PayloadEngine.nodeLabel("templatesimpl").trim().isEmpty());
+        check("显示名重复查询结果一致",
+                PayloadEngine.nodeLabel("templatesimpl").equals(PayloadEngine.nodeLabel("templatesimpl")));
+        check("未知节点的显示名为空", PayloadEngine.nodeLabel("nosuchnode").isEmpty());
+        check("空标识与空引用的显示名为空",
+                PayloadEngine.nodeLabel("").isEmpty() && PayloadEngine.nodeLabel("   ").isEmpty()
+                        && PayloadEngine.nodeLabel(null).isEmpty());
+
+        // 无副作用：显示名查询不得改变节点目录与参数声明
+        List<String> nodesBefore = PayloadEngine.nodeIds();
+        List<String> paramsBefore = new ArrayList<String>();
+        for (GadgetParam param : PayloadEngine.paramsOf("exec")) paramsBefore.add(param.getKey());
+        for (String node : PayloadEngine.nodeIds()) PayloadEngine.nodeLabel(node);
+        check("显示名查询不改变节点目录", nodesBefore.equals(PayloadEngine.nodeIds()));
+        List<String> paramsAfter = new ArrayList<String>();
+        for (GadgetParam param : PayloadEngine.paramsOf("exec")) paramsAfter.add(param.getKey());
+        check("显示名查询不改变参数声明", paramsBefore.equals(paramsAfter));
+
+        // 载体名必须能取到：列式选链的第一列直接用显示名，取不到会显示成裸标识
+        int missing = 0;
+        for (String payloadId : PayloadEngine.payloadIds()) {
+            if (PayloadEngine.nodeLabel(payloadId).trim().isEmpty()) missing++;
+        }
+        check("全部载体都有显示名（缺失数 " + missing + "）", missing == 0);
     }
 
     private static boolean hasParamKey(List<GadgetParam> params, String key) {

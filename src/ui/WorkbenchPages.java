@@ -29,6 +29,8 @@ public final class WorkbenchPages implements ConfigController.View {
 
     /** 三页的控件：与其它页面一样由装配方持有，反复进出不累积状态。 */
     public final PayloadPage.Widgets payloadWidgets = new PayloadPage.Widgets();
+    /** 列式链选择器：载荷生成页的选链主体，随控件一起只创建一次。 */
+    public final PayloadChainSelector payloadSelector;
     public final PresetPage.Widgets presetWidgets = new PresetPage.Widgets();
     public final ServicePage.Widgets serviceWidgets = new ServicePage.Widgets();
 
@@ -42,6 +44,8 @@ public final class WorkbenchPages implements ConfigController.View {
         this.config = config;
         this.capture = capture;
         this.navigator = navigator;
+        payloadSelector = new PayloadChainSelector(fonts);
+        payloadWidgets.selector = payloadSelector;
         payloadWidgets.onSendToCapture = payload -> {
             capture.body.setText(payload);
             open("capture");

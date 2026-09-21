@@ -258,18 +258,16 @@ public final class UiNavigationCheck {
                 payload.PayloadEngine.isReady());
 
         Object widgets = fieldQuiet(main, "payloadWidgets");
-        check("Payload 页含分组下拉框", fieldQuiet(widgets, "group") instanceof JComboBox);
-        check("Payload 页含载体下拉框", fieldQuiet(widgets, "kind") instanceof JComboBox);
-        check("Payload 页载体列表非空", ((JComboBox<?>) fieldQuiet(widgets, "kind")).getItemCount() > 0);
+        Object selectorObject = fieldQuiet(main, "payloadSelector");
+        check("Payload 页不再有分组下拉框", !hasDeclaredField(widgets, "group"));
+        check("Payload 页不再有载体下拉框", !hasDeclaredField(widgets, "kind"));
+        check("Payload 页不再有追加节点下拉框", !hasDeclaredField(widgets, "next"));
+        check("Payload 页不再有追加节点按钮", !hasDeclaredField(widgets, "addNode"));
+        check("Payload 页含列式链选择器", selectorObject instanceof ui.PayloadChainSelector);
         check("Payload 页含链文本框", fieldQuiet(widgets, "chain") instanceof JTextField);
-        check("Payload 页链初始为所选载体",
-                ((JTextField) fieldQuiet(widgets, "chain")).getText()
-                        .equals(String.valueOf(((JComboBox<?>) fieldQuiet(widgets, "kind")).getSelectedItem())));
-        check("Payload 页含后继节点下拉框", fieldQuiet(widgets, "next") instanceof JComboBox);
-        check("Payload 页首节点候选非空", ((JComboBox<?>) fieldQuiet(widgets, "next")).getItemCount() > 0);
-        check("Payload 页含追加 / 删除末节点 / 清空链按钮",
-                fieldQuiet(widgets, "addNode") instanceof JButton
-                        && fieldQuiet(widgets, "undo") instanceof JButton
+        check("Payload 页链文本只读", !((JTextField) fieldQuiet(widgets, "chain")).isEditable());
+        check("Payload 页含删除末节点 / 清空链按钮",
+                fieldQuiet(widgets, "undo") instanceof JButton
                         && fieldQuiet(widgets, "clear") instanceof JButton);
         check("Payload 页含参数面板", fieldQuiet(widgets, "params") instanceof javax.swing.JPanel);
         check("Payload 页含生成 / 复制 / 导出 / 填入抓包页按钮",
@@ -289,17 +287,104 @@ public final class UiNavigationCheck {
         check("Payload 页生成按钮可见",
                 ((javax.swing.AbstractButton) fieldQuiet(widgets, "build")).isShowing());
 
-        // 端到端：选一个不依赖回连地址的节点，追加后生成，再把载荷填入抓包页
-        System.out.println("Payload 载体下拉项数: "
-                + ((JComboBox<?>) fieldQuiet(widgets, "kind")).getItemCount());
-        selectComboItem(main, widgets, "next", "clojure");
-        clickButton(widgets, "addNode");
-        check("追加节点后链变为两段",
-                ((JTextField) fieldQuiet(widgets, "chain")).getText().endsWith(" -> clojure"));
-        check("链上节点的必填参数已渲染",
-                !((java.util.List<?>) fieldQuiet(widgets, "fields")).isEmpty());
-        check("参数行含命令输入框",
-                hasParamField(widgets, "Clojure.cmd"));
+        final ui.PayloadChainSelector chainSelector = (ui.PayloadChainSelector) selectorObject;
+        System.out.println("Payload 列数（刚进页）: " + chainSelector.columnCount());
+        check("第一列列出全部 28 个载体",
+                chainSelector.listAt(0) != null && chainSelector.listAt(0).getModel().getSize() == 28);
+        check("每个载体都在第一列里",
+                chainSelector.valuesAt(0).containsAll(payload.PayloadEngine.payloadIds()));
+        // 载体自身没有后继（实测 nextNodes(载体) 为空），首节点候选是逐个校验出来的；
+        // 因此「刚进页」就该有第二列，否则使用者会以为没有可接节点。
+        check("刚进页即有「载体列 + 首节点候选列」两列", chainSelector.columnCount() == 2);
+        check("链文本与第一列选中项一致",
+                ((JTextField) fieldQuiet(widgets, "chain")).getText().trim()
+                        .equals(chainSelector.valuesAt(0).get(0)));
+        check("首节点候选列与引擎结论一致",
+                payload.PayloadEngine.firstNodes(chainSelector.valuesAt(0).get(0))
+                        .containsAll(chainSelector.valuesAt(1)));
+        check("列内展示可读显示名而不是裸标识", hasDisplayName(chainSelector, 0));
+
+        // 换载体：点第一列的另一项，链从载体重开
+        selectColumn(chainSelector, 0, "javanativepayload");
+        check("点第一列换载体后链只剩载体",
+                "javanativepayload".equals(((JTextField) fieldQuiet(widgets, "chain")).getText().trim()));
+        check("换载体后仍是两列", chainSelector.columnCount() == 2);
+        check("换载体后候选列换成该载体的首节点",
+                payload.PayloadEngine.firstNodes("javanativepayload").containsAll(chainSelector.valuesAt(1)));
+
+        // 逐级展开：clojure 是已知叶子（实测无后继），选中后不应多出一列空列表
+        selectColumn(chainSelector, 1, "clojure");
+        check("点第二列候选后链变为两段",
+                "javanativepayload -> clojure".equals(
+                        ((JTextField) fieldQuiet(widgets, "chain")).getText().trim()));
+        check("叶子节点不再展开空列", chainSelector.columnCount() == 2);
+        check("链上节点的必填参数已渲染", hasParamField(widgets, "Clojure.cmd"));
+
+        // 换成一个有后继的节点：aspectjweaver -> storeablecachingmap（实测）
+        selectColumn(chainSelector, 1, "aspectjweaver");
+        System.out.println("Payload 列数（一个节点）: " + chainSelector.columnCount());
+        check("选中非叶子节点后展开第三列", chainSelector.columnCount() == 3);
+        check("第三列与引擎的后继结论一致",
+                payload.PayloadEngine.nextNodes("aspectjweaver").containsAll(chainSelector.valuesAt(2)));
+        check("第二列当前选中项就是链上第二项",
+                "aspectjweaver".equals(chainSelector.valuesAt(1).get(
+                        chainSelector.listAt(1).getSelectedIndex())));
+        check("列内展示的显示名取自引擎", hasDisplayName(chainSelector, 2));
+
+        selectColumn(chainSelector, 2, "storeablecachingmap");
+        check("点第三列候选后链变为三段",
+                "javanativepayload -> aspectjweaver -> storeablecachingmap".equals(
+                        ((JTextField) fieldQuiet(widgets, "chain")).getText().trim()));
+        check("三段链的末端无后继，不再展开第四列", chainSelector.columnCount() == 3);
+
+        // 点回第二列换一项：该列之后的节点必须被丢弃
+        selectColumn(chainSelector, 1, "clojure");
+        check("点回第二列换一项后链只剩两项",
+                "javanativepayload -> clojure".equals(
+                        ((JTextField) fieldQuiet(widgets, "chain")).getText().trim()));
+        check("被换掉节点之后的列已丢弃", chainSelector.columnCount() == 2);
+
+        // 重复点当前选中项：链不得变化，也不得出现重复节点
+        selectColumn(chainSelector, 1, "clojure");
+        check("重复点同一候选不改变链",
+                "javanativepayload -> clojure".equals(
+                        ((JTextField) fieldQuiet(widgets, "chain")).getText().trim()));
+
+        // 关键字过滤：只收敛该列，且当前选中项始终保留
+        int beforeFilter = chainSelector.listAt(1).getModel().getSize();
+        setColumnFilter(chainSelector, 1, "zzzz-no-such-node");
+        check("无匹配关键字时该列只剩当前选中项",
+                chainSelector.listAt(1).getModel().getSize() == 1
+                        && "clojure".equals(chainSelector.valuesAt(1).get(0)));
+        setColumnFilter(chainSelector, 1, "");
+        check("清空关键字后候选恢复",
+                chainSelector.listAt(1).getModel().getSize() == beforeFilter);
+        setColumnFilter(chainSelector, 1, "beanshell");
+        int filtered = chainSelector.listAt(1).getModel().getSize();
+        System.out.println("Payload 第二列过滤 beanshell 后项数: " + filtered);
+        check("过滤命中时候选收敛", filtered > 0 && filtered < beforeFilter);
+        // 当前选中项（clojure）不匹配 beanshell，但按规格必须保留，因此断言的是
+        // 「除保留项外都命中关键字」——把保留项也算进去会让断言要么过宽要么恒假
+        check("除保留的选中项外，过滤结果都命中关键字",
+                allValuesMatch(chainSelector.valuesAt(1), "beanshell")
+                        || onlyKeptSelectedMatches(chainSelector.valuesAt(1), "clojure", "beanshell"));
+        setColumnFilter(chainSelector, 1, "");
+        check("过滤不影响链状态",
+                "javanativepayload -> clojure".equals(
+                        ((JTextField) fieldQuiet(widgets, "chain")).getText().trim()));
+        check("过滤框控件可按列取到", chainSelector.filterFieldAt(1) instanceof JTextField);
+
+        // 列数随链增长（每级一列），超过可视宽度时必须能横向滚动到最后一列，
+        // 否则后面的列会被裁掉、使用者以为「没有可接的节点」
+        check("选择器外层可横向滚动",
+                chainSelector.component().getHorizontalScrollBarPolicy()
+                        != javax.swing.JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+        check("选择器内部已挂上各列的候选列表",
+                chainSelector.component().getViewport().getView() != null);
+        check("三列时列宽按列数横向排布",
+                chainSelector.columnCount() == 2
+                        || chainSelector.component().getViewport().getView().getPreferredSize().width > 0);
+
         clickButton(widgets, "build");
         String payloadOutput = ((JTextArea) fieldQuiet(widgets, "output")).getText();
         String payloadStatus = ((javax.swing.JLabel) fieldQuiet(widgets, "status")).getText();
@@ -311,10 +396,11 @@ public final class UiNavigationCheck {
         check("生成后载荷非空", payloadOutput.length() > 200);
         snapshot(frame, "target/ui-check/07-payload.png");
 
-        // 未生成前导出应只给提示：先清空链，避免误写文件
+        // 手工回退路径：清空链后只剩载体，且候选列回到首节点
         clickButton(widgets, "clear");
         check("清空链后只剩载体",
-                !((JTextField) fieldQuiet(widgets, "chain")).getText().contains("->"));
+                "javanativepayload".equals(((JTextField) fieldQuiet(widgets, "chain")).getText().trim()));
+        check("清空链后回到载体与首节点候选两列", chainSelector.columnCount() == 2);
         clickButton(widgets, "toCapture");
         String captureFromPayload = ((JTextArea) fieldQuiet(main, "captureBody")).getText();
         check("填入抓包页后请求体带上生成的载荷",
@@ -406,6 +492,80 @@ public final class UiNavigationCheck {
      * 导航顺序调整过一次就够痛了——写死的数字与索引在每次调整后都要重新数一遍。
      * 这条断言真正校验的是「rebuildNavigation 是否把每个已展开分组的子项都补全」。
      */
+    /** 点某一列的候选：触发该列的选中事件，与真实点击走同一段回调。 */
+    private static void selectColumn(final ui.PayloadChainSelector selector, final int column,
+                                     final String value) throws Exception {
+        onEdt(new Runnable() {
+            public void run() {
+                int row = selector.valuesAt(column).indexOf(value);
+                if (row < 0) throw new IllegalStateException("列中找不到候选: " + value);
+                if (selector.listAt(column).getSelectedIndex() == row) {
+                    // Swing 对「选中同一项」不发事件：这里显式走一次回调入口，
+                    // 使断言验证的是「重复选中不改变链」这条规则，而不是 Swing 的空操作
+                    selector.choose(column, value);
+                    return;
+                }
+                selector.listAt(column).setSelectedIndex(row);
+            }
+        });
+    }
+
+    /** 设置某一列的过滤关键字。 */
+    private static void setColumnFilter(final ui.PayloadChainSelector selector, final int column,
+                                        final String keyword) throws Exception {
+        onEdt(new Runnable() {
+            public void run() {
+                selector.filterFieldAt(column).setText(keyword);
+            }
+        });
+    }
+
+    /** 列内展示的是显示名（与裸标识不同），而不是把所有项都退化成标识。 */
+    private static boolean hasDisplayName(ui.PayloadChainSelector selector, int column) {
+        javax.swing.JList<String> list = selector.listAt(column);
+        java.util.List<String> values = selector.valuesAt(column);
+        if (list == null) return false;
+        for (int index = 0; index < list.getModel().getSize() && index < values.size(); index++) {
+            String shown = list.getModel().getElementAt(index);
+            if (shown != null && !shown.equals(values.get(index))) return true;
+        }
+        return false;
+    }
+
+    /** 过滤后的一列是否每一项都命中关键字（值与显示名任一命中即算，与选择器判据同源）。 */
+    private static boolean allValuesMatch(java.util.List<String> values, String keyword) {
+        if (values.isEmpty()) return false;
+        for (String value : values) {
+            if (!matchesKeyword(value, keyword)) return false;
+        }
+        return true;
+    }
+
+    /** 除第一个（被保留的选中项）以外都命中关键字。 */
+    private static boolean onlyKeptSelectedMatches(java.util.List<String> values, String kept,
+                                                  String keyword) {
+        if (values.isEmpty()) return false;
+        boolean sawKept = false;
+        for (int index = 0; index < values.size(); index++) {
+            String value = values.get(index);
+            if (index == 0 && kept.equals(value)) {
+                sawKept = true;
+                continue;
+            }
+            if (!matchesKeyword(value, keyword)) return false;
+        }
+        return sawKept;
+    }
+
+    /** 值与显示名任一命中关键字即算命中（与选择器的过滤判据一致）。 */
+    private static boolean matchesKeyword(String value, String keyword) {
+        if (value == null) return false;
+        String needle = keyword.toLowerCase(java.util.Locale.ROOT);
+        if (value.toLowerCase(java.util.Locale.ROOT).indexOf(needle) >= 0) return true;
+        String label = payload.PayloadEngine.nodeLabel(value);
+        return label != null && label.toLowerCase(java.util.Locale.ROOT).indexOf(needle) >= 0;
+    }
+
     private static int expectedNavSize() throws Exception {
         Field field = Class.forName("Main").getDeclaredField("NAV_ITEMS");
         field.setAccessible(true);

@@ -12,27 +12,27 @@ import java.nio.file.Paths;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import javax.swing.DefaultComboBoxModel;
 import javax.swing.JComboBox;
 import javax.swing.JTextField;
-import org.vulhub.javachains.common.GadgetParam;
-import payload.PayloadCatalog;
 import payload.PayloadEngine;
 import payload.PayloadResult;
 
 /**
  * Payload 生成页的行为：链状态 + 引擎调用 + 结果复制 / 导出 / 转交。
  *
- * <p>放在界面包而不是 {@code Main} 里，是因为这部分逻辑自成一体：载体与节点选择、
- * 参数随链重建、结果取舍，与主窗口的装配无关；{@code Main} 只做接线。
+ * <p>选链走列式交互：控制器把当前链换算成「每列展示什么」，交给
+ * {@link PayloadChainSelector} 渲染；使用者点某一列的候选时，
+ * 控制器按该列截断链并重算后续列（等价于网页版 Generate 的「点第 N 列重开」）。
  *
- * <p>本类不 new 控件：控件由 {@code Main} 持有并在每次进页时复用，
+ * <p>链的权威仍是 {@link ChainEditor}：本类不另存候选，每次改链都从编辑器现算，
+ * 避免与恶意服务器页（同样使用该编辑器）出现两套规则。
+ *
+ * <p>本类不 new 控件：控件由界面层持有并在每次进页时复用，
  * 因此反复进出页面不会累积状态（与 Shiro / 抓包页的既有做法一致）。
  */
-public final class PayloadController implements ActionListener {
+public final class PayloadController implements ActionListener, PayloadChainSelector.SelectionSink {
 
     /** 页面回写：状态栏与输出区由界面层提供。 */
     public interface View {
@@ -58,15 +58,12 @@ public final class PayloadController implements ActionListener {
         this.widgets = widgets;
         this.sink = sink;
         this.view = view;
-        widgetGroupList();
+        widgets.selector.setSink(this);
         wire();
-        reloadKinds();
+        reloadPayloads();
     }
 
     private void wire() {
-        widgets.group.addActionListener(this);
-        widgets.kind.addActionListener(this);
-        widgets.addNode.addActionListener(this);
         widgets.undo.addActionListener(this);
         widgets.clear.addActionListener(this);
         widgets.build.addActionListener(this);
@@ -79,13 +76,7 @@ public final class PayloadController implements ActionListener {
     public void actionPerformed(ActionEvent event) {
         if (loading) return;
         Object source = event.getSource();
-        if (source == widgets.group) {
-            reloadKinds();
-        } else if (source == widgets.kind) {
-            resetChain();
-        } else if (source == widgets.addNode) {
-            appendSelected();
-        } else if (source == widgets.undo) {
+        if (source == widgets.undo) {
             removeLast();
         } else if (source == widgets.clear) {
             resetChain();
@@ -100,42 +91,45 @@ public final class PayloadController implements ActionListener {
         }
     }
 
-    private void widgetGroupList() {
-        List<String> groups = PayloadCatalog.groups();
-        widgets.group.setModel(new DefaultComboBoxModel<String>(groups.toArray(new String[0])));
+    /**
+     * 点某一列的候选。
+     *
+     * <p>第 0 列是载体：点它等于换载体，链从载体重开。
+     * 第 N 列（N≥1）点新候选时，链截断为「前 N-1 项 + 新候选」，
+     * 该列之后的节点全部丢弃——它们的候选本来就依赖被换掉的那一项。
+     */
+    @Override
+    public void select(int column, String value) {
+        if (loading || value == null || value.trim().isEmpty()) return;
+        List<String> chain = editor.snapshot();
+        if (column == 0) {
+            editor.reset(value);
+        } else {
+            // 允许 column == chain.size()：那是「在末尾列的候选里追加一项」。
+            // 写成 column > chain.size() - 1 会把追加也挡掉，
+            // 表现为「点第二列的候选毫无反应」（实测踩到，断言抓出）。
+            if (column > chain.size()) return;
+            editor.reset(chain.get(0));
+            for (int index = 1; index < column; index++) editor.append(chain.get(index));
+            editor.append(value);
+        }
+        refreshChainView();
     }
 
-    /** 按当前分组刷新载体下拉框，并重开一条链。 */
-    private void reloadKinds() {
+    /** 首列直接列出运行时载体目录：分组分类是「一维下拉框」时代的辅助，列式下不再需要。 */
+    private void reloadPayloads() {
         loading = true;
         try {
-            String group = (String) widgets.group.getSelectedItem();
-            List<String> runtime = PayloadEngine.payloadIds();
-            List<String> available = new ArrayList<String>();
-            for (String id : PayloadCatalog.membersOf(group)) {
-                // 分组表是静态的，运行时目录才是权威：表里多写的项不放进下拉框，
-                // 否则使用者选中一个运行时不存在的载体，点生成只会得到一句报错。
-                if (runtime.contains(id)) available.add(id);
-            }
-            if (available.isEmpty()) available.addAll(runtime);
-            widgets.kind.setModel(new DefaultComboBoxModel<String>(available.toArray(new String[0])));
+            editor.reset(PayloadEngine.payloadIds().isEmpty() ? "" : PayloadEngine.payloadIds().get(0));
         } finally {
             loading = false;
         }
-        resetChain();
+        refreshChainView();
     }
 
     /** 换载体即重开一条链：载体不同，可用节点必然不同。 */
     private void resetChain() {
-        editor.reset((String) widgets.kind.getSelectedItem());
-        refreshChainView();
-    }
-
-    private void appendSelected() {
-        if (!editor.append((String) widgets.next.getSelectedItem())) {
-            view.setStatus(editor.isEmpty() ? "请先选择载荷载体。" : "没有可追加的节点。");
-            return;
-        }
+        editor.reset(editor.head());
         refreshChainView();
     }
 
@@ -147,17 +141,59 @@ public final class PayloadController implements ActionListener {
         refreshChainView();
     }
 
-    /** 链变化后统一刷新：链文本、候选节点、参数行。 */
+    /** 链变化后统一刷新：链文本、各列候选、参数行。 */
     private void refreshChainView() {
         widgets.chain.setText(editor.display());
-        List<String> candidates = editor.candidates();
-        widgets.next.setModel(new DefaultComboBoxModel<String>(candidates.toArray(new String[0])));
+        widgets.selector.render(columns());
         rebuildParams();
-        if (candidates.isEmpty() && editor.nodeCount() > 0) {
-            view.setStatus("当前链已到末端，没有可继续追加的节点。");
+        if (editor.isEmpty()) {
+            view.setStatus("没有可用的载荷载体：请确认 java-chains 已就绪。");
+        } else if (editor.nodeCount() == 0) {
+            view.setStatus("已选载体 " + editor.head() + "，请在右侧列中继续选择节点。");
         } else {
-            view.setStatus("当前链：" + editor.nodeCount() + " 个节点，可选后继 " + candidates.size() + " 个。");
+            view.setStatus("当前链：" + editor.nodeCount() + " 个节点，末端"
+                    + (editor.candidates().isEmpty() ? "没有可继续追加的节点。" : "还可继续选择。"));
         }
+    }
+
+    /**
+     * 把当前链换算成列：第 0 列是载体目录，第 K 列（K≥1）是第 K 项的可选后继。
+     *
+     * <p>候选集合只来自引擎（{@link ChainEditor#candidates()} 内部走
+     * {@code firstNodes} / {@code nextNodes}），界面不维护任何节点关系表。
+     * 末端没有后继时不再新增列——多出一列空列表会让人以为「还没加载出来」。
+     */
+    private List<PayloadChainSelector.Column> columns() {
+        List<PayloadChainSelector.Column> columns = new ArrayList<PayloadChainSelector.Column>();
+        List<String> payloads = PayloadEngine.payloadIds();
+        columns.add(new PayloadChainSelector.Column("载荷载体", payloads, labels(payloads), editor.head()));
+        List<String> chain = editor.snapshot();
+        for (int index = 1; index < chain.size(); index++) {
+            // 第 1 级节点的候选不能查「后继」：实测载体自身没有后继，
+            // 首节点是按「载体 + 候选」逐个校验出来的（与 ChainEditor 同一判据）。
+            List<String> options = index == 1
+                    ? PayloadEngine.firstNodes(chain.get(0))
+                    : PayloadEngine.nextNodes(chain.get(index - 1));
+            columns.add(new PayloadChainSelector.Column("第 " + index + " 级节点",
+                    options, labels(options), chain.get(index)));
+        }
+        List<String> candidates = editor.candidates();
+        if (!candidates.isEmpty()) {
+            int level = Math.max(1, chain.size());
+            columns.add(new PayloadChainSelector.Column("第 " + level + " 级节点",
+                    candidates, labels(candidates), ""));
+        }
+        return columns;
+    }
+
+    /** 列内展示显示名：引擎没登记名字的节点回退成标识，避免出现空行。 */
+    private static List<String> labels(List<String> ids) {
+        List<String> labels = new ArrayList<String>();
+        for (String id : ids) {
+            String label = PayloadEngine.nodeLabel(id);
+            labels.add(label == null || label.trim().isEmpty() ? id : label);
+        }
+        return labels;
     }
 
     /**
@@ -171,7 +207,7 @@ public final class PayloadController implements ActionListener {
         fields.clear();
         fields.addAll(editor.paramFields());
         widgets.fields = fields;
-        PayloadPage.renderParams(widgets.params, fields, sink);
+        PayloadPage.renderParams(widgets.params, fields, sink, true);
         for (PayloadPage.ParamField field : fields) {
             String value = previous.get(field.key);
             if (value == null || value.isEmpty()) continue;

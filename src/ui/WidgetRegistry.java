@@ -33,6 +33,8 @@ public final class WidgetRegistry {
     public ConfigForm configForm;
 
     public PayloadPage.Widgets payload;
+    /** 列式链选择器：载荷生成页的选链主体，自检直接读它的列与选中项。 */
+    public PayloadChainSelector payloadSelector;
     public PresetPage.Widgets preset;
     public ServicePage.Widgets service;
 
@@ -44,6 +46,7 @@ public final class WidgetRegistry {
         entries.put("navigationList", navigationList);
         entries.put("navigationItems", navigationItems);
         entries.put("payloadWidgets", payload);
+        entries.put("payloadSelector", payloadSelector);
         entries.put("presetWidgets", preset);
         entries.put("serviceWidgets", service);
 

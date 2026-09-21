@@ -8,6 +8,8 @@ import org.vulhub.javachains.common.Result;
 import org.vulhub.javachains.core.ChainsRuntime;
 import org.vulhub.javachains.core.ExecutionEngine;
 import org.vulhub.javachains.core.GadgetFactory;
+import org.vulhub.javachains.core.metadata.MetadataRegistry;
+import org.vulhub.javachains.core.metadata.NodeMeta;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -128,6 +130,30 @@ public final class PayloadEngine {
             return ExecutionEngine.getParamsFromGadget(nodeId.trim());
         } catch (Throwable error) {
             return new ArrayList<GadgetParam>();
+        }
+    }
+
+    /**
+     * 节点的可读显示名。
+     *
+     * <p>列式选链要在列内展示节点名称，而节点标识是引擎注册时小写的类名
+     * （例如 {@code templatesimpl}），直接展示既看不出用途也不便挑选。
+     * 显示名来自引擎自己的元数据，本方法只读，不改变引擎状态。
+     *
+     * <p>标识为空、节点不在目录内或引擎没有登记显示名时返回空串，
+     * 由调用方决定回退成标识——上游实测有 3 个节点没有显示名，
+     * 这里不能把「没有名字」伪造成一个名字。
+     */
+    public static String nodeLabel(String nodeId) {
+        init();
+        if (!initialized || nodeId == null || nodeId.trim().isEmpty()) return "";
+        try {
+            NodeMeta meta = MetadataRegistry.getNodeMeta(nodeId.trim());
+            if (meta == null) return "";
+            String name = meta.getName();
+            return name == null ? "" : name.trim();
+        } catch (Throwable error) {
+            return "";
         }
     }
 

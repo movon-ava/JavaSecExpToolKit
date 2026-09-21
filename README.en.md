@@ -202,7 +202,7 @@ readable hint instead of an engine error — set CEYE Token on the settings page
 | Path | Purpose |
 | --- | --- |
 | `src/` | Composition root `Main.java` (311 lines: wiring and page switching only), `pom.xml`, the local proxy (`proxy/ProxyServer.java`), and the Shiro module (`shiro/`) |
-| `src/ui/` | Per-feature **views** and **behaviour** kept apart: views `*Page` / `*Form` (`HomePage` / `ProbePage` / `CapturePage` / `ProxyPage` / `ShiroPage` / `PayloadPage` / `PresetPage` / `ServicePage` / `ConfigPage` / `ConfigForm`), behaviour `*Controller` (`NavController` / `ProbeController` / `CaptureController` / `ProxyController` / `ShiroController` / `ConfigController` / `PayloadController` / `PresetController` / `ServiceController` / `WorkbenchPages`), plus styling `UiKit`, the shared `ChainEditor`, and the self-check facade `UiHandle` + `WidgetRegistry` |
+| `src/ui/` | Per-feature **views** and **behaviour** kept apart: views `*Page` / `*Form` (`HomePage` / `ProbePage` / `CapturePage` / `ProxyPage` / `ShiroPage` / `PayloadPage` / `PresetPage` / `ServicePage` / `ConfigPage` / `ConfigForm`), behaviour `*Controller` (`NavController` / `ProbeController` / `CaptureController` / `ProxyController` / `ShiroController` / `ConfigController` / `PayloadController` / `PresetController` / `ServiceController` / `WorkbenchPages`), plus styling `UiKit`, the shared `ChainEditor`, the column selector `PayloadChainSelector` (the payload page's chain picker, holding no chain state), and the self-check facade `UiHandle` + `WidgetRegistry` |
 | `src/payload/` | Generic payload generation (`PayloadEngine` / `PayloadCatalog` / `PayloadResult`), decoupled from concrete features such as Shiro |
 | `src/service/` | Malicious servers (`ServiceManager` / `ServiceSpec` / `ServiceEndpoint` / `ServiceDefaults`): the only package that talks to the java-chains server-side adapters |
 | `src/preset/` | Built-in preset chains (`PresetCatalogService` / `PresetItem`): the only package that touches the upstream preset model, exposing plain data |
@@ -394,17 +394,26 @@ conclusion or the generated payload.
 visual page for generating exploit-chain payloads for Java vulnerabilities. It builds payloads
 **in local memory only**: no network requests, no files written.
 
-Three steps:
+The interaction is **pick-a-column** (matching the web UI's Generate page):
 
-1. Pick a **carrier group** (serialization / JSON parsers / JNDI / framework-specific / special
-   protocols / MySQL masquerade / other), then a concrete carrier such as `javanativepayload`,
-   `fastjsonpayload` or `shiropayload`
-2. Append nodes one level at a time with `追加节点`; the candidate list uses the **engine's own**
-   criterion (each `carrier + candidate` pair is handed to the engine for chain validation), not a
-   second set of rules written locally. The current chain and the number of available successors
-   update live
-3. Node parameters become a form automatically (including dropdown choices and required markers);
+1. The first column lists all 28 **payload carriers** (`javanativepayload`, `fastjsonpayload`,
+   `shiropayload`, ...). Click one and the first-level node candidates open to its right
+2. Click an entry in the second column and it is appended to the chain, which opens the next
+   column to the right; and so on. Entries show the engine's registered display name (for example
+   `TemplatesImpl加载字节码`); hover to see the node id
+3. **Changing a middle level costs one click**: click a different candidate in an earlier column
+   and the chain restarts at that column, dropping everything after it — no more repeatedly
+   clicking `删除末节点` to back up
+4. When a column has hundreds of candidates, narrow it with the filter box above that column
+   (matches name or id; the currently selected node is never filtered out)
+5. Node parameters become a form automatically (including dropdown choices and required markers);
    `生成载荷` produces the Base64 payload
+
+Candidates always come from the **engine's own** criterion (first-level nodes validate each
+`carrier + candidate` pair; successors come from the engine's successor table). Neither the page
+nor this repository keeps a second node-relationship table. The chain text is read-only — a chain
+is built by clicking, never typed. A node without successors simply does not open another column,
+so a leaf never leaves an empty list behind.
 
 The result shows the chain order, byte length, a body-free digest and the Base64 text. `复制`
 copies it, `导出文件` writes it to the default export directory from the settings page (the
@@ -416,9 +425,16 @@ nodes are kept as-is, and choosing an address stays the operator's decision. The
 carrier group table with the runtime catalog is asserted by `PayloadCheck`, so a missing or extra
 registration fails outright.
 
+The web UI's **surrounding features are deliberately not implemented**: brute-force matrix, stepped
+debug generate, chain sharing, usage statistics, saving presets, tag filtering with
+intersection/union, and output decompilation or serialization parsing. Preset chains stay a separate
+page (`Payload → 预设链`), and the malicious-server page keeps its own carrier-group dropdown
+(that one is a publishing flow).
+
 The generic part lives in `src/payload/` (independent of any vulnerability type — the Shiro
-module is just one consumer), and the UI wiring is in `src/ui/PayloadPage.java` and
-`src/ui/PayloadController.java`. See [docs/DESIGN-payload.md](docs/DESIGN-payload.md).
+module is just one consumer), the UI wiring is in `src/ui/PayloadPage.java`,
+`src/ui/PayloadController.java` plus the column selector `src/ui/PayloadChainSelector.java`.
+See [docs/DESIGN-payload.md](docs/DESIGN-payload.md).
 
 ## Preset chains
 
@@ -542,7 +558,7 @@ E:\java\jdk17\bin\java.exe @opens -cp "target\tmp2;target\classes;lib\java-chain
 | `UiSwitchEndToEndCheck` | Captured headers fed to the probe page through the real Python engine | Yes |
 | `UiShiroCheck` | Full Shiro page flow | Yes |
 | `ShiroCheck` | Shiro engine (detect / crack / chain build / echo) | Yes |
-| `PayloadCheck` | Payload engine (catalog, groups, navigation, dual form, failure paths, safety) | Yes |
+| `PayloadCheck` | Payload engine (catalog, groups, navigation, node display names, dual form, failure paths, safety) | Yes |
 | `ProxyServerCheck` | The proxy itself: plain-HTTP capture, 404 handling, `CONNECT` tunneling with byte pass-through, callbacks, `find` / `clear` | No |
 
 Dependency-boundary and toolchain checks:

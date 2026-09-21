@@ -263,6 +263,7 @@ public final class Main implements UiHandle.Source {
         registry.shiro = shiroWidgets;
         registry.configForm = configForm;
         registry.payload = workbench.payloadWidgets;
+        registry.payloadSelector = workbench.payloadSelector;
         registry.preset = workbench.presetWidgets;
         registry.service = workbench.serviceWidgets;
     }

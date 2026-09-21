@@ -2383,3 +2383,188 @@ tasks 44 项全部勾选（含收尾三项与监督复核）。
 3. `src/proxy/ProxyServer.java`（768 行）与 `src/shiro/ShiroEngine.java`（715 行）
    本次未拆：都在 800 行以内且有独立自检，属于独立课题。
 4. 界面自检仍需两个 `--add-opens`（预设链含字节码类 gadget），运行方式见 `run.ps1`。
+
+## 2026-09-21（本轮：Payload 生成页对齐 JavaChains Generate）
+
+### 一、任务
+
+用户指令：「将 payload 生成功能改为 JavaChains 的 Generate 功能，保留自定义 gadget 功能，
+去掉其他复杂的功能。」
+
+拆成三条可核对的边界：
+
+1. 选链交互改成网页版 `Generate` 页的形态：**保留自定义 gadget**（手点链）这一路；
+2. 去掉本页现有交互里**多余的那一层**（下拉框 + 追加按钮的两步一次）；
+3. 网页版 Generate 的**周边复杂能力不做**：暴力矩阵、步进调试生成、分享链、常用链路统计、
+   保存预设、Tag 筛选与并集 / 交集匹配、输出反编译与序列化解析。
+
+### 二、先实测再动手（结论有据，不是推测）
+
+按「机制性问题必须实测」的要求，先解包上游 `java-chains-cli-2.0.0-beta4.jar` 核对事实：
+
+| 实测项 | 结论 |
+| --- | --- |
+| 上游 Generate 页的选链组件 | `ChainColumnSelector`：列式展开，点第 N 列候选即从第 N 列重开链 |
+| 上游 Generate 页的周边能力 | `BruteMatrixEditor`（暴力矩阵）、`StudioDebugGeneratePanel`（步进调试）、`ShareChainMenu`（分享链）、`RecentChainsButton`（常用统计）、`SavePresetDialog`（保存预设）、Tag 筛选与并集/交集——**均不属于「生成」这条主路径** |
+| 节点显示名 | `MetadataRegistry.getNodeMetaMap()` 实测 429 个节点，其中 **426 个有显示名**，3 个没有（`HutoolJndiDSFactory` 等）；载体名全为中文 |
+| `ChainsRuntime.start()` 是否填充元数据 | **是**，`start()` 之后 429 个节点的元数据已可查，不需要额外初始化 |
+| 单列候选规模 | `javanativepayload` 首节点 **104** 项、`objectpayload` 达 **118** 项；28 个载体合计 1748 项，全量校验 **49 ms** |
+| 载体自身有无后继 | **无**（`nextNodes(载体)` 为空集），首节点必须逐个做链校验 |
+| 已知真实路径 | `javanativepayload -> aspectjweaver -> storeablecachingmap`；`clojure` 是**叶子**（无后继） |
+
+### 三、改动内容
+
+| 文件 | 动作 |
+| --- | --- |
+| `src/ui/PayloadChainSelector.java` | 新增：列式链选择器（366 行），列容器 + 每列过滤框 + 候选列表 + 横向滚动；不持有链状态 |
+| `src/ui/PayloadPage.java` | 表单区改为「链文本一行 + （选择器 ｜ 参数侧栏）」；`renderParams` 增加紧凑重载（原签名委派，服务页零改动） |
+| `src/ui/PayloadController.java` | 按 `ChainEditor` 现算每列候选；点某列即截断重开；删除 `group` / `kind` / `next` / `addNode` 四个控件的行为 |
+| `src/payload/PayloadEngine.java` | 新增只读 `nodeLabel(String)`；既有 10 个公开方法签名与语义零改动 |
+| `src/ui/WorkbenchPages.java`、`src/ui/WidgetRegistry.java`、`src/Main.java` | 装配与自检登记（选择器随控件只创建一次；`payloadSelector` 登记进门面） |
+| `tests/UiNavigationCheck.java` | Payload 段改写为列式断言（控件增删、列数、逐级展开、点回重开、过滤、叶子不展开空列） |
+| `tests/PayloadCheck.java` | 新增 `labels()` 一组断言（61 → 68 条） |
+| `openspec/changes/payload-generate-view/**` | 新增 change：proposal / design / specs / tasks |
+
+### 四、修掉的两个真实缺陷（先给根因）
+
+**1）点第二列候选毫无反应。**
+
+根因：`PayloadController.select` 的边界判断写成 `if (column > chain.size() - 1) return;`。
+链长为 1 时（只有载体），末尾列是 `column == 1`，而 `1 > 0` 成立，**追加被当成越界挡掉**。
+正确判据是「允许 `column == chain.size()`」（在末尾列追加），即 `column > chain.size()`。
+由 `UiNavigationCheck` 的「点第二列候选后链变为两段」断言抓出，不是靠肉眼发现。
+
+**2）过滤框输入第二个字符会落空。**
+
+根因：过滤变化时整体重建列，正在输入的 `JTextField` 被换掉，光标随之丢失。
+改为只重绘列表内容（`repaintColumns`），列结构不动，过滤框实例保持不变。
+
+两处都不是试错改出来的：先定位到「追加被边界挡掉」与「输入控件被重建」，再动手。
+
+### 五、验证（全部本机实测）
+
+| 验证入口 | 结果 |
+| --- | --- |
+| `ProxyServerCheck` | 退出码 0 |
+| `ShiroCheck` | 退出码 0 |
+| `PayloadCheck` | 退出码 0，**68** 条断言（原 61 + 显示名 7） |
+| `UiShiroCheck` | 退出码 0 |
+| `UiNavigationCheck` | 退出码 0，**196** 条断言（原 169），失败 0 |
+| `UiSwitchEndToEndCheck` | 退出码 0，94 条断言 |
+| `python -X utf8 -m unittest discover -s tests` | 99 项 OK |
+| `python -X utf8 tools\audit_boundary.py` | 无环、无越界、无叶子层出边、无内核反向依赖，结论「全部通过」 |
+| `openspec validate --all --strict` | 6 项全 passed |
+| `.\build.ps1` | 构建成功，JAR 时间 `2026-09-21 20:09:58`，310252 字节，61 个源文件时间校验通过 |
+
+端到端实测（列式交互）：点第一列 `javanativepayload` → 点第二列 `clojure` → 生成成功 950 字节；
+点第二列 `aspectjweaver` → 展开第三列 → 点 `storeablecachingmap` → 三段链；
+点回第二列 `clojure` → 第三列被丢弃；过滤框输入 `beanshell` → 第二列 104 项收敛到 3 项，
+清空后恢复 104 项，链状态不变。
+
+### 六、文档同步
+
+- `README.md` / `README.en.md`：Payload 生成章节改写为列式交互（四条规则、过滤、"周边功能没做"清单）、
+  项目结构的 `src/ui/` 行补列式选择器、测试表补「节点显示名」——中英一一对应。
+- `docs/DESIGN-payload.md`：3.1 能力范围改写、新增 5.1 列式交互（含界面示意图与四条规则）、
+  实施顺序补 change D、新增 9.1 列式改造期间的实测发现（9 项）。
+- `PROGRESS.md`：两行状态改写 + 一条已完成阶段 + 三条后续局限。
+
+### 七、多 Agent 协作
+
+| 角色 | 主要工作 |
+| --- | --- |
+| 主 agent | 上游 jar 解包实测、change 规划件、文档与报告、构建收尾 |
+| 利用链 agent（exploit） | `src/payload/PayloadEngine.java` 的节点显示名只读查询 |
+| 界面 agent（ui） | 列式选择器、Payload 页与控制器改造、装配与门面登记 |
+| 测试 agent（test） | `PayloadCheck` 显示名断言、`UiNavigationCheck` 列式断言与三个辅助方法 |
+| 监督 agent（supervisor） | 独立复核写入域、断言未放宽、JAR 时间；复核结论见下 |
+
+### 八、监督复核（独立复算，不引用实现者结论）
+
+| 复核项 | 结论 |
+| --- | --- |
+| 越界改动 | 无：`git status` 的改动全部落在 proposal 的 Impact 表内；`src/config/**`、`src/util/**`、`src/pom.xml` 未被触碰 |
+| 空承诺 | 无 TODO / FIXME / 空方法体；`PayloadController` 与 `PayloadChainSelector` 的方法均有实现 |
+| 断言放宽 | 未放宽：`PayloadCheck` 61 条既有断言逐条保留（只新增 7 条）；`UiNavigationCheck` 新增 27 条，未删除既有断言（原 169 → 196） |
+| 依赖合规 | `src/pom.xml` 未改，未引入新依赖；列式选择器只用 JDK Swing |
+| 构建一致性 | 亲自跑 `build.ps1`：JAR `2026-09-21 20:09:58` 晚于 61 个源文件 |
+| 文档同步 | 中英 README 的 Payload 章节与测试表行一一对应；两份未出现单边内容 |
+| 配置落页 | 本次**未新增**可持久化配置项（`payload_export_dir` 键与分组保持原状），无配置漏页问题 |
+| 既有功能 | 恶意服务器页（同样使用 `ChainEditor` 与 `PayloadPage.renderParams`）自检全绿，行为未变 |
+
+### 九、如实说明的局限
+
+1. 列式选择器每列固定 244px 宽；列数多于一屏时需要横向滚动才能看到末尾列（已实现自动滚动到新列）。
+2. 分支型链仍未支持：本页构建的是线性链，一个节点接多个后继后再汇合的场景没有暴露到界面。
+3. `nodeLabel` 依赖上游元数据：上游若给不出显示名，界面回退展示节点标识（当前 429 个节点里 3 个属于这种情况）。
+4. 上游的暴力矩阵、步进调试生成、分享链、常用统计、保存预设、Tag 筛选与输出解析**明确不做**，
+   已在 proposal 的 Non-goals 与两份 README 中写明，避免被误读为「漏做」。
+5. 恶意服务器页的「载体分组 + 载体」下拉框保留原样：那是发布流程的选择器，不是本页的选链体验。
+
+## 2026-09-21（本轮收尾：构建复验 + 仓库损坏对象清理 + Git 提交推送）
+
+### 一、构建复验（AGENTS.md「每次项目构建后验证 jar 包构建时间是否正确」）
+
+首次核对发现 `JavaSecExpToolKit.jar`（20:15:53）**早于** `src/ui/PayloadController.java`（20:16:45），
+按约束必须重新构建。重新执行 `.\build.ps1`：
+
+| 项 | 结果 |
+| --- | --- |
+| 构建结论 | `BUILD SUCCESS` |
+| JAR 路径 | `JavaSecExpToolKit.jar` |
+| JAR 时间 | `2026-09-21 20:20:47`（晚于 61 个源文件，时间守卫通过） |
+| JAR 大小 | 310247 字节 |
+| 运行时依赖 | `lib/java-chains-cli-2.0.0-beta4.jar`（184569201 字节） |
+
+### 二、构建后复跑自检（build 会 clean 掉 target，测试类必须重编）
+
+重新 `javac` 编译 `tests\*.java` 后逐项复跑：
+
+| 入口 | 退出码 | [ok] | [FAIL] |
+| --- | --- | --- | --- |
+| `PayloadCheck` | 0 | 68 条断言 | 0 |
+| `UiNavigationCheck` | 0 | 196 | 0 |
+| `ProxyServerCheck` | 0 | 36 | 0 |
+| `ShiroCheck` | 0 | 45 | 0 |
+| `UiShiroCheck` | 0 | 26 | 0 |
+| `UiSwitchEndToEndCheck` | 0 | 94 | 0 |
+| `python -m unittest discover -s tests` | 0 | 99 项 OK | 0 |
+| `python tools\audit_boundary.py` | 0 | 结论「全部通过」 | 0 |
+| `openspec validate --all --strict` | 0 | 6 passed | 0 |
+
+### 三、仓库损坏对象清理（根因分析）
+
+现象：`git fetch` 报 `fatal: too-short tree object`，随后 `geometric-repack` 失败。
+
+根因：`.git/objects/76/ec3c3ed28687eab45219104790d7285049afc8` 是一个**不可达的 dangling tree**，
+体积仅 18 字节（合法 tree 至少 20+ 字节，无法被解析），`git fsck` 归类为
+`dangling tree` + `badTree: cannot be parsed as a tree`；`geometric-repack` 在打包时会遍历全部对象，
+遇到无法解析的对象即中止，导致 fetch 后处理失败。
+
+处置：确认该对象不被任何 ref / 提交引用（本身就是 dangling），用 Python 脚本经路径越界校验后定向删除该单个文件；
+**未执行任何仓库级危险操作**（未 `git gc --prune`、未删 pack、未动其他对象）。
+
+结果：`git fetch origin` 恢复正常（`= [up to date] main -> origin/main`），
+`git fsck --connectivity-only` 仅剩正常的 dangling commit/blob 提示，无 `error` 行。
+
+### 四、Git 管理与推送
+
+- 提交范围严格限定在本轮 change 的 Impact 表内：13 个已跟踪文件 + 3 个新增项
+  （`src/ui/PayloadChainSelector.java`、`openspec/changes/archive/2026-09-21-payload-generate-view/`、
+  `openspec/specs/payload/`）。
+- 未触碰 `src/config/**`、`src/util/**`、`src/pom.xml`，未引入任何新依赖。
+- 推送前核对：本地 HEAD 与 `origin/main` 基线一致（`666403f`），无需先 rebase。
+- `.backups/` 保持最近三次（`20260921-192005` / `195436` / `201833`），本轮未新增源码改动故未再追加备份。
+
+### 五、多 Agent 协作（本轮）
+
+| 角色 | 主要工作 |
+| --- | --- |
+| 主 agent | 构建复验、仓库损坏对象根因定位与定向清理、自检复跑、提交推送 |
+| 测试 agent | 复跑六个 Java 自检入口与 Python 单测、边界审计、openspec 校验 |
+
+### 六、如实说明的局限
+
+1. 仓库内仍有大量 dangling commit/blob（属正常历史残留，不影响 fetch / 提交 / 推送），
+   如需彻底回收需人工确认后执行 `git gc --prune=now`，本轮未做。
+2. `openspec/changes/` 下 `java-chains-workbench`（36/42）与 `payload-generation`（0/36）两个 change 仍在办，未归档。

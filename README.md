@@ -178,7 +178,7 @@ CEYE 确认作为附属阶段时仍依赖 DNS 阶段。未填 Token 就执行 `C
 | 路径 | 用途 |
 | --- | --- |
 | `src/` | 组合根 `Main.java`（311 行，只做装配与切页）、`pom.xml`、本地代理（`proxy/ProxyServer.java`）与 Shiro 模块（`shiro/`） |
-| `src/ui/` | 各功能页的**视图**与**行为**分开放：视图 `*Page` / `*Form`（`HomePage` / `ProbePage` / `CapturePage` / `ProxyPage` / `ShiroPage` / `PayloadPage` / `PresetPage` / `ServicePage` / `ConfigPage` / `ConfigForm`），行为 `*Controller`（`NavController` / `ProbeController` / `CaptureController` / `ProxyController` / `ShiroController` / `ConfigController` / `PayloadController` / `PresetController` / `ServiceController` / `WorkbenchPages`），另有样式 `UiKit`、共用链编辑 `ChainEditor`、自检门面 `UiHandle` + `WidgetRegistry` |
+| `src/ui/` | 各功能页的**视图**与**行为**分开放：视图 `*Page` / `*Form`（`HomePage` / `ProbePage` / `CapturePage` / `ProxyPage` / `ShiroPage` / `PayloadPage` / `PresetPage` / `ServicePage` / `ConfigPage` / `ConfigForm`），行为 `*Controller`（`NavController` / `ProbeController` / `CaptureController` / `ProxyController` / `ShiroController` / `ConfigController` / `PayloadController` / `PresetController` / `ServiceController` / `WorkbenchPages`），另有样式 `UiKit`、共用链编辑 `ChainEditor`、列式链选择器 `PayloadChainSelector`（载荷生成页的选链主体，不持有链状态）、自检门面 `UiHandle` + `WidgetRegistry` |
 | `src/payload/` | 通用载荷生成（`PayloadEngine` / `PayloadCatalog` / `PayloadResult`），与 Shiro 等具体功能解耦 |
 | `src/service/` | 恶意服务器（`ServiceManager` / `ServiceSpec` / `ServiceEndpoint` / `ServiceDefaults`）：唯一直接调用 java-chains 服务端适配器的包 |
 | `src/preset/` | 内置预设链读取（`PresetCatalogService` / `PresetItem`）：唯一引用上游预设模型的包，纯数据出参 |
@@ -347,13 +347,20 @@ Shiro 页为**每个动作保留独立回显框**（`指纹检测` / `密钥爆�
 `主页 → Payload → Payload 生成` 把 java-chains 的「载体 + gadget 节点」能力做成了可视化界面，
 用来为各类 Java 漏洞生成利用链载荷。它**只在本地内存里构建载荷**：不发起网络请求，也不写文件。
 
-用法是三步：
+用法是**点列选链**（对齐网页版 java-chains 的 Generate）：
 
-1. 选**载体分组**（序列化 / JSON 解析器 / JNDI / 框架专用 / 特殊协议 / MySQL 伪装 / 其他），
-   再选具体载体，例如 `javanativepayload`、`fastjsonpayload`、`shiropayload`
-2. 用 `追加节点` 逐级拼链；候选节点是**引擎自己的**判据（把「载体 + 候选节点」交给引擎做链校验，
-   通过的才列出来），不是本地另写的一套规则。当前链与「可选后继 N 个」实时显示在界面上
-3. 节点参数按链自动生成表单（含下拉框选项与必填标记），点 `生成载荷` 得到 Base64
+1. 第一列直接列出全部 28 个**载荷载体**（如 `javanativepayload`、`fastjsonpayload`、`shiropayload`），
+   点一个即在右侧展开该载体的第一级节点候选
+2. 在第二列点一项，链上就追加这一项，并在右边继续展开下一列；如此逐级往下，
+   列内显示的是引擎登记的中文名称（例如「TemplatesImpl加载字节码」），鼠标停上去可看到节点标识
+3. **改中间某一层只需一次点击**：点回前面某一列的另一个候选，链即以该列为界重开，
+   它之后的节点自动丢弃——不必再靠「删除末节点」反复退
+4. 候选上百项时用每列上方的过滤框收敛（按名称或标识匹配；当前已选中的项不会被过滤掉）
+5. 节点参数按链自动生成表单（含下拉框选项与必填标记），点 `生成载荷` 得到 Base64
+
+候选节点始终是**引擎自己的**判据（首节点按「载体 + 候选节点」逐个校验，后继节点查引擎的后继表），
+界面与本仓库都不内置第二套节点关系表。链文本只读——链只能由点击构建，不能手填。
+若某个节点没有后继，就不再展开空列；叶子节点选中后不会再多出一列空列表。
 
 生成结果给出链序、字节长度、不含正文的摘要与 Base64。`复制` 写入剪贴板，`导出文件` 按
 配置页的默认导出目录落盘（文件名带载体与时间戳），`填入抓包页` 把载荷送进 `抓包转换` 的请求体，
@@ -362,9 +369,13 @@ Shiro 页为**每个动作保留独立回显框**（`指纹检测` / `密钥爆�
 本页**不替使用者填任何回连地址**：上游对 JNDI / SSRF 一类节点的示例值原样保留，需要什么地址由使用者自己决定。
 载体分组表与运行时目录的一致性由 `PayloadCheck` 断言，出现漏登记或多登记会直接失败。
 
+网页版 Generate 的**周边功能一律没做**：暴力矩阵、步进调试生成、分享链、常用链路统计、
+保存预设、Tag 筛选与并集/交集匹配、输出反编译与序列化解析。预设链仍是独立页面
+（`Payload → 预设链`），恶意服务器页也保留它自己的「载体分组 + 载体」下拉框（那是发布流程）。
+
 实现上，通用部分在 `src/payload/`（与漏洞类型无关，Shiro 模块只是它的一个使用者），
-界面装配在 `src/ui/PayloadPage.java` 与 `src/ui/PayloadController.java`，设计见
-[docs/DESIGN-payload.md](docs/DESIGN-payload.md)。
+界面装配在 `src/ui/PayloadPage.java`、`src/ui/PayloadController.java` 与列式选择器
+`src/ui/PayloadChainSelector.java`，设计见 [docs/DESIGN-payload.md](docs/DESIGN-payload.md)。
 
 ## 预设链
 
@@ -478,7 +489,7 @@ E:\java\jdk17\bin\java.exe @opens -cp "target\tmp2;target\classes;lib\java-chain
 | `UiSwitchEndToEndCheck` | 抓包头经真实 Python 引擎送入探测页 | 需要 |
 | `UiShiroCheck` | Shiro 页全流程 | 需要 |
 | `ShiroCheck` | Shiro 引擎（检测 / 爆破 / 链生成 / 回显） | 需要 |
-| `PayloadCheck` | 载荷生成引擎（目录、分组、导航、双形态、失败路径、安全） | 需要 |
+| `PayloadCheck` | 载荷生成引擎（目录、分组、导航、节点显示名、双形态、失败路径、安全） | 需要 |
 | `ProxyServerCheck` | 代理本身：明文抓包、404、`CONNECT` 隧道字节透传、回调与 `find` / `clear` | 不需要 |
 
 依赖边界自检与工具链自检：
