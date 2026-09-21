@@ -1326,3 +1326,158 @@
    界面层引用其展示对象的数据类型是正常单向依赖，按第三节标准属于「可不改」。
 4. `openspec/specs/` 下现有 2 个能力规格（`traffic/capture-bridge`、
    `codebase/dependency-boundary`），其余 capability 待后续 change 补齐。
+
+## 2026-09-21（多 Agent 并发工具链 + 写入域机械校验 + 运行手册）
+
+本轮回答并落地一个问题：**同时开多个 agent 时，怎样保证互不干扰又能配合**。
+结论不是设计推演，全部来自本机实测；过程中发现并修掉了 3 个自己引入的真实缺陷。
+
+### 一、结论（先说能不能）
+
+| 问题 | 结论 | 实测依据 |
+| --- | --- | --- |
+| 多个 agent 同时改代码会互相覆盖吗 | 不会 | 两个 agent 并发运行，各自 worktree 内改文件、各自提交，主仓库内容与 `git status` 均不受影响 |
+| 能同时跑测试吗 | 能 | 自检全部用 `InetSocketAddress(host, 0)`、`ServerSocket(0)` 动态端口；UI 自检把 `user.home` 指向临时目录，无端口与配置冲突 |
+| 监督 agent 会改坏东西吗 | 不会 | 强制 `-s read-only`，实测写入被内核拒绝（连系统临时目录也拒） |
+| 怎么开启、怎么指定角色 | `tools/agent.ps1 -Role <角色> -Slug <标识> -Task "<任务>"` | 脚本自动建 worktree、建分支、套角色卡、定沙箱、启动 `codex exec` |
+
+### 二、隔离实测（关键证据）
+
+| 机制 | 实测结论 |
+| --- | --- |
+| worktree 隔离 | worktree 内覆盖 `src/Main.java` 并新建文件后，主仓库该文件首行仍为 `import config.AppConfig;`，新文件在主仓库不可见 |
+| 分支隔离 | 两个 agent 并发提交，分别得到独立 commit，互不覆盖 |
+| 只读沙箱 | 让只读会话建文件，被拒且未落盘，会话自述 `UnauthorizedAccessException` |
+| 会话分叉 | `codex fork` / `codex exec fork <id>` 可从既有会话派生互不影响的新会话 |
+
+### 三、过程中发现并修复的 3 个真实缺陷
+
+均为本轮实测暴露，不是推测：
+
+1. **默认沙箱下 agent 无法执行任何 git 操作**
+   根因：worktree 的真实 git 目录在 `<仓库>\.git\worktrees\<name>\`，
+   对象库在 `.git\objects\`，Git LFS 临时目录在 `.git\lfs\`，三处都在工作区之外。
+   实测 `git status` 都会因 `external filter 'git-lfs filter-process' failed` 失败。
+   处置：脚本为可写角色放行本 worktree 的索引与 `.git\lfs`。
+
+2. **让 agent 自己提交不可靠，且会污染共享对象库**
+   根因：放行 `.git\objects` 后提交可行，但该目录下部分子目录的 ACL 未继承沙箱
+   用户权限，实测报 `insufficient permission for adding an object`；
+   修复 ACL 后虽能提交，却在共享对象库留下 9 个不可达对象。
+   处置：改为 **agent 只改文件、提交由脚本在沙箱外完成**，对象库完全不被 agent 触碰。
+
+3. **监督角色（空写入域）被误判为「未定义」而抛异常**
+   根因：PowerShell 中 `-not @()` 为 `True`，用真值判断会有键检查的语义错误。
+   处置：改用 `$writeScopes.ContainsKey($Role)`。
+
+同时修掉一个我自己引入的误导：曾把「用 `filter.lfs.*` 覆盖参数读 git 状态」写进
+提示词，实测该写法会把 LFS 指针文件报成已修改（`Bin 134 -> 184569201 bytes`），
+导致 agent 误判环境噪声为改动。放行 `.git\lfs` 后普通 `git status` 即可用，已移除。
+
+### 四、共享资源冲突点（如实说明）
+
+worktree 只隔离工作区文件，以下仍是全仓库共享的真冲突点：
+
+| 共享资源 | 并发风险 | 处置 |
+| --- | --- | --- |
+| `.backups/` | 各自轮转删除，互相删掉对方快照 | 并发时不备份，主 agent 合并后统一执行 |
+| `AI_REPORT.md` / `PROGRESS.md` | 同时追加冲突 | 同上 |
+| 根目录 JAR、`target/`、`lib/` | `build.ps1` 路径写死，并发构建互相覆盖 | 并发时不构建 |
+| `src/util/**`、`src/config/**` | 共享内核被多角色争改 | 主 agent 单独开 change，串行 |
+| Maven 本地仓库 | 跨 worktree 共享，并发下载可能撞锁 | 依赖已离线缓存；构建本来就被串行化 |
+| `src/Main.java` | UI agent 独占的页面汇合点 | UI 改动串行 |
+
+### 五、写入域从「文档纪律」升级为「机械约束」
+
+`tools/agent.ps1` 内置写入域矩阵，提交前逐文件比对：区间内才提交，
+只要有一个文件越界就整体撤出暂存并列出越界文件。双向实测：
+
+- 让 traffic 角色改 `python/` 下文件 → 被拒绝提交，改动回退为未跟踪；
+- 让 traffic 角色改 `src/proxy/` 下文件 → 正常提交。
+
+矩阵与 `docs/AGENT-ROLES.md` 一致，`openspec/config.yaml` 已加「矩阵必须同步」的规则。
+
+### 六、产出物
+
+| 文件 | 性质 | 说明 |
+| --- | --- | --- |
+| `docs/AGENT-RUNBOOK.md` | 新增 | 运行手册：三种开启方式、各角色命令、隔离实测、共享资源处置、排错 |
+| `tools/agent.ps1` | 修改 | 补 git 目录授权；改为沙箱外代提交 + 写入域机械校验；提示词与回复移到临时目录，不再污染 worktree |
+| `docs/AGENT-ROLES.md` | 修改 | 补「不自行提交」「并发不碰共享资源」「收尾由主 agent 统一执行」 |
+| `openspec/config.yaml` | 修改 | 测试数 95 → 99；补并发隔离规则与脚本矩阵同步要求 |
+| `README.md` / `README.en.md` | 修改 | 新增「多 Agent 并行开发」章节，中英文一一对应 |
+| `openspec/specs/process/multi-agent-concurrency/spec.md` | 新增 | 把隔离与协作边界写成可校验契约（四条需求、八个场景） |
+
+### 七、验证结果
+
+| 项 | 结果 |
+| --- | --- |
+| Python 测试 | `Ran 99 tests ... OK`（95 → 99） |
+| `ShiroCheck` | 通过 |
+| `ProxyServerCheck` | 通过 |
+| `UiNavigationCheck` | 通过 |
+| `UiShiroCheck` | 通过 |
+| `UiSwitchEndToEndCheck` | 通过 |
+| `tools/audit_boundary.py` | 结论「全部通过」，无环、无越界、叶子层无出边 |
+| `openspec validate --all --strict` | 3 passed, 0 failed |
+| `build.ps1` | BUILD SUCCESS，JAR `2026-09-21 13:10:44`，`186414` bytes，`Source freshness checked: 31 file(s)` |
+| JAR 内引擎哈希 | `python/fj_probe.py` 与源文件 SHA256 一致 |
+| 备份 | `.backups/` 轮转为最近三次 |
+
+### 八、如实说明的局限
+
+1. `tools/agent.ps1` 只在 Windows PowerShell 5.1 实测；脚本含中文，必须保持
+   UTF-8 带 BOM，否则解析失败。
+2. 并发上限仍是**两个执行角色**（以写入域不重叠为前提）。这不是脚本限制，
+   是为了让冲突面保持在可人工审阅的范围内。
+3. 沙箱对 `<仓库>\.git` 的授权只覆盖本 worktree 的索引与 LFS 目录；
+   若手工启动 agent 且期望它自行提交，需自行放行 `objects` / `logs` / `refs\heads`，
+   并接受第三节第 2 条的偶发失败风险。
+4. `src/probe/**` 同时出现在 probe 与 traffic 的写入域内，脚本层面无法区分
+   同一目录下的文件分工，靠 `docs/AGENT-RUNBOOK.md` 的约定约束
+   （probe 改 `Probe*.java`、traffic 改 `CaptureBridge.java`）。这是已知的
+   粗粒度点，后续如需机械拦截，要把矩阵细化到文件级。
+5. 本轮未处理 `.pi/`（未跟踪目录，来源待确认），保持原样未纳入版本库。
+
+## 2026-09-21（Agent 会话超时上限）
+
+### 一、根因（先诊断后动手）
+
+上一轮用 `tools/agent.ps1` 派发监督审计后，会话运行约 15 分钟仍无结论，
+进程最终被回收，**产出完全丢失**，只剩提示词文件。
+
+根因：脚本调用 `codex exec` 时没有任何时间上限，一次跑偏或任务过宽的会话
+会无限期占用终端且不产出可用结果。这不是 agent 的问题，是脚本缺少兜底。
+
+### 二、改动
+
+| 文件 | 改动 |
+| --- | --- |
+| `tools/agent.ps1` | 新增 `-TimeoutMinutes`（1–600）与按角色的默认上限；启动改为 `Start-Process` 以便超时控制 |
+| `tools/agent.ps1` | 提示词改走 stdin 文件（命令行参数对长文本与特殊字符不稳定） |
+| `tools/agent.ps1` | 超时后用 `taskkill /T /F` 终止整个进程树，并打印日志尾部供判断进度 |
+| `AGENTS.md` | 新增「超时与并发」约束：必须设超时上限，未完成产出不得当作可用结果 |
+| `docs/AGENT-RUNBOOK.md` | 新增 2.4 节：各角色默认上限、显式覆盖、超时后处置 |
+| `openspec/specs/process/multi-agent-concurrency/spec.md` | 新增「角色会话必须有超时上限」需求（含两个场景） |
+| `openspec/config.yaml` | 架构约定补充超时要求 |
+
+默认上限：主 agent 45 分钟；功能开发与 UI、测试各 40 分钟；监督 60 分钟。
+
+### 三、实测
+
+| 项 | 结果 |
+| --- | --- |
+| 正常路径 | `-TimeoutMinutes 3` 的会话正常完成并打印最终回复、日志尾部 |
+| 超时触发 | 让 agent 执行 `ping -n 400`（约 400 秒），设上限 1 分钟：实测 **70 秒**终止，打印 `[超时]` 段、处置建议与日志尾部 |
+| 进程清理 | 终止后 `Get-Process` 无该项目新起的 `codex` / `node` / `ping` 残留 |
+| 不污染仓库 | 超时后改动未提交，现场保留在独立 worktree，主仓库 `git status` 不受影响 |
+| 中文保真 | 改用 stdout/stderr 重定向到文件后，`-o` 输出文件的中文正常，无问号乱码 |
+
+### 四、如实说明的局限
+
+1. 超时判定依据是「进程是否在限定时间内退出」，无法区分「agent 在做实事」与
+   「agent 卡住」。因此超时后必须看日志尾部人工判断，脚本不自动合并产出。
+2. Windows 上 npm 安装的 codex 是 node 包装脚本，直接终止它不会带走 node 子进程；
+   脚本因此优先定位 `codex.exe`，找不到时回落到 `codex`，此时进程树清理可能不完整。
+3. 默认上限是依据本仓库已实测的耗时给出的经验值，不是测量出来的最优值；
+   任务确实更久时应显式调大，而不是取消限制。

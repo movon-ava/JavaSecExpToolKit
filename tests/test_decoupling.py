@@ -3,7 +3,8 @@
 判定依据来自 openspec/specs 中 codebase/dependency-boundary 规格：
 
 1. 包级依赖必须无环；
-2. 包级依赖必须符合声明分层，叶子层（config / proxy / util）不得有出边；
+2. 包级依赖必须符合声明分层；允许的边集合见 ALLOWED_EDGES，
+   叶子层（config / proxy / util）不得有出边；
    组合根（默认包中的 Main）允许装配任意模块；
 3. 通用组件不得依赖具体功能模块（通用链引擎不得引用 Shiro 专用类）；
 4. 共享内核（util / config）只被依赖，不反向依赖上层。
@@ -27,9 +28,9 @@ SRC = os.path.join(ROOT, "src")
 ALLOWED_EDGES = {
     "<default>": {"probe", "proxy", "shiro", "config", "util", "ui"},
     "ui": {"probe", "proxy", "shiro", "config", "util"},
-    "probe": {"util", "config"},
-    "shiro": {"util", "config"},
-    "proxy": {"util", "config"},
+    "probe": {"util"},
+    "shiro": {"util"},
+    "proxy": set(),
     "config": set(),
     "util": set(),
 }
@@ -47,12 +48,44 @@ GENERIC_MODULES = {
 
 
 def strip_comments_and_strings(text):
-    """剥离注释与字符串字面量，避免把说明文字当作真实引用。"""
-    text = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)
-    text = re.sub(r"//[^\n]*", " ", text)
-    text = re.sub(r'"(?:\\.|[^"\\])*"', '""', text)
-    text = re.sub(r"'(?:\\.|[^'\\])*'", "''", text)
-    return text
+    """单遍扫描剥离注释与字符串字面量。
+
+    必须用状态机而不是依次套正则：若先删行注释，Java 字符串里的 ``"http://x"``
+    会被当成注释起点，把该行后面的真实引用一并删掉，导致漏报。
+    字符字面量同理，注释里的单个引号（如 ``// don't``）也会让正则失配。
+    """
+    out = []
+    index = 0
+    length = len(text)
+    while index < length:
+        char = text[index]
+        nxt = text[index + 1] if index + 1 < length else ""
+        if char == "/" and nxt == "/":
+            while index < length and text[index] != "\n":
+                index += 1
+        elif char == "/" and nxt == "*":
+            index += 2
+            while index + 1 < length and not (text[index] == "*" and text[index + 1] == "/"):
+                index += 1
+            index = min(index + 2, length)
+        elif char == '"' or char == "'":
+            quote = char
+            index += 1
+            while index < length:
+                if text[index] == "\\":
+                    index += 2
+                    continue
+                if text[index] == quote:
+                    index += 1
+                    break
+                if text[index] == "\n":
+                    break
+                index += 1
+            out.append('""' if quote == '"' else "''")
+        else:
+            out.append(char)
+            index += 1
+    return "".join(out)
 
 
 def java_sources():
@@ -101,12 +134,41 @@ def package_edges():
 
 
 def find_cycles(edges):
-    """返回互相依赖的包对：[(a, b), ...]，每对只报一次。"""
-    pairs = set()
-    for (a, b) in edges:
-        if (b, a) in edges and a != b:
-            pairs.add(tuple(sorted((a, b))))
-    return sorted(pairs)
+    """用 DFS 找出全部依赖环，返回 [[a, b, c, ...], ...]（每个环的节点序列）。
+
+    规格写的是「不含任何环」，因此不能只检测 a<->b 这类二元环：
+    a -> b -> c -> a 同样是环，而只比较双向边会漏掉它。
+    """
+    graph = {}
+    for (source, target) in edges:
+        graph.setdefault(source, set()).add(target)
+
+    cycles = []
+    seen_signatures = set()
+    path = []
+    on_path = set()
+    done = set()
+
+    def walk(node):
+        path.append(node)
+        on_path.add(node)
+        for nxt in sorted(graph.get(node, ())):
+            if nxt in on_path:
+                cycle = path[path.index(nxt):]
+                signature = tuple(sorted(cycle))
+                if signature not in seen_signatures:
+                    seen_signatures.add(signature)
+                    cycles.append(list(cycle))
+            elif nxt not in done:
+                walk(nxt)
+        path.pop()
+        on_path.discard(node)
+        done.add(node)
+
+    for node in sorted(graph):
+        if node not in done:
+            walk(node)
+    return cycles
 
 
 class DependencyBoundaryTest(unittest.TestCase):
@@ -123,10 +185,12 @@ class DependencyBoundaryTest(unittest.TestCase):
         edges = package_edges()
         cycles = find_cycles(edges)
         detail = []
-        for a, b in cycles:
-            detail.append("%s <-> %s" % (a, b))
-            for evidence in (edges.get((a, b), []) + edges.get((b, a), []))[:4]:
-                detail.append("    " + evidence)
+        for cycle in cycles:
+            detail.append("环: " + " -> ".join(cycle + [cycle[0]]))
+            for i in range(len(cycle)):
+                a, b = cycle[i], cycle[(i + 1) % len(cycle)]
+                for evidence in edges.get((a, b), [])[:2]:
+                    detail.append("    " + evidence)
         self.assertEqual([], cycles, "存在包级循环依赖:\n" + "\n".join(detail))
 
     def test_edges_match_declared_layers(self):
@@ -182,13 +246,26 @@ class DependencyBoundaryTest(unittest.TestCase):
 class CycleDetectorSelfTest(unittest.TestCase):
     """反向用例：证明环检测器能真的发现环，而不是恒真通过。"""
 
-    def test_detector_reports_cycle(self):
+    def test_detector_reports_two_node_cycle(self):
         fake = {
             ("a", "b"): ["a/X.java:1 引用 b.Y"],
             ("b", "a"): ["b/Y.java:2 引用 a.X"],
             ("b", "c"): ["b/Y.java:3 引用 c.Z"],
         }
-        self.assertEqual([("a", "b")], find_cycles(fake))
+        cycles = find_cycles(fake)
+        self.assertEqual(1, len(cycles), "应恰好报出一个环，实际 %s" % cycles)
+        self.assertEqual(["a", "b"], sorted(cycles[0]))
+
+    def test_detector_reports_multi_node_cycle(self):
+        """三元环也是环，不能被漏掉（规格要求不含任何环）。"""
+        fake = {
+            ("a", "b"): ["a/X.java:1"],
+            ("b", "c"): ["b/Y.java:2"],
+            ("c", "a"): ["c/Z.java:3"],
+        }
+        cycles = find_cycles(fake)
+        self.assertEqual(1, len(cycles), "三元环应被检出，实际 %s" % cycles)
+        self.assertEqual(["a", "b", "c"], sorted(cycles[0]))
 
     def test_detector_accepts_acyclic_graph(self):
         fake = {
@@ -208,6 +285,23 @@ class EdgeScannerSelfTest(unittest.TestCase):
 
     def test_real_reference_is_kept(self):
         sample = "import shiro.ShiroEngine;\nShiroEngine.base64(bytes);\n"
+        cleaned = strip_comments_and_strings(sample)
+        self.assertIn("ShiroEngine", cleaned)
+
+    def test_url_in_string_does_not_swallow_following_code(self):
+        """字符串里的 // 不能被当成行注释，否则会删掉该行之后的真实引用。"""
+        sample = 'String u = "http://a/b";\nimport shiro.ShiroEngine;\n'
+        cleaned = strip_comments_and_strings(sample)
+        self.assertIn("ShiroEngine", cleaned, "字符串中的 // 不应吞掉后续代码")
+
+    def test_apostrophe_in_comment_does_not_break_scan(self):
+        """注释里的撇号不能让扫描器把后续代码吞进字符串。"""
+        sample = "// don't do this\nimport shiro.ShiroEngine;\n"
+        cleaned = strip_comments_and_strings(sample)
+        self.assertIn("ShiroEngine", cleaned, "注释中的撇号不应吞掉后续代码")
+
+    def test_block_comment_marker_in_string_is_kept_as_code(self):
+        sample = 'String s = "/* not a comment */";\nimport shiro.ShiroEngine;\n'
         cleaned = strip_comments_and_strings(sample)
         self.assertIn("ShiroEngine", cleaned)
 

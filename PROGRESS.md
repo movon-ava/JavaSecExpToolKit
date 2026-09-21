@@ -14,8 +14,10 @@
 | 抓包格式直接探测 | 可用 | 裸 Cookie / Key: Value / JSON 均可；自动剔除 Content-Length 与 gzip |
 | 配置页 | 可用 | 六个分组覆盖全部可持久化参数 |
 | 规格驱动开发（OpenSpec） | 可用 | `openspec/specs/traffic/capture-bridge` 已建立；`config.yaml` 承载跨角色约束 |
-| 多 Agent 协同框架 | 已设计 | 角色划分与写入域矩阵见 `docs/DESIGN-agents.md`，尚未实际启用 |
-| 多 Agent 职责说明 | 已建立 | `docs/AGENT-ROLES.md` 定义六个角色的职责、边界与协作顺序 |
+| 多 Agent 协同框架 | 可用 | `tools/agent.ps1` 可启动角色化 agent；隔离与并发已实测，详见 `docs/AGENT-RUNBOOK.md` |
+| 多 Agent 职责说明 | 已建立 | `docs/AGENT-ROLES.md` 定义七个角色的职责、边界与协作顺序 |
+| 写入域机械校验 | 可用 | `tools/agent.ps1` 提交前逐文件比对写入域，越界则撤回暂存 |
+| Agent 会话超时 | 可用 | `tools/agent.ps1` 按角色默认超时（监督 60 分钟，其余 40–45 分钟），超时终止进程树并保留日志 |
 | 依赖边界（解耦） | 可用 | 通用链引擎已与 Shiro 解耦；边界规则由 `tests/test_decoupling.py` 机械校验 |
 
 ## 已完成阶段
@@ -30,6 +32,8 @@
 - 2026-09-20 — 抓包格式直接可探测：请求头容错解析与净化，观察模式下可导出抓包
 - 2026-09-21 — 引入 OpenSpec 规格驱动开发，设计多 Agent 协同框架、Java 模块化方案与 Payload 生成方案
 - 2026-09-21 — 链引擎解耦：Base64 下沉共享内核，依赖边界自检落地，多 Agent 职责文档成文
+- 2026-09-21 — 多 Agent 并发工具链：角色化启动脚本、写入域机械校验、运行手册成文
+- 2026-09-21 — Agent 会话超时上限：按角色默认超时，超时终止进程树并保留现场
 
 ## 后续可做
 

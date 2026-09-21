@@ -65,7 +65,7 @@ if (data instanceof byte[]) {
 1. 在 `src/util/` 新增编解码工具（例如 `Codec.java`），提供 `base64(byte[])` 与
    `decodeBase64(String)`。
 2. `ShiroEngine` 的内部实现改为委托到该类，**保持 `ShiroEngine.base64` 方法签名不变**，
-   避免 `UserCustomPayload` 等既有调用点与测试受影响。
+   避免既有调用点（`ShiroExploit`、`tests/ShiroCheck.java`、`tests/UiShiroCheck.java`）与测试受影响。
 3. 新增 `src/payload/ChainsEngine.java` 承接通用链构建能力，
    或把现有 `ChainsEngine` 整体迁入 `src/payload/` 并更新 `ChainsEngine` 的引用方。
 
@@ -235,7 +235,8 @@ if (data instanceof byte[]) {
 
 ## 八、实施顺序
 
-1. **change A**：`base64` 下沉 + `ChainsEngine` 解耦（共享内核改动，主 agent 主导）。
+1. ~~**change A**：`base64` 下沉 + `ChainsEngine` 解耦~~ —— **已完成**
+   （2026-09-21，`a149f2b`，change `decouple-chain-engine`）。
 2. **change B-1**：`src/payload/` 引擎层 + `tests/PayloadCheck.java`（exploit agent，可先于界面完成）。
 3. **change B-2**：`src/ui/PayloadPage.java` + 导航 + 配置分组 + `tests/UiPayloadCheck.java`（UI agent）。
 4. **change C**：语法糖 —— 「填入抓包页」「填入 Shiro 页」的联动（UI agent，依赖 B-2）。

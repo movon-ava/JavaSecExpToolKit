@@ -22,6 +22,11 @@ context: |
   - 界面视图与状态/行为分离：视图沿用 src/ui/*Page.java 的静态构建器 + Widgets 三段式。
   - 可持久化配置必须同时落到 src/config/AppConfig.java 的键与 src/ui/ConfigPage.java 的分组。
   - src/config/** 与 src/util/** 是共享内核，任何角色不得直接改，需主 agent 单独开 change。
+  - 单个 change 原则上只覆盖一个执行角色的写入域；共享内核改动 + 依赖它的功能改动
+    必须拆成两个 change（先内核后功能），以便独立回滚。
+  - 多 Agent 并行时，各 agent 只在自己的 worktree 与分支改码，写入域必须不重叠（矩阵见 docs/AGENT-ROLES.md）。
+  - `.backups/`、`AI_REPORT.md`、`PROGRESS.md` 与构建产物是全仓库共享资源，并发期间一律不碰，由主 agent 合并后统一收尾。
+  - 可能长时间运行的任务必须设定超时上限；超时后必须终止会话及子进程，并把未完成的产出视为不可用。
 
   ## 质量约定
   - 禁止 TODO / FIXME / pass / 「此处省略实现」/ 空方法体 / 返回常量桩，产出必须可直接运行。
@@ -29,10 +34,11 @@ context: |
   - 禁止修改本次任务之外的功能与配置项；需要牵连其他文件时先说明方案再动手。
 
   ## 验证入口
-  - Python：python -m unittest discover -s tests（当前 84 项）
+  - Python：python -m unittest discover -s tests（当前 99 项）
   - Java：ShiroCheck、ProxyServerCheck、UiNavigationCheck、UiShiroCheck、UiSwitchEndToEndCheck
   - 运行 Java 自检需 JDK17 并加 --add-opens java.xml/...xalan...=ALL-UNNAMED
   - 构建后必须校验 JAR 构建时间晚于 src/、python/、tests/ 下全部源文件
+  - 角色化 agent 的启动与写入域校验由 tools/agent.ps1 提供，内置矩阵必须与 docs/AGENT-ROLES.md 一致
 
   ## 文档约定
   - README.md（中文）与 README.en.md（英文）必须同步更新，内容一一对应。

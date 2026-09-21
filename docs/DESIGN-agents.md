@@ -50,8 +50,9 @@
 - `src/util/HttpText.java` 被 `CaptureBridge`、`FlowRenderer`、`Main` 三处引用，
   属跨模块共享内核，**不能**由单个功能 agent 独占。
 - `src/probe/CaptureBridge.java` 只被 `Main` 引用，可独立演进。
-- `src/shiro/ChainsEngine.java` 调用 `ShiroEngine.base64(...)`，payload 包若直接复用
-  `ChainsEngine` 会反向依赖 shiro 包（解法见 `docs/DESIGN-payload.md`）。
+- `ChainsEngine` 曾调用 `ShiroEngine.base64(...)`，使 payload 包若复用它会反向依赖 shiro 包。
+  **已于 2026-09-21 解耦**（`a149f2b`）：Base64 下沉到 `src/util/Codec.java`，
+  边界由 `tests/test_decoupling.py` 机械守护。搬迁 `ChainsEngine` 到 `src/payload/` 仍是待办。
 - `tests/Ui*.java` 通过反射访问 `Main` 的 **80 个成员**（实测），
   任何拆分 `Main` 的动作都必须同步处理测试。
 - java-chains 实测注册 **429 个节点**、**28 种 payload 载体**，
@@ -113,7 +114,7 @@
   行业约定「配置可长期保存的项必须进配置页」由本角色负责落实。
 - **测试 agent**：不为了让测试通过而放宽断言。断言失败时向对应功能 agent
   报缺陷，而不是改测试。
-- **监督 agent**：不修改任何文件，只产出报告。
+- **监督 agent**：不直接写仓库文件，只产出报告；报告由主 agent 落盘并标注来源。
 
 ---
 
@@ -307,8 +308,8 @@ python -m unittest tests.test_decoupling
    `AGENTS.md` 只保留一句指引，避免两处维护。
 3. **回填首个 change**：用已完成的「抓包格式直接可探测」建立样板
    （`openspec/changes/archive/`），验证流程是否顺手。
-4. **处理共享内核耦合**：把 `ShiroEngine.base64` 下沉到 `src/util/`，
-   解除 payload 包对 shiro 包的反向依赖（见 `docs/DESIGN-payload.md`）。
+4. ~~**处理共享内核耦合**：把 `ShiroEngine.base64` 下沉到 `src/util/`~~ ——
+   **已完成**（2026-09-21，`a149f2b`，change `decouple-chain-engine`）。
 5. **实施 payload 生成功能**：按 `docs/DESIGN-payload.md` 的拆分，
    由 exploit agent 与 UI agent 各承担一半，主 agent 拆成两个 change。
 6. **重构成熟后**：按 `docs/DESIGN-modularization.md` 分三阶段收敛 `Main.java`。

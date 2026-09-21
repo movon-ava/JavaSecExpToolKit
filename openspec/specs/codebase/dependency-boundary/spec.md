@@ -8,7 +8,8 @@
 
 ### Requirement: 包级依赖必须无环
 
-系统的 Java 包依赖图 SHALL 不含任何环。两个包之间不得互相依赖。
+系统的 Java 包依赖图 SHALL 不含任何环，包括两个包互相依赖，
+以及三个及以上包构成的更长的依赖回路。
 
 #### Scenario: 检查现有代码
 - **WHEN** 对 `src/` 下全部 Java 源文件做依赖分析
@@ -22,7 +23,8 @@
 
 系统 SHALL 只允许声明过的包间依赖方向。允许的方向为：
 `ui` 依赖 `probe` / `proxy` / `shiro` / `config` / `util`；
-`probe` 依赖 `util`；`config`、`proxy`、`util` 不得依赖其它项目包。
+`probe` 与 `shiro` 依赖 `util`；
+`config`、`proxy`、`util` 不得依赖其它项目包。
 
 #### Scenario: 叶子层保持无出边
 - **WHEN** 检查 `config`、`proxy`、`util` 三个包的 import 与限定名引用

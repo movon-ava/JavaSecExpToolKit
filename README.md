@@ -174,15 +174,47 @@ CEYE 确认作为附属阶段时仍依赖 DNS 阶段。未填 Token 就执行 `C
 | `src/config/` `src/util/` | `config.properties` 读写；报文解析与平台差异 |
 | `python/` | 探测引擎（`fj_probe.py`），打进 JAR |
 | `tests/` | Python 单元测试与 Java 界面自检 |
-| `tools/` | 维护辅助脚本，例如 `apply_patch.py` |
-| `docs/` | 设计文档（`DESIGN.md`、`DESIGN-shiro.md`、`DESIGN-probe-accuracy.md`、`DESIGN-agents.md`、`DESIGN-modularization.md`、`DESIGN-payload.md`）与多 Agent 职责说明（`AGENT-ROLES.md`） |
+| `tools/` | 维护辅助脚本：`agent.ps1`（启动角色化 agent）、`audit_boundary.py`（依赖边界审计）、`apply_patch.py` |
+| `docs/` | 设计文档（`DESIGN.md`、`DESIGN-shiro.md`、`DESIGN-probe-accuracy.md`、`DESIGN-agents.md`、`DESIGN-modularization.md`、`DESIGN-payload.md`）与多 Agent 职责说明（`AGENT-ROLES.md`）与运行手册（`AGENT-RUNBOOK.md`） |
 | `openspec/` | 规格驱动开发：`specs/` 存能力规格，`changes/` 存待办与归档的变更，`config.yaml` 约束 AI 生成规划件 |
 | `.agents/` | OpenSpec 生成的 AI 工具指令（本仓库目标工具为 codex） |
 | `target/` | Maven 构建输出（经 `src/pom.xml` 写入） |
 | `.backups/` | 带时间戳的快照，只保留最近三次 |
 | 根目录 | `build.ps1`、`run.ps1`、`README.md`、`README.en.md`、`AGENTS.md`、`AI_REPORT.md`、构建出的 `JavaSecExpToolKit.jar`，以及 `lib/`（运行时依赖）与 `libs-repo/`（java-chains 的离线 Maven 仓库） |
 
+## 多 Agent 并行开发
+
+本仓库定义了角色化的多 Agent 协同开发流程，用于并行推进多个功能而不互相覆盖。
+完整说明见 [docs/AGENT-RUNBOOK.md](docs/AGENT-RUNBOOK.md)（运行手册）与
+[docs/AGENT-ROLES.md](docs/AGENT-ROLES.md)（职责与写入域）。
+
+```powershell
+# 启动一个功能开发 agent：独立 worktree + 独立分支，不影响主仓库
+.\tools\agent.ps1 -Role probe -Slug version-blindspot -Task "补齐 1.2.73-1.2.80 的版本识别盲区"
+
+# 并发：在另一个终端同时启动写入域不重叠的角色
+.\tools\agent.ps1 -Role traffic -Slug header-tolerance -Task "补强抓包请求头容错解析"
+
+# 只看提示词、不启动
+.\tools\agent.ps1 -Role probe -Slug demo -Task "示例任务" -DryRun
+```
+
+| 角色 | 写入域 | 沙箱 |
+| --- | --- | --- |
+| 主 agent | 根文档、`openspec/**`、`docs/**`、`tools/**` | 可写 |
+| probe | `python/fj_probe.py`、`src/probe/Probe*.java` | 可写 |
+| exploit | `src/shiro/**`、`src/payload/**` | 可写 |
+| traffic | `src/proxy/**`、`src/probe/CaptureBridge.java` | 可写 |
+| ui | `src/ui/**`、`src/Main.java` | 可写 |
+| test | `tests/**` | 可写 |
+| supervisor | 无（纯只读审计） | 只读，强制 |
+
+隔离靠独立 worktree 与分支；agent 只改文件，提交由脚本在沙箱外完成并机械校验写入域。
+并发期间不碰共享资源：`.backups/`、`AI_REPORT.md`、`PROGRESS.md` 与构建产物的收尾
+统一由主 agent 合并后执行。
+
 ## 抓包格式直接探测
+
 
 从代理或 Burp 复制出来的报文，无需改写就能直接探测。`附加请求头` 支持四种写法：
 

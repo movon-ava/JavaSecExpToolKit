@@ -3,7 +3,8 @@
 版本：1.0.0
 更新日期：2026-09-21
 适用读者：本仓库维护者
-关联文档：`docs/DESIGN-agents.md`（框架设计）、`openspec/config.yaml`（强制规则）、
+关联文档：`docs/AGENT-RUNBOOK.md`（运行手册，启动命令与实测结论）、
+`docs/DESIGN-agents.md`（框架设计）、`openspec/config.yaml`（强制规则）、
 `openspec/specs/codebase/dependency-boundary/spec.md`（依赖边界契约）
 
 ---
@@ -63,6 +64,8 @@
 - 不改 `tests/**`（断言归测试 agent）。
 - 不改配置项键名（避免让既有用户配置失效）。
 - 不改 `src/util/**` 与 `src/config/**`（共享内核，需主 agent 单独开 change）。
+- 不自行 `git commit`：沙箱对共享的 `.git/objects` 只有部分写权限，自行提交会失败，
+  且可能在对象库留下不可达对象。提交由 `tools/agent.ps1` 在沙箱外统一完成。
 
 **交付物**：可编译的源码改动 + 自检通过输出。
 
@@ -123,7 +126,8 @@
 
 **不负责**
 
-- **不修改任何文件**。这是硬约束，也是它能保持独立的前提。
+- **不直接写仓库文件**。这是硬约束，也是它能保持独立的前提：
+  报告原文由主 agent 追加进 `AI_REPORT.md`，并标注「监督 agent 提供，主 agent 落盘」。
 - 不参与方案设计，不代替主 agent 决策。
 
 **交付物**：写入 `AI_REPORT.md` 对应章节的审计报告。
@@ -199,8 +203,12 @@ python -m unittest tests.test_decoupling
 
 ### 7.3 并发
 
-主 agent 同时最多派发**两个**执行角色，且写入域不得重叠。
+主 agent 同时最多派发**两个**执行角色，且写入域不得重复。
 三个功能 agent 之间天然无重叠可并行；UI agent 因独占 `Main.java` 应串行。
+
+隔离手段与实测结论见 `docs/AGENT-RUNBOOK.md`：每个 agent 一个独立
+worktree 与分支，并发时互不可见；但 `.backups/`、`AI_REPORT.md`、
+`PROGRESS.md` 与构建产物是全仓库共享资源，**并发期间一律不碰**。
 
 ### 7.4 分歧仲裁
 
@@ -209,9 +217,10 @@ python -m unittest tests.test_decoupling
 
 ---
 
-## 八、收尾三项（所有角色共同遵守）
+## 八、收尾三项（由主 agent 统一执行）
 
-每次改动完成后，无论角色，都必须：
+执行角色在 worktree 内**不做**下列三项：它们面向全仓库，
+并发时会争抢同一批资源。统一由主 agent 在合并后执行：
 
 1. 备份到 `.backups/`，且该目录仅保留最近三次快照。
 2. 追加 `AI_REPORT.md` 的工作内容，并更新 `PROGRESS.md`。
