@@ -2256,3 +2256,130 @@ JNDI LDAP `51111`、HTTP 服务端口 `59999` 均按配置生效，且未配置�
 3. 预设里出现分叉的链仍按线性顺序构建，「分支型链」尚未暴露到界面。
 4. LDAPS 未内置 JKS 证书，需 HTTPS 回调时使用者要自行准备证书后再启用该端口。
 5. `Main.java` 现约 1600 行，模块化仍按 `docs/DESIGN-modularization.md` 留待专门一轮。
+
+---
+
+## 2026-09-21（本轮：执行 Java 模块化，拆开 Main.java）
+
+### 一、任务
+
+用户指令「执行模块化」——按 `docs/DESIGN-modularization.md` 的既定方案拆分 `src/Main.java`。
+
+### 二、改动前的实测基线
+
+| 指标 | 改动前 |
+| --- | ---: |
+| `Main.java` 行数 | 1757 |
+| `Main.java` 方法数 | 66（方法体合计 1167 行） |
+| `Main.java` 字段数 | 148（其中 `private final` 约 100） |
+| 自检对 `Main` 的反射面 | 94 个名字、约 132 处字段访问 + 3 个方法调用 |
+| 最大单文件 | `Main.java` 1757 行 |
+
+实测确认了设计文档预判的硬约束：三个 UI 自检用
+`target.getClass().getDeclaredField(name)` 取控件（只查本类、不含父类），
+因此「拆分」与「自检通过」在改动前是对立的。
+
+### 三、根因
+
+不是「代码写得乱」，而是两条约束互相锁死：
+
+1. **控制器缺位**：`src/ui/*Page.java` 早已是静态视图构建器，
+   但状态与行为没有对应去处，只能堆在组合根。
+2. **自检按字段名反射**：内部结构被测试当成契约，字段一搬断言就崩。
+
+### 四、处置（先修测试取数方式，再拆分）
+
+**第一步：稳定门面解除锁死。**
+新增 `src/ui/UiHandle.java`（先查登记表、再沿继承链反射兜底）与
+`src/ui/WidgetRegistry.java`（90 余项控件登记清单，导航序列用取值器避免快照过期）。
+三个 UI 自检的 `fieldQuiet` / `read` / `hasDeclaredField` 各改一行函数体，
+**132 处字段访问与 3 个方法调用的断言文字、数量一条未改**。
+
+**第二步：视图侧控件工厂。**
+`ProbePage` / `CapturePage` / `ShiroPage` / `ProxyPage` 各新增 `defaults()`；
+新增 `ConfigForm`（38 项控件 + 10 个分组清单）；`ConfigPage` 新增 `widgets(...)` 装配助手。
+
+**第三步：行为搬到控制器。** 新增 10 个类，行数如下：
+
+| 文件 | 行数 | 职责 |
+| --- | ---: | --- |
+| `src/ui/NavController.java` | 203 | 侧边栏构建、展开收起、选中、路由回调 |
+| `src/ui/ProbeController.java` | 148 | 探测模式、参数拼装、引擎调用、字段联动 |
+| `src/ui/CaptureController.java` | 285 | 抓包 / 转换 / 复制 / 一键发送 / 代理流量导入 |
+| `src/ui/ShiroController.java` | 251 | 检测 / 爆破 / 生成载荷 / 执行命令 |
+| `src/ui/ProxyController.java` | 310 | 代理启停、拦截改包放行、流量回填、导出 |
+| `src/ui/ConfigForm.java` | 160 | 配置控件与分组清单 |
+| `src/ui/ConfigController.java` | 395 | 配置读 / 写 / 下发、服务器默认值、下拉框助手 |
+| `src/ui/WorkbenchPages.java` | 150 | Payload / 预设链 / 恶意服务器三页懒加载与互发 |
+| `src/ui/WidgetRegistry.java` | 159 | 自检门面登记表 |
+| `src/ui/UiHandle.java` | 72 | 稳定门面 |
+
+依赖方向只允许「向后」：抓包 → 探测 / Shiro，代理 → 抓包 → 配置。
+`ConfigController` 与 `WorkbenchPages` 因构造期先后关系用一次 `attachView` 补接线。
+
+### 五、对原设计的三处修正（实施后调整，理由已写回设计文档）
+
+1. **不建 `ProxyState` / `ConfigState` / `ShiroState`**：这些字段是控件引用而非状态；
+   真正的状态（是否在监听、待放行哪条流量、当前拦截决定）收进对应控制器私有字段。
+2. **字段不必留在 `Main`**：稳定门面 + 反射回落实测可行，因此字段随职责一起搬走。
+3. **包结构平铺**：子包会变成新包名并要求同步补 `ALLOWED_EDGES`；平铺在 `ui` 包内
+   则 `tests/test_decoupling.py` 与 `tools/audit_boundary.py` 两条规则零改动。
+
+### 六、结果
+
+| 指标 | 改动前 | 改动后 |
+| --- | ---: | ---: |
+| `Main.java` 行数 | 1757 | **311** |
+| `Main.java` 方法数（外层） | 66 | 30（含构造器与 13 个自检转发方法） |
+| `Main.java` 字段数（外层） | 148 | 21（多为控制器引用与控件容器） |
+| 最大单文件 | `Main.java` 1757 | `proxy/ProxyServer.java` 768（本次不动） |
+| `src/ui/` 文件数 | 22 | 32 |
+
+### 七、验证（全部为本机实测）
+
+| 验证入口 | 结果 |
+| --- | --- |
+| `ProxyServerCheck` | 退出码 0，37 条断言 |
+| `ShiroCheck` | 退出码 0，46 条断言 |
+| `PayloadCheck` | 退出码 0，61 条断言 |
+| `UiShiroCheck` | 退出码 0，27 条断言 |
+| `UiNavigationCheck` | 全部通过，169 条断言 |
+| `UiSwitchEndToEndCheck` | 退出码 0，95 条断言 |
+| `python -m unittest discover -s tests` | 99 项 OK |
+| `python tools/audit_boundary.py` | 无环、无越界、无叶子层出边、无内核反向依赖，结论「全部通过」 |
+| `openspec validate --all --strict` | 5 项全 passed |
+| `.\build.ps1` | 构建成功，JAR 时间 `2026-09-21 19:17:51`，298589 字节，60 个源文件时间校验通过 |
+
+断言数改动前后一致（37 / 46 / 61 / 27 / 169 / 95），证明本次是纯搬迁、行为零变化。
+
+一处非预期但已修的问题：搬迁后 `UiNavigationCheck` 报「取消 DNS 探针后 DNSLog 主机输入框仍可用」。
+根因是原主窗口构造里 `dnsEnabled` / `ceyeEnabled` / `modeExpect` 三个勾选框接的是
+`updateStageFieldState`，搬迁时只保留了 `ProbePage` 的构建回调，漏了这三个监听器。
+补回后自检通过——若当时只把断言当成「过时断言」改掉，就会把一个真实的行为退化掩盖过去。
+
+### 八、OpenSpec
+
+新增 change `ui-modularization` 并已归档为 `2026-09-21-ui-modularization`：
+proposal 含 Non-goals 与写入域 Impact；design 含 Root Cause 与三处修正；
+tasks 44 项全部勾选（含收尾三项与监督复核）。
+主 spec `codebase/dependency-boundary` 新增 3 条要求（页面行为与视图分离、
+单文件规模上限、自检必须走稳定门面）。
+归档后 `openspec validate --all --strict` 曾报两个在办 change 的 delta 缺少新场景，
+已把「界面控制器之间无反向依赖」场景同步到两处 delta，5 项全部 passed。
+
+### 九、多 Agent 协作
+
+| 角色 | 主要工作 |
+| --- | --- |
+| 主 agent | 基线实测、根因定位、拆分方案定稿、OpenSpec 规划件与归档、文档与报告、构建收尾 |
+| 界面 agent（ui） | `src/Main.java` 收敛、10 个控制器 / 表单 / 门面类、四个视图类控件工厂、`ConfigPage` 装配助手 |
+| 测试 agent（test） | 三个 UI 自检的取数辅助方法改走 `ui/UiHandle`，断言零改动；验证 `hasDeclaredField` 语义保持 |
+| 监督 agent（supervisor） | 独立复算：断言数与改动前一致、依赖边界审计复跑、JAR 时间晚于全部源文件 |
+
+### 十、如实说明的局限
+
+1. `ui` 包内 32 个文件平铺，继续增长后仍需再分子包（届时需同步补 `ALLOWED_EDGES`）。
+2. 代理拦截等待上限仍是硬编码 120 秒常量，未进配置页。
+3. `src/proxy/ProxyServer.java`（768 行）与 `src/shiro/ShiroEngine.java`（715 行）
+   本次未拆：都在 800 行以内且有独立自检，属于独立课题。
+4. 界面自检仍需两个 `--add-opens`（预设链含字节码类 gadget），运行方式见 `run.ps1`。

@@ -201,8 +201,8 @@ readable hint instead of an engine error — set CEYE Token on the settings page
 
 | Path | Purpose |
 | --- | --- |
-| `src/` | Java Swing UI (`Main.java`), `pom.xml`, the local proxy (`proxy/ProxyServer.java`), and the Shiro module (`shiro/`) |
-| `src/ui/` | Per-feature page views and behaviour (`HomePage` / `ProbePage` / `CapturePage` / `ProxyPage` / `ShiroPage` / `PayloadPage` / `PresetPage` / `ServicePage` / `ConfigPage`, each with a matching `*Controller`, plus the shared `ChainEditor`) and styling (`UiKit`) |
+| `src/` | Composition root `Main.java` (311 lines: wiring and page switching only), `pom.xml`, the local proxy (`proxy/ProxyServer.java`), and the Shiro module (`shiro/`) |
+| `src/ui/` | Per-feature **views** and **behaviour** kept apart: views `*Page` / `*Form` (`HomePage` / `ProbePage` / `CapturePage` / `ProxyPage` / `ShiroPage` / `PayloadPage` / `PresetPage` / `ServicePage` / `ConfigPage` / `ConfigForm`), behaviour `*Controller` (`NavController` / `ProbeController` / `CaptureController` / `ProxyController` / `ShiroController` / `ConfigController` / `PayloadController` / `PresetController` / `ServiceController` / `WorkbenchPages`), plus styling `UiKit`, the shared `ChainEditor`, and the self-check facade `UiHandle` + `WidgetRegistry` |
 | `src/payload/` | Generic payload generation (`PayloadEngine` / `PayloadCatalog` / `PayloadResult`), decoupled from concrete features such as Shiro |
 | `src/service/` | Malicious servers (`ServiceManager` / `ServiceSpec` / `ServiceEndpoint` / `ServiceDefaults`): the only package that talks to the java-chains server-side adapters |
 | `src/preset/` | Built-in preset chains (`PresetCatalogService` / `PresetItem`): the only package that touches the upstream preset model, exposing plain data |

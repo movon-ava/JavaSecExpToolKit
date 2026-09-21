@@ -1,7 +1,7 @@
 # JavaSecExpToolKit Java 模块化设计
 
-版本：0.1.0
-更新日期：2026-09-21
+版本：1.0.0
+更新日期：2026-09-21（已完成实施，见第九节实测结果）
 适用读者：本仓库维护者
 关联文档：`docs/DESIGN.md`（总设计）、`docs/DESIGN-agents.md`（多 agent 框架）
 
@@ -10,8 +10,9 @@
 ## 一、结论先行
 
 **`Main.java` 确实过大**，但它不是「一个需要重写的烂文件」，
-而是「一个承担了过多职责的装配点」。拆分要做，但不能一次性动，
-必须先解除一个硬约束（见第三节），再分三阶段收敛。
+而是「一个承担了过多职责的装配点」。拆分已按本文方案完成：
+`Main.java` 从 1757 行降到 311 行，行为零变化（六套 Java 自检 + 99 项 Python 测试全绿）。
+实施结果与两处对原方案的修正见第九节。
 
 判断「过大」的依据不是行数本身，而是三个实测指标同时越线：
 
@@ -90,7 +91,7 @@ private static Object fieldQuiet(Object target, String name) {
 一旦把字段或方法移到新类（编译器可能生成合成访问器，但 `getDeclaredField` 解析的是名字），
 这些断言会立刻以 `IllegalStateException` 失败。
 
-### 3.2 处置方案（三选一，推荐 A）
+### 3.2 处置方案（三选一，推荐 A，实际执行了 A + B 的组合）
 
 **方案 A：测试改走稳定门面（推荐）**
 新增包级可见的测试门面类（例如 `src/ui/UiHandle.java`），
@@ -251,3 +252,54 @@ src/
 
 第 1 条是本次拆分的核心验收点——**行为零变化**。
 若某条自检输出的文字发生了变化（而非类名变化），视为行为漂移，必须回退重做。
+
+---
+
+## 八、实施记录（2026-09-21 完成）
+
+三阶段一次完成，`Main.java` = 1757 → **311 行**，不再是最大文件（最大为 `proxy/ProxyServer.java` 768 行）。
+
+| 新增文件 | 行数 | 职责 |
+| --- | ---: | --- |
+| `src/ui/NavController.java` | 203 | 侧边栏构建、展开收起、选中、路由回调 |
+| `src/ui/ProbeController.java` | 148 | 探测模式、参数拼装、引擎调用、阶段字段联动 |
+| `src/ui/CaptureController.java` | 285 | 抓包 / 转换 / 复制 / 一键发送、代理流量导入 |
+| `src/ui/ShiroController.java` | 251 | 指纹检测 / 密钥爆破 / 载荷生成 / 命令回显 |
+| `src/ui/ProxyController.java` | 310 | 代理启停、拦截改包放行、流量回填、导出 |
+| `src/ui/ConfigForm.java` | 160 | 38 项配置控件与 10 个分组清单 |
+| `src/ui/ConfigController.java` | 395 | 配置读 / 写 / 下发、服务器默认值、下拉框助手 |
+| `src/ui/WorkbenchPages.java` | 150 | Payload / 预设链 / 恶意服务器三页的懒加载与互发 |
+| `src/ui/WidgetRegistry.java` | 159 | 自检门面的控件登记表（90 余项） |
+| `src/ui/UiHandle.java` | 72 | 稳定门面：按名字取控件，沿继承链回落 |
+
+视图类各新增一个 `defaults()` 控件工厂（`ProbePage` / `CapturePage` / `ShiroPage` / `ProxyPage`），
+把「控件长什么样、初值是什么」从界面层挪回视图类内。
+
+## 九、对原方案的两处修正（实测后调整）
+
+**修正一：字段不必留在原类。** 原第三节给的方案 A（稳定门面）实测可行，
+因此采用了「门面 + 反射回落」的组合：自检先查界面层登记表，查不到再沿继承链找字段。
+三个 UI 自检的取数辅助方法（`fieldQuiet` / `read` / `hasDeclaredField`）改为
+调用 `ui.UiHandle`，132 处字段访问与 3 个方法调用（`selectNav` / `toggleGroup` / `findNavItem`）
+的**断言文字与数量一条未改**，只是取数路径换了。
+
+**修正二：不建 `ProxyState` / `ConfigState` / `ShiroState`。** 原第四节设想把 100 个字段
+按前缀归到状态类。实施后发现这些字段是**控件引用**而非状态：真正的状态是
+「代理是否在监听、待放行的是哪条流量、当前拦截决定」这类不变量，
+把它们与控件分开后，状态类会变成一堆 getter / setter，反而更难追。
+因此改为：状态收进对应控制器（`ProxyController` 的 `pendingFlow` / `interceptDecision` 等），
+控件由视图类的 `defaults()` 与 `ConfigForm` 持有，组合根只保留引用与装配。
+
+**修正三：包结构平铺。** 原第四节建议 `ui/capture/`、`ui/config/` 等子包。
+实施时发现 `tests/test_decoupling.py` 与 `tools/audit_boundary.py` 按 `package` 声明建包名，
+子包会成为新包名并需要同步补 `ALLOWED_EDGES`；平铺在 `ui` 包内则规则零改动。
+权衡后选择平铺：`src/ui/` 下 32 个文件，按 `*Page`（视图）/ `*Controller`（行为）/
+`Nav*`（导航）/ `Ui*`（外观与门面）四类命名区分，无需改边界规则。
+
+## 十、本次不变量（实测确认）
+
+- 六套 Java 自检断言数不变：`ProxyServerCheck` 37、`ShiroCheck` 46、`PayloadCheck` 61、
+  `UiShiroCheck` 27、`UiNavigationCheck` 169、`UiSwitchEndToEndCheck` 95。
+- `python -m unittest discover -s tests`：99 项全绿（含依赖边界与反向用例）。
+- `tools/audit_boundary.py`：无环、无越界、无叶子层出边、无内核反向依赖。
+- `build.ps1`：构建成功，JAR 时间晚于 `src/`、`python/`、`tests/` 共 60 个源文件。

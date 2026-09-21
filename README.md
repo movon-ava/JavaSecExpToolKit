@@ -177,8 +177,8 @@ CEYE 确认作为附属阶段时仍依赖 DNS 阶段。未填 Token 就执行 `C
 
 | 路径 | 用途 |
 | --- | --- |
-| `src/` | Java Swing 界面（`Main.java`）、`pom.xml`、本地代理（`proxy/ProxyServer.java`）与 Shiro 模块（`shiro/`） |
-| `src/ui/` | 各功能页视图与行为（`HomePage` / `ProbePage` / `CapturePage` / `ProxyPage` / `ShiroPage` / `PayloadPage` / `PresetPage` / `ServicePage` / `ConfigPage`，配套 `*Controller` 与共用链编辑 `ChainEditor`）与样式（`UiKit`） |
+| `src/` | 组合根 `Main.java`（311 行，只做装配与切页）、`pom.xml`、本地代理（`proxy/ProxyServer.java`）与 Shiro 模块（`shiro/`） |
+| `src/ui/` | 各功能页的**视图**与**行为**分开放：视图 `*Page` / `*Form`（`HomePage` / `ProbePage` / `CapturePage` / `ProxyPage` / `ShiroPage` / `PayloadPage` / `PresetPage` / `ServicePage` / `ConfigPage` / `ConfigForm`），行为 `*Controller`（`NavController` / `ProbeController` / `CaptureController` / `ProxyController` / `ShiroController` / `ConfigController` / `PayloadController` / `PresetController` / `ServiceController` / `WorkbenchPages`），另有样式 `UiKit`、共用链编辑 `ChainEditor`、自检门面 `UiHandle` + `WidgetRegistry` |
 | `src/payload/` | 通用载荷生成（`PayloadEngine` / `PayloadCatalog` / `PayloadResult`），与 Shiro 等具体功能解耦 |
 | `src/service/` | 恶意服务器（`ServiceManager` / `ServiceSpec` / `ServiceEndpoint` / `ServiceDefaults`）：唯一直接调用 java-chains 服务端适配器的包 |
 | `src/preset/` | 内置预设链读取（`PresetCatalogService` / `PresetItem`）：唯一引用上游预设模型的包，纯数据出参 |
