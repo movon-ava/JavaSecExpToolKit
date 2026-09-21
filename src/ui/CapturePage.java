@@ -47,6 +47,29 @@ public final class CapturePage {
         public Runnable onCopy;
     }
 
+    /** 本页控件的默认实例：初值与布局所需参数都留在视图类内。 */
+    public static Widgets defaults() {
+        Widgets widgets = new Widgets();
+        widgets.method = new JComboBox<String>(
+                new String[]{"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"});
+        widgets.url = new JTextField("", 32);
+        widgets.contentType = new JTextField("application/json", 24);
+        widgets.headers = new JTextField("", 32);
+        widgets.body = new JTextArea(4, 32);
+        widgets.convertTarget = new JComboBox<String>(
+                new String[]{"json", "curl", "raw", "cookie-json", "cookie-header", "cookie-netscape"});
+        widgets.pastedRequest = new JTextArea(6, 32);
+        widgets.run = new JButton("抓包");
+        widgets.convert = new JButton("解析并转换");
+        widgets.toProbe = new JButton("填入探测页");
+        widgets.sendTo = new JComboBox<String>(new String[]{"Fastjson 探测", "Shiro 漏洞利用"});
+        widgets.send = new JButton("一键发送");
+        widgets.status = new JLabel("抓包与转换均在本地执行，仅访问你填写的目标");
+        widgets.result = new JTextArea();
+        widgets.copy = new JButton("复制结果");
+        return widgets;
+    }
+
     private CapturePage() {
     }
 

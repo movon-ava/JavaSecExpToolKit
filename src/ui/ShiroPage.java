@@ -58,6 +58,34 @@ public final class ShiroPage {
         public JTextArea runOutput;
     }
 
+    /** 本页控件的默认实例：密钥、命令等初值集中在这里，避免界面层散落硬编码。 */
+    public static Widgets defaults() {
+        Widgets widgets = new Widgets();
+        widgets.url = new JTextField("http://127.0.0.1:8080/", 32);
+        widgets.requestMethod = new JComboBox<String>(new String[]{"GET", "POST"});
+        widgets.cookieName = new JTextField("rememberMe", 12);
+        widgets.key = new JTextField("kPH+bIxk5D2deZiIxcaaaA==", 26);
+        widgets.gcm = new JCheckBox("AES-GCM（Shiro \u2265 1.4.2）", false);
+        widgets.chain = new JComboBox<shiro.ShiroExploit.ChainKind>(shiro.ShiroExploit.ChainKind.values());
+        widgets.echoHeader = new JTextField("X-Authorization", 14);
+        widgets.command = new JTextField("whoami", 22);
+        widgets.headers = new JTextArea(3, 32);
+        widgets.body = new JTextArea(3, 32);
+        widgets.detect = new JButton("\u4e00\u952e\u68c0\u6d4b");
+        widgets.crack = new JButton("\u5bc6\u94a5\u7206\u7834");
+        widgets.stop = new JButton("\u505c\u6b62");
+        widgets.build = new JButton("\u751f\u6210 Payload");
+        widgets.run = new JButton("\u6267\u884c\u547d\u4ee4");
+        widgets.progress = new javax.swing.JProgressBar();
+        widgets.status = new JLabel("Shiro 模块未开始");
+        widgets.outputTabs = new JTabbedPane();
+        widgets.detectOutput = new JTextArea();
+        widgets.crackOutput = new JTextArea();
+        widgets.buildOutput = new JTextArea();
+        widgets.runOutput = new JTextArea();
+        return widgets;
+    }
+
     private ShiroPage() {
     }
 

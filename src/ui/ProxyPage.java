@@ -47,6 +47,23 @@ public final class ProxyPage {
         public Runnable onBuilt;
     }
 
+    /** 本页控件的默认实例：监听地址取自引擎的本机联网 IP，端口默认 8899。 */
+    public static Widgets defaults() {
+        Widgets widgets = new Widgets();
+        widgets.bindHost = new JTextField(proxy.ProxyServer.defaultBindHost(), 14);
+        widgets.port = new JTextField("8899", 6);
+        widgets.toggle = new JButton("启动代理");
+        widgets.clear = new JButton("清空记录");
+        widgets.export = new JButton("转发到抓包转换");
+        widgets.intercept = new JCheckBox("拦截请求");
+        widgets.forward = new JButton("放行");
+        widgets.drop = new JButton("丢弃");
+        widgets.status = new JLabel("代理未启动");
+        widgets.requestText = new JTextArea();
+        widgets.responseText = new JTextArea();
+        return widgets;
+    }
+
     private ProxyPage() {
     }
 

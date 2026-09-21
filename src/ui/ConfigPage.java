@@ -66,6 +66,16 @@ public final class ConfigPage {
         public Runnable onReset;
     }
 
+    /** 按配置表单装配本页控件：分组清单与状态标签都来自 {@code ConfigForm}。 */
+    public static Widgets widgets(ConfigForm form, Runnable onSave, Runnable onReset) {
+        Widgets widgets = new Widgets();
+        widgets.groups = form.groups();
+        widgets.status = form.status;
+        widgets.onSave = onSave;
+        widgets.onReset = onReset;
+        return widgets;
+    }
+
     private ConfigPage() {
     }
 

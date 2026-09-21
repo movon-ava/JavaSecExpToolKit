@@ -52,6 +52,33 @@ public final class ProbePage {
         public Runnable onModeChanged;
     }
 
+    /**
+     * 本页控件的默认实例：把「控件长什么样、初值是什么」留在视图类内，
+     * 界面层只持有实例并交给控制器，不再自己 new 一堆控件。
+     */
+    public static Widgets defaults() {
+        Widgets widgets = new Widgets();
+        widgets.modeDetect = new JCheckBox("Fastjson 识别", true);
+        widgets.modeVersion = new JCheckBox("版本识别", true);
+        widgets.modeExpect = new JCheckBox("期望类", true);
+        widgets.dnsEnabled = new JCheckBox("DNS 探针", true);
+        widgets.ceyeEnabled = new JCheckBox("CEYE 确认", true);
+        widgets.probeMethod = new JComboBox<String>(
+                new String[]{"POST", "GET", "PUT", "PATCH", "DELETE", "OPTIONS"});
+        widgets.target = new JTextField("http://127.0.0.1:8080/api/json", 32);
+        widgets.timeout = new JTextField("8", 5);
+        widgets.baseBody = new JTextField("", 32);
+        widgets.requestHeaders = new JTextField("", 32);
+        widgets.sessionCookie = new JTextField("", 32);
+        widgets.dnslogHost = new JTextField("", 32);
+        widgets.dnsFilter = new JTextField("", 12);
+        widgets.dnsWait = new JTextField("13", 5);
+        widgets.detect = new JButton("开始探测");
+        widgets.status = new JLabel("仅用于已授权测试目标");
+        widgets.result = new JTextArea();
+        return widgets;
+    }
+
     /** 表单区高度：表单可滚动，超出部分不挤占结果区。 */
     private static final int FORM_HEIGHT = 300;
     private static final int FORM_MIN_HEIGHT = 120;
