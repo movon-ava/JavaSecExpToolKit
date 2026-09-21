@@ -23,7 +23,8 @@
 | 主 agent 能自动派发子 agent 吗 | **不能** | 实测：agent 沙箱无法写 `.git/refs/heads/**`，`git worktree add` 报 `cannot lock ref`；派发权在沙箱外的 `tools/agent.ps1` |
 | 监督 agent 需要另开终端实时监督吗 | **不需要** | 它是阶段末的一次只读审计，不是实时监控；各角色已提交的分支它能直接读到 |
 | 怎么分辨“在干活”与“卡住” | 看护 agent 读日志判三态 | 实测：静默 771 秒的正常等待判为 `WAITING` 不终止，反复重试同一命令判为 `STUCK` 并终止 |
-| 哪些必须串行 | UI agent、收尾三项（后者由脚本代理） | `src/Main.java` 是全部页面的唯一汇合点；`.backups/`、`AI_REPORT.md`、构建产物是共享资源 |
+| 新派的角色能看到前一个角色的产出吗 | **不能，除非先合并** | 实测：`git worktree add` 从当前 HEAD 建，不合并就看不到前置分支的新文件；合并后可见 |
+| 哪些必须串行 | UI agent、有依赖关系的任务、收尾三项（后者由脚本代理） | `src/Main.java` 是全部页面的唯一汇合点；`.backups/`、`AI_REPORT.md`、构建产物是共享资源 |
 
 **一句话**：隔离靠 **worktree + 分支 + 沙箱**，配合靠 **Git 分支 + OpenSpec change**。
 
@@ -407,6 +408,80 @@ git status --short
 git log --oneline -1 agent/probe/version-blindspot
 git log --oneline -1 agent/traffic/header-tolerance
 ```
+
+---
+
+## 四之二、逐条派发（实际工作流）
+
+派发权在沙箱外的 `tools/agent.ps1`，每条命令只派一个角色。
+一个 change 的完整流程是四步：
+
+```
+主 agent propose  →  执行角色（可并发）  →  测试角色  →  监督角色  →  主 agent 收尾
+```
+
+### 关键约束：新派的角色只看得到当前 HEAD（已实测）
+
+`git worktree add` 从**当前 HEAD**建工作区。实测：
+
+| 步骤 | 结果 |
+| --- | --- |
+| 在 `agent/exploit/dep-a` 里提交 `src/payload/PayloadEngine.java` | 提交成功 |
+| 立即从 main 派发下一个角色 | 新 worktree 里 **看不到** 那个文件 |
+| 先 `git merge --no-ff agent/exploit/dep-a` 再派 | 新 worktree 里**能**看到 |
+
+**因此**：有依赖关系的任务必须**先合并前置分支，再派后续角色**；
+无依赖的任务才能并发。例如 `payload-generation` 的第 4、5 组依赖第 1–3 组的新包，
+就不能与之并发；而第 4 组（改 `tests/test_decoupling.py`）与第 1–3 组写入域不重叠，
+可以并发（只要第 4 组不依赖新包已存在——实际上它会，所以仍应串行）。
+
+### 逐条派发的四条命令
+
+```powershell
+# 第 1 条：主 agent 产出 change（若已有 change 则跳过）
+.\tools\agent.ps1 -Role orchestrator -Slug payload-plan \`
+  -Task "用 OpenSpec propose 产出 payload 生成的 change 规划件" -TimeoutMinutes 15
+
+# 第 2 条：执行角色（tasks.md 里标了写入域与角色）
+.\tools\agent.ps1 -Role exploit -Slug payload-core \`
+  -Task "按 openspec/changes/payload-generation/tasks.md 第 1-3 组实现" -TimeoutMinutes 40
+
+# 第 3 条：测试角色（此时前置已合并，它能看到新包）
+.\tools\agent.ps1 -Role test -Slug payload-checks \`
+  -Task "按 tasks.md 第 4-6 组补齐自检与回归" -TimeoutMinutes 40
+
+# 第 4 条：监督只读复核
+.\tools\agent.ps1 -Role supervisor -Slug audit-payload \`
+  -Task "按十项清单复核本轮改动，给出阻断结论" -TimeoutMinutes 60
+```
+
+每条命令之间的人工动作只有三件：读结果、合并、测关。
+
+```powershell
+# 看这条分支带来了什么（脚本已代提交）
+git log --oneline main..agent/exploit/payload-core
+
+# 合并（前置完成后才能派下一个角色）
+git merge --no-ff agent/exploit/payload-core
+
+# 清理工作区与分支
+git worktree remove G:\java\jset-agents\exploit-payload-core --force
+git worktree prune
+git branch -D agent/exploit/payload-core
+```
+
+### 一条派发命令内部发生什么
+
+| 阶段 | 该角色做什么 | 你需要做什么 |
+| --- | --- | --- |
+| 启动 | 建 worktree（`G:\java\jset-agents\<role>-<slug>`）与分支（`agent/<role>/<slug>`），套角色卡 | 无 |
+| 运行 | 改代码，不自己提交 | 可等待，或读实时日志看进度 |
+| 静默时 | 看护 agent 读日志判三态 | 无（自动） |
+| 退出 | 脚本在沙箱外**校验写入域后提交** | 看“agent 改动的文件”清单，确认无越界 |
+| 结束后 | — | 合并、测关、清理、派下一条 |
+
+**写入域校验是硬门槛**：只要有一个文件不在该角色写入域内，
+脚本就整体撤回暂存、拒绝提交并列出越界文件。
 
 ---
 

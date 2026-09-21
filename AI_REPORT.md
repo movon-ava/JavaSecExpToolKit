@@ -1689,3 +1689,83 @@ git show agent/probe/<slug>:python/fj_probe.py
    `.git\refs\heads\agent\**`、`.git\logs\**` 与 `G:\java\jset-agents\`，该结论会失效——
    已把所需权限与代价一并记录在运行手册「已知限制」第 5 条。
 4. 单终端并发仍然受「最多两个执行角色」的人工约束限制，这是纪律而非机械强制。
+
+## 2026-09-21（逐条派发：实际工作流与一条新实测约束）
+
+回答「如何逐条派发角色」，并补上过程中发现的一条**此前文档未记录**的约束。
+
+### 一、一条关键约束：新派的角色看不到前一个角色的产出（实测）
+
+`git worktree add` 从**当前 HEAD** 建工作区。实测三步：
+
+| 步骤 | 结果 |
+| --- | --- |
+| 在 `agent/exploit/dep-a` 里提交 `src/payload/PayloadEngine.java` | 提交成功 |
+| 立即从 main 派发下一个角色 | 新 worktree 里**看不到**该文件 |
+| 先 `git merge --no-ff agent/exploit/dep-a` 再派 | 新 worktree 里**能看到** |
+
+**推论**：派发的顺序不是「随便排」——**有依赖关系的任务必须先合并前置分支再派**。
+这条直接决定了 `payload-generation` 的派发次序：第 4、5 组（改 `tests/`）依赖第 1–3 组建出的新包，
+所以**不能**与第 1–3 组并发，必须等第 1–3 组合并后再派测试角色。
+
+（模拟用的分支与合并已全部撤销，`main` 回到 `7c58493`，无残留 worktree 与分支。）
+
+### 二、逐条派发的四条命令
+
+一个 change 的完整流程是四步，每条命令只派一个角色：
+
+```powershell
+# 第 1 条：主 agent 产出 change（已有 change 则跳过）
+.\tools\agent.ps1 -Role orchestrator -Slug payload-plan `
+  -Task "用 OpenSpec propose 产出 payload 生成的 change 规划件" -TimeoutMinutes 15
+
+# 第 2 条：执行角色（tasks.md 每组都标了写入域与角色）
+.\tools\agent.ps1 -Role exploit -Slug payload-core `
+  -Task "按 openspec/changes/payload-generation/tasks.md 第 1-3 组实现" -TimeoutMinutes 40
+
+# 第 3 条：测试角色（此时前置已合并，它能看到新包）
+.\tools\agent.ps1 -Role test -Slug payload-checks `
+  -Task "按 tasks.md 第 4-6 组补齐自检与回归" -TimeoutMinutes 40
+
+# 第 4 条：监督只读复核
+.\tools\agent.ps1 -Role supervisor -Slug audit-payload `
+  -Task "按十项清单复核本轮改动，给出阻断结论" -TimeoutMinutes 60
+```
+
+每条命令之间的**人工动作只有三件**：读结果、合并、测关。
+
+### 三、一条命令内部发生什么
+
+| 阶段 | 该角色做什么 | 人需要做什么 |
+| --- | --- | --- |
+| 启动 | 建 worktree 与分支，套角色卡 | 无 |
+| 运行 | 改代码，不自己提交 | 可等待，或读实时日志看进度 |
+| 静默时 | 看护 agent 读日志判三态 | 无（自动） |
+| 退出 | 脚本在沙箱外**校验写入域后提交** | 看「agent 改动的文件」清单，确认无越界 |
+| 结束后 | — | 合并、测关、清理、派下一条 |
+
+写入域校验是硬门禁：只要有一个文件不在该角色写入域内，脚本就整体撤回暂存、拒绝提交并列出越界文件。
+
+### 四、文档更新
+
+| 文件 | 更新 |
+| --- | --- |
+| `docs/AGENT-RUNBOOK.md` | 新增「四之二、逐条派发（实际工作流）」：依赖约束、四条命令、单条命令内部分解、合并与清理 |
+| `docs/AGENT-RUNBOOK.md` 结论速览 | 补两行：「新派角色能否看到前置产出」「哪些必须串行」补上「有依赖关系的任务」 |
+
+### 五、当前可立即派发的状态
+
+`openspec/changes/payload-generation` 规划件已就绪（4/4 artifacts complete，36 个任务、8 个组），
+`openspec status` 提示下一步是 `openspec instructions apply --change payload-generation`。
+仓库干净：无 worktree、无 `agent/*` 分支、无残留进程。
+
+按依赖关系，**第一条真实派发命令**应是第 2 条（执行角色 exploit），
+因为规划件已由主 agent 产出并合并。
+
+### 六、如实说明的局限
+
+1. 依赖约束的实测用的是「模拟提交一个文件」而非真实跑完一个角色的全部产出；
+   但该约束来自 `git worktree add` 从 HEAD 建工作区这一机制本身，与产出内容无关。
+2. 本轮为文档与实测，不改任何运行时行为（`src/`、`python/`、`tests/` 未触碰）。
+3. 「有依赖关系的任务必须串行」这条目前靠人判断（读 tasks.md 的写入域与依赖描述），
+   没有机械强制。若日后要自动化，需要把依赖关系写成 task 间的显式字段。
