@@ -12,6 +12,7 @@ import javax.swing.BoxLayout;
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
+import javax.swing.JComboBox;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
@@ -184,6 +185,50 @@ public final class UiKit {
     public static double scaleFor(int width, int height) {
         double scale = Math.min(width / (double) BASE_WIDTH, height / (double) BASE_HEIGHT);
         return Math.max(0.85, Math.min(1.45, scale));
+    }
+
+    /**
+     * 状态胶囊：用一块小色底 + 文字表达运行状态。
+     *
+     * <p>纯文字状态（READY / STOPPED）在灰色说明文字里几乎看不见，
+     * 而服务页同时要展示五个服务的状态，眼睛必须能一眼扫到哪个在跑。
+     */
+    public static JLabel chip(String text, Color background, Color foreground, FontSink sink) {
+        JLabel chip = label(text, Font.BOLD, 12, foreground, sink);
+        chip.setOpaque(true);
+        chip.setBackground(background);
+        chip.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(background),
+                BorderFactory.createEmptyBorder(3, 10, 3, 10)));
+        return chip;
+    }
+
+    /**
+     * 分组小标题 + 右侧说明的一行。
+     *
+     * <p>服务页与预设链页都有多个「区块」，统一用这一行开头，
+     * 避免每个页面各写一套标题间距。
+     */
+    public static JPanel sectionTitle(String title, String hint, FontSink sink) {
+        JPanel row = new JPanel(new BorderLayout(12, 0));
+        row.setOpaque(false);
+        row.add(label(title, Font.BOLD, 15, TEXT, sink), BorderLayout.WEST);
+        if (hint != null && !hint.isEmpty()) {
+            JLabel hintLabel = label(hint, Font.PLAIN, 12, MUTED, sink);
+            row.add(hintLabel, BorderLayout.EAST);
+        }
+        return row;
+    }
+
+    /** 下拉框统一样式：与输入框同高同边框，避免同一行里控件高低不齐。 */
+    public static void styleCombo(JComboBox<?> combo, int width, FontSink sink) {
+        combo.setPreferredSize(new Dimension(width, 34));
+        combo.setBackground(Color.WHITE);
+        combo.setForeground(TEXT);
+        combo.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(FIELD_BORDER),
+                BorderFactory.createEmptyBorder(4, 8, 4, 8)));
+        sink.track(combo, Font.PLAIN, 14);
     }
 
     public static Dimension scaledSidebar(double scale) {

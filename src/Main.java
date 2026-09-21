@@ -48,16 +48,18 @@ public final class Main {
     private static final long PROXY_INTERCEPT_TIMEOUT_MS = 120000;
     private static final List<ui.NavItem> NAV_ITEMS = Arrays.asList(
             new ui.NavItem("home", "主页"),
-            new ui.NavItem("config", "配置"),
+            new ui.NavItem("payload", "Payload", Arrays.asList(
+                    new ui.NavItem("payload.build", "Payload 生成"),
+                    new ui.NavItem("payload.preset", "预设链"))),
+            new ui.NavItem("service", "服务", Arrays.asList(
+                    new ui.NavItem("service.servers", "恶意服务器"),
+                    new ui.NavItem("shiro.exploit", "Shiro 漏洞利用"))),
             new ui.NavItem("proxy", "代理", Arrays.asList(
                     new ui.NavItem("proxy.mitm", "代理抓包"),
                     new ui.NavItem("capture", "抓包转换"))),
             new ui.NavItem("fastjson", "FastJson", Arrays.asList(
                     new ui.NavItem("fastjson.detect", "Fastjson 探测"))),
-            new ui.NavItem("shiro", "Shiro", Arrays.asList(
-                    new ui.NavItem("shiro.exploit", "Shiro 漏洞利用"))),
-            new ui.NavItem("payload", "Payload", Arrays.asList(
-                    new ui.NavItem("payload.build", "Payload 生成"))));
+            new ui.NavItem("config", "配置"));
 
     private final JFrame frame = new JFrame("JavaSecExpToolKit");
     private final JPanel content = new JPanel(new BorderLayout());
@@ -164,6 +166,17 @@ public final class Main {
     private final JCheckBox shiroGcm = new JCheckBox("AES-GCM（Shiro \u2265 1.4.2）", false);
     private final JTextField shiroEchoHeader = new JTextField("X-Authorization", 14);
     private final JTextField configPayloadExportDir = new JTextField("", 32);
+    private final JComboBox<String> configPresetCategory =
+            new JComboBox<String>(new String[]{"全部分类"});
+    private final JTextField configServerBindHost = new JTextField("", 24);
+    private final JTextField configServerAdvertiseHost = new JTextField("", 24);
+    private final JTextField configServerJndiLdap = new JTextField("50389", 8);
+    private final JTextField configServerJndiRmi = new JTextField("50388", 8);
+    private final JTextField configServerJndiHttp = new JTextField("58080", 8);
+    private final JTextField configServerHttp = new JTextField("50000", 8);
+    private final JTextField configServerJrmp = new JTextField("13999", 8);
+    private final JTextField configServerMysql = new JTextField("3308", 8);
+    private final JTextField configServerTcp = new JTextField("11527", 8);
     private final JComboBox<shiro.ShiroExploit.ChainKind> shiroChain = new JComboBox<shiro.ShiroExploit.ChainKind>(shiro.ShiroExploit.ChainKind.values());
     private final JTextField shiroCommand = new JTextField("whoami", 22);
     private final JTextArea shiroHeaders = new JTextArea(3, 32);
@@ -208,6 +221,12 @@ public final class Main {
     /** Payload 生成页的控件：与其它页面一样由主窗口持有，反复进出不累积状态。 */
     private final ui.PayloadPage.Widgets payloadWidgets = new ui.PayloadPage.Widgets();
     private ui.PayloadController payloadController;
+    /** 预设链页的控件与控制器：控制器持有已载入的预设，只在首次进页创建。 */
+    private final ui.PresetPage.Widgets presetWidgets = new ui.PresetPage.Widgets();
+    private ui.PresetController presetController;
+    /** 恶意服务器页的控件与控制器：控制器持有运行中的服务，必须跨页复用。 */
+    private final ui.ServicePage.Widgets serviceWidgets = new ui.ServicePage.Widgets();
+    private ui.ServiceController serviceController;
 
     private JPanel navigation;
     private JList<ui.NavItem> navigationList;
@@ -247,16 +266,28 @@ public final class Main {
         updateScale();
     }
 
+    /**
+     * 主窗口默认全屏。
+     *
+     * <p>界面改版后单页要同时放下服务清单、监听参数、载荷发布与运行输出四块，
+     * 75% 屏宽时参数区会被压成需要横向滚动。这里直接最大化：Swing 的 MAXIMIZED_BOTH
+     * 仍保留标题栏与任务栏，使用者随时可以还原，比无边框全屏更稳妥。
+     *
+     * <p>最小尺寸按「四块区域都能用」反推：侧边栏 250 + 清单 280 + 参数列 700 左右。
+     */
     private void configureFrame() {
-        Dimension screen = Toolkit.getDefaultToolkit().getScreenSize();
-        int width = Math.max(1050, (int) (screen.width * 0.75));
-        int height = Math.max(700, (int) (screen.height * 0.75));
-        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        frame.setSize(width, height);
-        frame.setMinimumSize(new Dimension(980, 640));
-        frame.setLocationRelativeTo(null);
+        // 关闭窗口即退出进程：恶意服务器会真实占用端口，必须先把它们停掉，
+        // 否则下次启动会撞上「端口被占用」而看起来像工具坏了。
+        frame.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
+        frame.addWindowListener(new java.awt.event.WindowAdapter() {
+            @Override public void windowClosing(java.awt.event.WindowEvent event) {
+                stopAllServicesThenExit();
+            }
+        });
+        frame.setMinimumSize(new Dimension(1180, 720));
         frame.setLayout(new BorderLayout());
         frame.getContentPane().setBackground(BACKGROUND);
+        frame.setExtendedState(JFrame.MAXIMIZED_BOTH);
     }
 
     private JPanel navigation() {
@@ -308,6 +339,19 @@ public final class Main {
         return panel;
     }
 
+    /** 退出前停掉全部服务并释放端口；失败也不阻塞退出，避免关不掉窗口。 */
+    private void stopAllServicesThenExit() {
+        if (serviceController != null) {
+            try {
+                serviceController.shutdown();
+            } catch (RuntimeException ignored) {
+                // 关闭阶段的异常不该拦住退出
+            }
+        }
+        frame.dispose();
+        System.exit(0);
+    }
+
     private void showHome() {
         setContent(HomePage.build(fonts, this::selectNav));
     }
@@ -325,6 +369,8 @@ public final class Main {
         else if ("fastjson.detect".equals(item.key)) showFastjson();
         else if ("shiro.exploit".equals(item.key)) showShiro();
         else if ("payload.build".equals(item.key)) showPayload();
+        else if ("payload.preset".equals(item.key)) showPreset();
+        else if ("service.servers".equals(item.key)) showServers();
         else showHome();
     }
 
@@ -711,6 +757,14 @@ public final class Main {
     }
 
     private void showConfig() {
+        // 预设分类候选来自内置预设文件：写死分类名会在预设升级后变成无效选项
+        java.util.List<String> presetCategories = ui.PresetController.categoryNames(preset.PresetCatalogService.load());
+        configPresetCategory.setModel(new javax.swing.DefaultComboBoxModel<String>(
+                presetCategories.toArray(new String[0])));
+        // 换模型会把选中项重置到第一项：这里按配置值重新选一次，
+        // 否则配置页显示的「当前值」与实际保存值不一致
+        selectOption(configPresetCategory, config.getProperty("preset_category", "全部分类"));
+
         ConfigPage.Widgets widgets = new ConfigPage.Widgets();
         widgets.groups = new ConfigPage.Group[]{
                 new ConfigPage.Group("通用配置", "所有功能共用；未单独配置的功能沿用这里的默认值。",
@@ -761,7 +815,23 @@ public final class Main {
                 new ConfigPage.Group("Payload 生成配置",
                         "生成利用链载荷时的默认参数；导出目录留空则写入用户目录。",
                         new ConfigPage.Row[]{
-                                new ConfigPage.Row("默认导出目录", configPayloadExportDir, "载荷导出文件的落盘目录，留空则用用户目录")})};
+                                new ConfigPage.Row("默认导出目录", configPayloadExportDir, "载荷导出文件的落盘目录，留空则用用户目录")}),
+                new ConfigPage.Group("恶意服务器配置",
+                        "「恶意服务器」的默认监听参数；端口留空或填 0 表示不启用该项。",
+                        new ConfigPage.Row[]{
+                                new ConfigPage.Row("默认绑定地址", configServerBindHost, "服务实际监听的网卡地址，留空用 127.0.0.1"),
+                                new ConfigPage.Row("默认公布地址", configServerAdvertiseHost, "写进载荷的回连地址，跨机测试填本机内网 IP"),
+                                new ConfigPage.Row("JNDI LDAP 端口", configServerJndiLdap, "默认 50389"),
+                                new ConfigPage.Row("JNDI RMI 端口", configServerJndiRmi, "默认 50388"),
+                                new ConfigPage.Row("JNDI HTTP 端口", configServerJndiHttp, "默认 58080"),
+                                new ConfigPage.Row("HTTP 服务端口", configServerHttp, "默认 50000"),
+                                new ConfigPage.Row("JRMP 端口", configServerJrmp, "默认 13999"),
+                                new ConfigPage.Row("FakeMySQL 端口", configServerMysql, "默认 3308"),
+                                new ConfigPage.Row("TCP 端口", configServerTcp, "默认 11527")}),
+                new ConfigPage.Group("预设链配置",
+                        "「预设链」页的默认分类筛选；链与参数每次都不同，故不保存。",
+                        new ConfigPage.Row[]{
+                                new ConfigPage.Row("默认分类", configPresetCategory, "打开预设链页时预选的分类")})};
         widgets.status = configStatus;
         widgets.onSave = this::saveConfigFromForm;
         widgets.onReset = this::resetConfigForm;
@@ -820,6 +890,96 @@ public final class Main {
                     });
         }
         setContent(ui.PayloadPage.build(payloadWidgets, fonts));
+    }
+
+    /**
+     * 打开预设链页。
+     *
+     * <p>控制器只在第一次进页时创建：它持有已载入的预设清单与当前选中项，
+     * 每次进页都重建会重新解析一遍 YAML，并把使用者刚挑好的链清掉。
+     */
+    private void showPreset() {
+        if (presetController == null) {
+            presetWidgets.onSendToCapture = payload -> {
+                captureBody.setText(payload);
+                selectNav("capture");
+            };
+            presetWidgets.onSendToServers = (payloadId, gadgets, params) -> {
+                if (serviceController == null) showServers();
+                serviceController.setTask(payloadId, gadgets, params);
+                selectNav("service.servers");
+                serviceController.consumeTask();
+            };
+            presetController = new ui.PresetController(presetWidgets, fonts, new ui.PresetController.View() {
+                @Override public void setStatus(String text) { presetWidgets.status.setText(text); }
+
+                @Override public void setOutput(String text) { presetWidgets.output.setText(text); }
+            });
+        }
+        presetController.applyDefaultCategory(config.getProperty("preset_category", "").trim());
+        setContent(ui.PresetPage.build(presetWidgets, fonts));
+    }
+
+    /**
+     * 打开恶意服务器页。
+     *
+     * <p>控制器只在第一次进页时创建，并且之后一直复用：它持有 java-chains 的
+     * 服务生命周期，重建控制器等于把已经监听端口的服务丢掉，界面上再也停不掉它们。
+     */
+    private void showServers() {
+        if (serviceController == null) {
+            serviceWidgets.onSendToCapture = address -> {
+                captureUrl.setText(address);
+                selectNav("capture");
+            };
+            serviceController = new ui.ServiceController(serviceWidgets, fonts,
+                    new ui.ServiceController.View() {
+                @Override public void setStatus(String text) { serviceWidgets.status.setText(text); }
+
+                @Override public void setOutput(String text) { serviceWidgets.output.setText(text); }
+
+                @Override public void appendOutput(String text) {
+                    serviceWidgets.output.append(text);
+                    if (!text.endsWith(System.lineSeparator())) {
+                        serviceWidgets.output.append(System.lineSeparator());
+                    }
+                    serviceWidgets.output.setCaretPosition(serviceWidgets.output.getDocument().getLength());
+                }
+            }, serverDefaults());
+        }
+        setContent(ui.ServicePage.build(serviceWidgets, fonts));
+        // 进页时才消费预设页交来的链：此前控件还没挂上窗口，写进去看不到效果
+        serviceController.consumeTask();
+    }
+
+    /**
+     * 从配置里取出恶意服务器的默认监听参数。
+     *
+     * <p>端口键用「服务标识.端口键」的复合形式，与 {@code ServiceDefaults.portKey} 一致：
+     * 上游对四类服务复用同一个端口键（都叫 main），只用端口键会互相覆盖。
+     */
+    private service.ServiceDefaults serverDefaults() {
+        Map<String, Integer> ports = new java.util.LinkedHashMap<String, Integer>();
+        putPort(ports, "jndi.ldap", configServerJndiLdap.getText());
+        putPort(ports, "jndi.rmi", configServerJndiRmi.getText());
+        putPort(ports, "jndi.http", configServerJndiHttp.getText());
+        putPort(ports, "http.main", configServerHttp.getText());
+        putPort(ports, "jrmp.main", configServerJrmp.getText());
+        putPort(ports, "mysql.main", configServerMysql.getText());
+        putPort(ports, "tcp.main", configServerTcp.getText());
+        return new service.ServiceDefaults(configServerBindHost.getText(), configServerAdvertiseHost.getText(), ports);
+    }
+
+    /** 端口填写容错：空、非数字、越界一律视为「沿用上游默认值」。 */
+    private static void putPort(Map<String, Integer> ports, String key, String raw) {
+        String text = raw == null ? "" : raw.trim();
+        if (text.isEmpty()) return;
+        try {
+            int port = Integer.parseInt(text);
+            if (port >= 1 && port <= 65535) ports.put(key, Integer.valueOf(port));
+        } catch (NumberFormatException ignored) {
+            // 非法输入按未配置处理：界面已在配置页给出 1-65535 的提示
+        }
     }
 
     private shiro.ShiroEngine.Options shiroOptions() {
@@ -1370,6 +1530,12 @@ public final class Main {
         if (!command.isEmpty()) shiroCommand.setText(command);
         String shiroBodyText = config.getProperty("shiro_body", "").trim();
         if (!shiroBodyText.isEmpty()) shiroBody.setText(shiroBodyText);
+
+        // 控制器只在用户进过页之后才存在；不存在时无需下发，进页时自会带上默认值
+        if (serviceController != null) serviceController.applyDefaults(serverDefaults());
+        if (presetController != null) {
+            presetController.applyDefaultCategory(config.getProperty("preset_category", "").trim());
+        }
     }
 
     /** 勾选框型配置：只认 true/false，其他值按默认值处理。 */
@@ -1475,6 +1641,16 @@ public final class Main {
         configShiroCommand.setText(config.getProperty("shiro_command", ""));
         configShiroBody.setText(config.getProperty("shiro_body", ""));
         configPayloadExportDir.setText(config.getProperty("payload_export_dir", ""));
+        configServerBindHost.setText(config.getProperty("server_bind_host", ""));
+        configServerAdvertiseHost.setText(config.getProperty("server_advertise_host", ""));
+        configServerJndiLdap.setText(config.getProperty("server_jndi_ldap_port", "50389"));
+        configServerJndiRmi.setText(config.getProperty("server_jndi_rmi_port", "50388"));
+        configServerJndiHttp.setText(config.getProperty("server_jndi_http_port", "58080"));
+        configServerHttp.setText(config.getProperty("server_http_port", "50000"));
+        configServerJrmp.setText(config.getProperty("server_jrmp_port", "13999"));
+        configServerMysql.setText(config.getProperty("server_mysql_port", "3308"));
+        configServerTcp.setText(config.getProperty("server_tcp_port", "11527"));
+        selectOption(configPresetCategory, config.getProperty("preset_category", "全部分类"));
         configStatus.setText("已载入当前配置");
     }
 
@@ -1527,6 +1703,17 @@ public final class Main {
         config.setProperty("shiro_command", configShiroCommand.getText().trim());
         config.setProperty("shiro_body", configShiroBody.getText().trim());
         config.setProperty("payload_export_dir", configPayloadExportDir.getText().trim());
+        config.setProperty("server_bind_host", configServerBindHost.getText().trim());
+        config.setProperty("server_advertise_host", configServerAdvertiseHost.getText().trim());
+        config.setProperty("server_jndi_ldap_port", Platform.valueOr(configServerJndiLdap.getText(), "50389"));
+        config.setProperty("server_jndi_rmi_port", Platform.valueOr(configServerJndiRmi.getText(), "50388"));
+        config.setProperty("server_jndi_http_port", Platform.valueOr(configServerJndiHttp.getText(), "58080"));
+        config.setProperty("server_http_port", Platform.valueOr(configServerHttp.getText(), "50000"));
+        config.setProperty("server_jrmp_port", Platform.valueOr(configServerJrmp.getText(), "13999"));
+        config.setProperty("server_mysql_port", Platform.valueOr(configServerMysql.getText(), "3308"));
+        config.setProperty("server_tcp_port", Platform.valueOr(configServerTcp.getText(), "11527"));
+        Object presetCategory = configPresetCategory.getSelectedItem();
+        config.setProperty("preset_category", presetCategory == null ? "全部分类" : String.valueOf(presetCategory));
         try {
             AppConfig.save(config);
             applyConfigToForms();

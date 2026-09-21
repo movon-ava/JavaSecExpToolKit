@@ -45,8 +45,8 @@ public final class PayloadController implements ActionListener {
     private final UiKit.FontSink sink;
     private final View view;
 
-    /** 当前链：第 0 个元素是载体 id，其后依次是 gadget 节点。 */
-    private final List<String> chain = new ArrayList<String>();
+    /** 链状态与规则由共享编辑器持有：两个页面用同一套规则，避免实现漂移。 */
+    private final ChainEditor editor = new ChainEditor();
     /** 当前渲染出的参数行。 */
     private final List<PayloadPage.ParamField> fields = new ArrayList<PayloadPage.ParamField>();
     /** 最近一次成功生成的载荷（Base64 文本）。 */
@@ -127,67 +127,37 @@ public final class PayloadController implements ActionListener {
 
     /** 换载体即重开一条链：载体不同，可用节点必然不同。 */
     private void resetChain() {
-        chain.clear();
-        String kind = (String) widgets.kind.getSelectedItem();
-        if (kind != null && !kind.trim().isEmpty()) chain.add(kind.trim());
+        editor.reset((String) widgets.kind.getSelectedItem());
         refreshChainView();
     }
 
     private void appendSelected() {
-        if (chain.isEmpty()) {
-            view.setStatus("请先选择载荷载体。");
+        if (!editor.append((String) widgets.next.getSelectedItem())) {
+            view.setStatus(editor.isEmpty() ? "请先选择载荷载体。" : "没有可追加的节点。");
             return;
         }
-        String node = (String) widgets.next.getSelectedItem();
-        if (node == null || node.trim().isEmpty()) {
-            view.setStatus("没有可追加的节点。");
-            return;
-        }
-        chain.add(node.trim());
         refreshChainView();
     }
 
     private void removeLast() {
-        // 载体不能被移除：没有载体的链不成立
-        if (chain.size() <= 1) {
+        if (!editor.removeLast()) {
             view.setStatus("载体不能移除：请改选载体，或点「清空链」。");
             return;
         }
-        chain.remove(chain.size() - 1);
         refreshChainView();
     }
 
     /** 链变化后统一刷新：链文本、候选节点、参数行。 */
     private void refreshChainView() {
-        widgets.chain.setText(joinChain());
-        List<String> candidates = chain.size() <= 1
-                ? PayloadEngine.firstNodes(head())
-                : PayloadEngine.nextNodes(tail());
+        widgets.chain.setText(editor.display());
+        List<String> candidates = editor.candidates();
         widgets.next.setModel(new DefaultComboBoxModel<String>(candidates.toArray(new String[0])));
         rebuildParams();
-        if (candidates.isEmpty() && chain.size() > 1) {
+        if (candidates.isEmpty() && editor.nodeCount() > 0) {
             view.setStatus("当前链已到末端，没有可继续追加的节点。");
         } else {
-            view.setStatus("当前链：" + Math.max(0, chain.size() - 1) + " 个节点，可选后继 " + candidates.size() + " 个。");
+            view.setStatus("当前链：" + editor.nodeCount() + " 个节点，可选后继 " + candidates.size() + " 个。");
         }
-    }
-
-    private String head() {
-        return chain.isEmpty() ? "" : chain.get(0);
-    }
-
-    private String tail() {
-        return chain.isEmpty() ? "" : chain.get(chain.size() - 1);
-    }
-
-    private String joinChain() {
-        if (chain.isEmpty()) return "";
-        StringBuilder text = new StringBuilder();
-        for (int index = 0; index < chain.size(); index++) {
-            if (index > 0) text.append(" -> ");
-            text.append(chain.get(index));
-        }
-        return text.toString();
     }
 
     /**
@@ -199,18 +169,7 @@ public final class PayloadController implements ActionListener {
     private void rebuildParams() {
         Map<String, String> previous = currentValues();
         fields.clear();
-        for (String node : chain) {
-            // 载体自身的参数优先：Shiro 密钥、Fastjson 选项这类都挂在载体上
-            for (GadgetParam param : PayloadEngine.paramsOf(node)) {
-                String key = param.getKey();
-                if (key == null || key.trim().isEmpty()) continue;
-                if (containsKey(key)) continue;
-                String label = param.getName() == null || param.getName().trim().isEmpty()
-                        ? key : param.getName();
-                fields.add(new PayloadPage.ParamField(
-                        key, label, describe(param), toChoices(param), Boolean.TRUE.equals(param.getRequired())));
-            }
-        }
+        fields.addAll(editor.paramFields());
         widgets.fields = fields;
         PayloadPage.renderParams(widgets.params, fields, sink);
         for (PayloadPage.ParamField field : fields) {
@@ -224,59 +183,24 @@ public final class PayloadController implements ActionListener {
         }
     }
 
-    private boolean containsKey(String key) {
-        for (PayloadPage.ParamField existing : fields) {
-            if (existing.key.equals(key)) return true;
-        }
-        return false;
-    }
-
-    private static String[] toChoices(GadgetParam param) {
-        Map<String, String> choices = param.getChoices();
-        if (choices == null || choices.isEmpty()) return new String[0];
-        return choices.keySet().toArray(new String[0]);
-    }
-
-    private static String describe(GadgetParam param) {
-        String description = param.getDescription();
-        if (description == null) return "";
-        String flat = description.replace("\r", " ").replace("\n", " ")
-                .replaceAll("\\s+", " ").trim();
-        return flat.length() > 48 ? flat.substring(0, 48) + "…" : flat;
-    }
-
     private Map<String, String> currentValues() {
-        Map<String, String> values = new LinkedHashMap<String, String>();
-        for (PayloadPage.ParamField field : fields) {
-            if (field.field instanceof JTextField) {
-                values.put(field.key, ((JTextField) field.field).getText().trim());
-            } else if (field.field instanceof JComboBox) {
-                Object selected = ((JComboBox<?>) field.field).getSelectedItem();
-                values.put(field.key, selected == null ? "" : String.valueOf(selected));
-            }
-        }
-        return values;
+        return ChainEditor.readValues(fields);
     }
 
     private Map<String, Object> currentParams() {
-        Map<String, Object> params = new LinkedHashMap<String, Object>();
-        for (Map.Entry<String, String> entry : currentValues().entrySet()) {
-            if (entry.getValue() == null || entry.getValue().isEmpty()) continue;
-            params.put(entry.getKey(), entry.getValue());
-        }
-        return params;
+        return ChainEditor.toParams(currentValues());
     }
 
     private void build() {
-        if (chain.isEmpty()) {
+        if (editor.isEmpty()) {
             view.setStatus("请先选择载荷载体。");
             return;
         }
-        if (chain.size() <= 1) {
+        if (!editor.isBuildable()) {
             view.setStatus("请先追加至少一个节点：载体自身不是完整利用链。");
             return;
         }
-        PayloadResult result = PayloadEngine.build(head(), chain.subList(1, chain.size()), currentParams());
+        PayloadResult result = PayloadEngine.build(editor.head(), editor.gadgets(), currentParams());
         if (!result.success) {
             lastPayload = "";
             view.setStatus("生成失败。");
@@ -286,8 +210,8 @@ public final class PayloadController implements ActionListener {
         lastPayload = result.base64;
         view.setStatus("生成成功：" + result.byteLength() + " 字节。");
         StringBuilder text = new StringBuilder();
-        text.append("载体：").append(head()).append("\n");
-        text.append("链：").append(joinChain()).append("\n");
+        text.append("载体：").append(editor.head()).append("\n");
+        text.append("链：").append(editor.display()).append("\n");
         text.append("长度：").append(result.byteLength()).append(" 字节\n");
         text.append("摘要：").append(result.digest).append("\n\n");
         text.append("Base64：\n").append(result.base64).append("\n");
@@ -318,7 +242,7 @@ public final class PayloadController implements ActionListener {
         String directory = widgets.exportDirectory == null || widgets.exportDirectory.trim().isEmpty()
                 ? System.getProperty("user.home") : widgets.exportDirectory.trim();
         String stamp = new SimpleDateFormat("yyyyMMdd-HHmmss").format(new Date());
-        Path target = Paths.get(directory, "payload-" + head() + "-" + stamp + ".txt");
+        Path target = Paths.get(directory, "payload-" + editor.head() + "-" + stamp + ".txt");
         try {
             Path parent = target.getParent();
             if (parent != null) Files.createDirectories(parent);
