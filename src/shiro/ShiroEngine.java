@@ -16,7 +16,6 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.util.ArrayList;
-import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -660,22 +659,19 @@ public final class ShiroEngine {
         return null;
     }
 
+    /**
+     * Base64 解码，容忍换行与空格。
+     *
+     * <p>实现已下沉到共享内核 {@link util.Codec}：该能力与 Shiro 无关，
+     * 通用链引擎同样需要它。此处保留原签名委托，避免改动既有调用方。
+     */
     public static byte[] decodeBase64(String text) {
-        if (text == null) return null;
-        String trimmed = text.trim();
-        try {
-            return Base64.getDecoder().decode(trimmed);
-        } catch (IllegalArgumentException e) {
-            try {
-                return Base64.getMimeDecoder().decode(trimmed);
-            } catch (IllegalArgumentException ignored) {
-                return null;
-            }
-        }
+        return util.Codec.decodeBase64(text);
     }
 
+    /** Base64 编码，实现见 {@link util.Codec#base64(byte[])}。 */
     public static String base64(byte[] data) {
-        return data == null ? "" : Base64.getEncoder().encodeToString(data);
+        return util.Codec.base64(data);
     }
 
     // ------------------------------------------------------------------

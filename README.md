@@ -175,7 +175,7 @@ CEYE 确认作为附属阶段时仍依赖 DNS 阶段。未填 Token 就执行 `C
 | `python/` | 探测引擎（`fj_probe.py`），打进 JAR |
 | `tests/` | Python 单元测试与 Java 界面自检 |
 | `tools/` | 维护辅助脚本，例如 `apply_patch.py` |
-| `docs/` | 设计文档（`DESIGN.md`、`DESIGN-shiro.md`、`DESIGN-probe-accuracy.md`、`DESIGN-agents.md`、`DESIGN-modularization.md`、`DESIGN-payload.md`） |
+| `docs/` | 设计文档（`DESIGN.md`、`DESIGN-shiro.md`、`DESIGN-probe-accuracy.md`、`DESIGN-agents.md`、`DESIGN-modularization.md`、`DESIGN-payload.md`）与多 Agent 职责说明（`AGENT-ROLES.md`） |
 | `openspec/` | 规格驱动开发：`specs/` 存能力规格，`changes/` 存待办与归档的变更，`config.yaml` 约束 AI 生成规划件 |
 | `.agents/` | OpenSpec 生成的 AI 工具指令（本仓库目标工具为 codex） |
 | `target/` | Maven 构建输出（经 `src/pom.xml` 写入） |

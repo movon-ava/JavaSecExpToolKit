@@ -1197,3 +1197,132 @@
 4. `openspec/specs/` 下目前只有 1 个能力规格（`traffic/capture-bridge`），
    其余 capability（probe、shiro、proxy、config、build）尚未建立规格，
    需在后续 change 中逐步补齐。
+
+
+## 2026-09-21（链引擎解耦 + 依赖边界自检 + 多 Agent 职责文档）
+
+本轮把上一轮的设计结论落地：打通 `payload` 功能的前置阻塞项，
+并把「是否被正确解耦」从人工判断变成可机械执行的断言。
+按 OpenSpec 工作流执行：先 `propose` 产出规划件，再 `apply` 实施。
+
+### 一、根因分析（先诊断后动手）
+
+实测 `src/shiro/` 下三个文件的性质并不相同：
+
+| 文件 | 行数 | 性质 |
+| --- | ---: | --- |
+| `ShiroEngine.java` | 719 | Shiro 专用 |
+| `ShiroExploit.java` | 192 | Shiro 专用 |
+| `ChainsEngine.java` | 265 | **通用**（java-chains 封装） |
+
+`ChainsEngine` 封装的是「选载荷载体 → 追加 gadget 节点 → 构建」这套与漏洞类型无关的机制，
+实测可驱动 429 个节点、28 种载体（hessian、jndi、xstream、blazeDS 等），
+却位于 `shiro` 包内，并在第 195 行调用 `ShiroEngine.base64(...)`。
+
+**这是全项目唯一的真实反向依赖**：通用组件被具体功能模块持有。
+若不先解耦，后续 payload 生成功能要么接受 `payload → shiro` 的反向依赖，
+要么在功能开发中途做跨模块重构。
+
+补充说明：`ShiroExploit → ChainsEngine` 与 `ShiroExploit → ShiroEngine` 是 Shiro 包**内部**的
+同向依赖，不构成耦合问题，本轮不动。
+
+### 二、包级依赖基线（独立复算，含全限定名）
+
+| 依赖边 | 处数 |
+| --- | ---: |
+| `<default>`（Main，组合根）→ `ui` / `proxy` / `shiro` / `probe` / `util` / `config` | 50 |
+| `ui` → `proxy` / `shiro` / `util` | 3 |
+| `shiro` → `util` | 1（本轮新增，解耦后） |
+| `probe` → `util` | 3 |
+
+解耦前 `shiro → shiro` 内部存在 `ChainsEngine → ShiroEngine`；
+解耦后已消失，`shiro` 对 `util` 出现一条新边（引用共享内核 `Codec`）。
+
+### 三、改动内容
+
+| 文件 | 性质 | 说明 |
+| --- | --- | --- |
+| `src/util/Codec.java` | 新增 | 共享内核：`base64` / `decodeBase64`，纯函数，无项目内依赖 |
+| `src/shiro/ShiroEngine.java` | 改 | 两个方法改为委托 `Codec`，**公开签名不变**；移除 `java.util.Base64` import |
+| `src/shiro/ChainsEngine.java` | 改 | 第 195 行改用 `util.Codec.base64`，文件中已无 `ShiroEngine` 标识符 |
+| `tests/test_decoupling.py` | 新增 | 依赖边界自检：11 项断言 |
+| `docs/AGENT-ROLES.md` | 新增 | 六个角色的职责、边界、交付物与协作顺序 |
+| `docs/DESIGN-agents.md` | 改 | 监督角色补充「解耦专项审计」与三类判定标准 |
+| `README.md` / `README.en.md` | 改 | 项目结构与文档索引同步 |
+
+**非 BREAKING**：`ShiroEngine.base64` / `decodeBase64` 的签名与行为完全不变，
+`ShiroExploit:176`、`tests/ShiroCheck.java`、`tests/UiShiroCheck.java` 等既有调用方无需改动。
+
+### 四、依赖边界自检（可机械执行）
+
+`tests/test_decoupling.py` 把规则固化为断言，只用标准库做源码静态扫描：
+
+| 断言 | 判定方法 |
+| --- | --- |
+| 扫描有效性 | 六个包必须都被扫到，防止规则因扫不到文件而恒真通过 |
+| 包级无环 | 构建包依赖图，检测双向边 |
+| 符合声明分层 | 与允许边集合比对；`<default>` 作为组合根允许装配任意模块 |
+| 叶子层无出边 | `config` / `proxy` / `util` 不得依赖其它项目包 |
+| 通用组件不依赖具体功能 | `ChainsEngine` 源码不得出现 `ShiroEngine` |
+| 共享内核单向 | `util` / `config` 不得依赖上层 |
+
+**反向验证（证明检查器不是恒真）**：临时把 `ChainsEngine` 的 `util.Codec.base64` 改回
+`ShiroEngine.base64`，该断言立即失败并报出文件与原因；恢复后重新通过。
+另有 2 项针对环检测器与扫描器的自测，覆盖「假环图能报出、无环图不误报、
+注释与字符串不算引用、真实引用不被漏掉」。
+
+### 五、监督 Agent 独立审计结论
+
+监督角色按要求**不复用实现者的检查脚本**，另写独立实现（只认 import 行与全限定名两种引用形式，
+独立重建依赖图）复算。两次独立复算（import-only 与含全限定名）结论一致：
+
+| 审计项 | 结论 |
+| --- | --- |
+| 写入域合规 | 通过。改动集中在 `src/util`、`src/shiro`、`tests`、`docs`、README |
+| 范围合规 | 通过。未触碰界面、配置键、代理与探测功能 |
+| 承诺兑现 | 通过。tasks.md 15 项全部有对应改动 |
+| 空实现检测 | 通过。`src/` 与 `python/` 下无 `TODO` / `FIXME` / `此处省略` |
+| 依赖合规 | 通过。`src/pom.xml` 未变，无新增第三方依赖 |
+| 构建一致性 | 通过。独立枚举源文件后确认无晚于 JAR 的文件 |
+| 解耦专项 | 通过。无环、叶子层无出边、共享内核无反向依赖、通用组件已解耦 |
+| 阻断结论 | **可归档** |
+
+### 六、验证结果
+
+| 项 | 结果 |
+| --- | --- |
+| Java 编译 | `src/` 23 个文件编译通过（仅既有 unchecked 警告） |
+| Python 测试 | `Ran 95 tests ... OK`（84 → 95，新增 11 项） |
+| `ShiroCheck` | 通过（含加解密往返回归断言） |
+| `ProxyServerCheck` | 通过 |
+| `UiNavigationCheck` | 通过 |
+| `UiShiroCheck` | 通过 |
+| `UiSwitchEndToEndCheck` | 通过 |
+| `openspec validate --all --strict` | 2 项全部 `valid: true` |
+| JAR 构建 | `2026-09-21 11:40:42`，`186414` bytes |
+| JAR 时间校验 | 晚于 `src/`、`python/`、`tests/` 全部源文件 |
+| JAR 内容校验 | `util/Codec.class` 在包内；`shiro/ChainsEngine.class` 已不含 `ShiroEngine` 引用；`python/fj_probe.py` 哈希与源文件一致 |
+
+### 七、解耦判定标准（本轮确立，写入监督清单）
+
+本仓库不追求为解耦而解耦，判定分三类：
+
+| 判定 | 标准 | 实例 |
+| --- | --- | --- |
+| 必须解耦 | 通用机制被具体功能模块持有，且已预见复用需求 | 本轮处理的 `ChainsEngine → ShiroEngine` |
+| 可不改 | 单向依赖、不构成环、不阻碍复用 | `ui` 引用 `ShiroExploit.ChainKind`；`FlowRenderer` 引用 `ProxyServer.HttpFlow` |
+| 不做 | 职责本身要求依赖多方 | `Main` 对全部模块的装配依赖（组合根本职） |
+
+### 八、如实说明的局限
+
+1. `ChainsEngine` **仍位于 `src/shiro/` 包内**。这是刻意的范围控制：
+   搬迁需同步改 `src/Main.java` 与 `ShiroExploit` 的 import，属独立 change。
+   解耦已完成，搬迁现在是零语义改动。
+2. 依赖边界自检是**源码文本扫描**，不是字节码分析。
+   已通过剥离注释与字符串降低误报，但仍可能漏掉动态引用（如反射）。
+   当前仓库未使用反射访问跨包类型，风险可接受。
+3. `ui → shiro`（`ShiroPage` 引用 `ShiroExploit.ChainKind`）与 `ui → proxy`
+   （`FlowRenderer` 引用 `ProxyServer.HttpFlow`）**有意保留**：
+   界面层引用其展示对象的数据类型是正常单向依赖，按第三节标准属于「可不改」。
+4. `openspec/specs/` 下现有 2 个能力规格（`traffic/capture-bridge`、
+   `codebase/dependency-boundary`），其余 capability 待后续 change 补齐。

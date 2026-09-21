@@ -192,7 +192,7 @@ public final class ChainsEngine {
             }
             Object data = result.getData();
             if (data instanceof byte[]) {
-                return Generated.ok(ShiroEngine.base64((byte[]) data));
+                return Generated.ok(util.Codec.base64((byte[]) data));
             }
             return Generated.ok(String.valueOf(data));
         } catch (Throwable error) {

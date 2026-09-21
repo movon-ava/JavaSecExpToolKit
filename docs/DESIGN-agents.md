@@ -130,6 +130,7 @@
 | `AI_REPORT.md` | W | R | R | R | R | R | R |
 | `README.md` / `README.en.md` | W | R | R | R | R | R | R |
 | `docs/**` | W | R | R | R | R | R | R |
+| `docs/AGENT-ROLES.md` | W | R | R | R | R | R | R |
 | `python/fj_probe.py` | R | W | - | - | - | R | R |
 | `src/probe/Probe*.java` | R | W | - | - | - | R | R |
 | `src/probe/CaptureBridge.java` | R | R | - | W | - | R | R |
@@ -141,6 +142,7 @@
 | `src/config/**` | R | R | R | R | R | R | R |
 | `src/util/**` | R | R | R | R | R | R | R |
 | `tests/**` | R | R | R | R | R | W | R |
+| `src/util/**`（新增文件） | W（批） | R | R | R | R | R | R |
 
 ### 4.1 共享内核规则
 
@@ -255,7 +257,27 @@ OpenSpec 的六个工作流与角色的对应关系：
 - **发现问题**：每条含文件路径与行号、问题类型、建议处置。
 - **阻断结论**：`可归档` 或 `阻断归档（原因）`。
 
-### 7.4 与自我审查的区别
+### 7.4 解耦专项审计
+
+解耦审计是监督角色的常设任务。判定标准分三类，**不要求为解耦而解耦**：
+
+| 判定 | 标准 | 本仓库实例 |
+| --- | --- | --- |
+| 必须解耦 | 通用机制被具体功能模块持有，且已预见复用需求 | 通用链引擎 `ChainsEngine` 曾调用 `ShiroEngine.base64` |
+| 可不改 | 单向依赖、不构成环、不阻碍复用 | `ui` 引用 `ShiroExploit.ChainKind`、`FlowRenderer` 引用 `ProxyServer.HttpFlow` |
+| 不做 | 职责本身要求依赖多方 | `Main` 对全部模块的装配依赖（组合根本职） |
+
+复核命令（监督角色须自己执行，不得引用执行者结论）：
+
+```
+python -m unittest tests.test_decoupling
+```
+
+该自检把边界规则固化为断言，覆盖四项：包级依赖无环、符合声明分层、
+通用组件不依赖具体功能模块、共享内核单向被依赖。
+规格定义见 `openspec/specs/codebase/dependency-boundary/spec.md`。
+
+### 7.5 与自我审查的区别
 
 监督 agent 必须**独立复算**，不能复用执行者的结论。例如核对
 「JAR 时间晚于源文件」时，它要自己重新枚举 `src/`、`python/`、`tests/`
