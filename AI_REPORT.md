@@ -1769,3 +1769,110 @@ git show agent/probe/<slug>:python/fj_probe.py
 2. 本轮为文档与实测，不改任何运行时行为（`src/`、`python/`、`tests/` 未触碰）。
 3. 「有依赖关系的任务必须串行」这条目前靠人判断（读 tasks.md 的写入域与依赖描述），
    没有机械强制。若日后要自动化，需要把依赖关系写成 task 间的显式字段。
+## 2026-09-21（主 agent 自动拆解编排：一句话目标 → 分批派发 → 自动合并 → 汇报）
+
+回答「主 agent 能否把任务自动拆解并分配给不同角色，配合 OpenSpec，最后汇报完成情况」。
+
+**结论**：能，但形态是**沙箱外的编排器** `tools/orchestrate.ps1`，不是让主 agent 自己当调度器。
+原因是主 agent 的沙箱建不了 worktree（前一轮实测：无法写 `.git/refs/heads/**`，
+`git worktree add` 报 `cannot lock ref`）。因此把「拆解」交给一次只读 LLM 会话，
+「派发与合并」交给在沙箱外运行的脚本。这样既拿到自动拆解，又保住原有的隔离边界。
+
+### 一、四步流程
+
+| 阶段 | 动作 | 设计依据 |
+| --- | --- | --- |
+| 1 拆解 | 只读会话，把角色矩阵（写入域）喂给 LLM，要求只输出 JSON 计划（role/slug/task/dependsOn） | 角色由矩阵限定，模型无法凭空发明角色 |
+| 2 校验 | 角色存在、slug 合规且唯一、依赖指向计划内 slug、步数 ≤ `-MaxSteps`、依赖不成环 | 校验不过**不创建任何 worktree**，零副作用 |
+| 3 执行 | 按「依赖 + 写入域冲突」分批；同批先**串行预建 worktree** 再并行启动 | 并发 `git worktree add` 会争用 `.git/worktrees` 与 refs |
+| 4 汇报 | 逐步列出「已合并 / 无需改动 / 需人工处理」+ 提交范围，写入 `%TEMP%\jset-orchestrate-<runId>.md` | 人只需读表，不必翻日志 |
+
+分批依据是 `tools/lib/RoleMatrix.ps1` 的 `Test-WriteScopeConflict`：
+**证不出不相交就串行**（宁可慢，不可撞）。
+
+### 二、新增与改动的文件
+
+| 文件 | 性质 | 说明 |
+| --- | --- | --- |
+| `tools/orchestrate.ps1` | 新增 | 编排器本体：拆解、校验、分批、执行、汇报 |
+| `tools/dispatch.ps1` | 新增 | 单条派发：推断角色 → 跑 agent → 判定 → 合并或保留现场 → 清理 |
+| `tools/lib/RoleMatrix.ps1` | 新增 | 写入域矩阵、超时预算、只读角色、冲突判定；与 `docs/AGENT-ROLES.md` 一一对应 |
+| `tools/lib/AgentRun.ps1` | 新增 | `Invoke-GitOn`、`Test-RepoReadyForMerge`、`Get-MergeDecision`、`Remove-AgentWorkspace`、`New-AgentWorktree` |
+| `tools/agent.ps1` | 改 | 新增 `-ResultFile`（机器可读结果）与退出码语义；改为引用共享矩阵 |
+| `tools/check_agent_tools.ps1` | 改 | 39 项扩展到 **77 项**，新增「角色矩阵完整性」整节 |
+
+### 三、修掉的两个真实缺陷
+
+**缺陷 A：`return ,@(...)` 让两条防呆分支变成死代码（严重）**
+
+`Resolve-Role` 用 `return ,@($hits)` 返回单元素数组，调用方习惯性写成 `@(Resolve-Role ...)` 之后，
+整个数组被当成一个元素，`$hits.Count` **恒为 1**。后果：
+
+- 「任务无任何关键词」→ 不报错，静默拿到**空角色**继续执行；
+- 「任务同时命中多个角色」→ 不报错，按首个命中角色派发（写入域猜错即白跑或越界）。
+
+实测证据（`tools\dispatch.ps1 -Task "写一首诗赞颂春天" -DryRun`）：
+修复前打印 `角色 : （按任务内容推断）`、`slug : -0921-1536` 并继续；
+修复后报「无法从任务内容推断角色」。多角色任务同样修复。
+根因是 PowerShell 的数组展开语义：单元素数组在 `return` 时会被展开，加逗号可阻止展开，
+但那样整个数组又成了单个元素——正确写法是 `return @(...)`，由调用方 `@()` 包裹。
+
+**缺陷 B：共享内核没有任何角色可写**
+
+实测逐文件核对写入域，`src/config/AppConfig.java`、`src/util/*.java`、`src/pom.xml`
+**不在任何角色的写入域内**。但 `openspec/config.yaml` 规定
+「`src/config/**` 与 `src/util/**` 是共享内核，任何角色不得直接改，**需主 agent 单独开 change**」，
+`docs/AGENT-ROLES.md` 也要求主 agent「审议共享内核的改动」。
+规则与机械校验互相矛盾：主 agent 即便开了 change 也提交不了。
+后果是真实拆解出的
+`orchestrator/payload-config-keys` 步骤（改 `AppConfig.java`）会被拒提交（退出码 3）。
+
+修法：`orchestrator` 写入域补 `src/config/*`、`src/util/*`、`src/pom.xml`，
+并在 `tools/check_agent_tools.ps1` 固化断言「每个受管源文件都有且仅有一个角色可写」
+与「共享内核归主 agent」，防止回归。同步更新了四份文档的说法。
+
+### 四、端到端实测
+
+在**临时克隆副本**上跑（避免污染主仓库历史），用一个假 codex 替代真实 LLM：
+计划 4 步 3 批，`probe` ∥ `traffic` → `test` → `supervisor`。
+
+| 观测项 | 结果 |
+| --- | --- |
+| 分批 | 4 步分成 3 批，同批两角色并行启动 |
+| 合并 | 3 个执行步全部自动合并，各自 `--no-ff` 产生合并提交 |
+| 监督步 | 在主仓库以 read-only 运行，退出码 0，不建 worktree、不提交 |
+| 清理 | 结束后 `git worktree list` 只剩主仓库，`agent/*` 分支为空 |
+| 主仓库 | 结束后工作区干净 |
+| 汇报 | 逐步表格 + 汇总「已合并 3 / 无需改动 0 / 需人工处理 0」 |
+| 外层退出码 | 0（`-SkipSupervisor` 与带监督两种跑法都是 0） |
+
+### 五、自动合并的安全边界（不为了跑完而合并）
+
+仅当以下条件**全部**满足才自动合并：agent 正常退出且未超时、看护未判卡死、
+改动全部落在写入域内、分支上确有新提交。任一不满足即记「需人工处理」并**保留分支与 worktree**；
+合并冲突时执行 `git merge --abort`，不留半个合并状态。
+收尾三项（备份 / `AI_REPORT.md` / `PROGRESS.md` / 构建校验）**不在编排器里做**，
+仍由主 agent 合并后统一执行——它们是全仓库共享资源，并发期间碰会互相覆盖。
+
+### 六、遗留的两处：其一当场修掉，其二如实说明
+
+**1）`dispatch.ps1` 自带的重复实现（本轮修掉）**
+它原先自带一份 `Invoke-GitOption` 与一套合并判定，与 `tools/lib/AgentRun.ps1` 重复，
+等于存在两套可能漂移的安全策略。已改为直接引用共享库，并把 `Test-RepoReadyForMerge`
+与 `Get-MergeDecision` 统一到一处。自检加了「不许出现重复实现」的断言。
+
+**2）退出码语义此前不完整**
+越界写入返回 0，自动化无法与「正常完成」区分。已改为：
+0 成功、3 越界拒提交、4 提交失败、5 `git add` 失败、124 超时，并在自检里固化。
+
+### 七、当前可立即使用的形态
+
+```powershell
+# 只拆解看计划
+.\tools\orchestrate.ps1 -Goal "补齐 fastjson 1.2.73-1.2.80 的版本识别盲区" -DryRun
+
+# 真跑：拆解 → 分批 → 派发 → 合并 → 汇报
+.\tools\orchestrate.ps1 -Goal "补齐 fastjson 1.2.73-1.2.80 的版本识别盲区"
+```
+
+至此，用户期望的工作形态已达成：**人只提出任务 → 编排器拆解派发 → 人做测试与验收 → 再提建议**。

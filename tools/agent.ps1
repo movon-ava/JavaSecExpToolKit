@@ -50,7 +50,11 @@ param(
     [int]$StallRounds = 2,
 
     # 关闭看护判定，回到“只有总超时”的行为。
-    [switch]$NoWatchdog
+    [switch]$NoWatchdog,
+
+    # 把本次运行的机器可读结果写到这个文件，供 tools/dispatch.ps1 程序化读取。
+    # 只靠退出码区分不了“提交了什么”与“为何没提交”，自动合并需要后者。
+    [string]$ResultFile = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -62,25 +66,16 @@ try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false } c
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 . (Join-Path $PSScriptRoot "lib\CodexCli.ps1")
+# 角色矩阵（写入域 / 超时预算 / 只读属性）与 tools/orchestrate.ps1 共用一份，
+# 避免两处各自维护后漂移。
+. (Join-Path $PSScriptRoot "lib\RoleMatrix.ps1")
 
-# 角色的超时预算：不传 -TimeoutMinutes 时按此取值。
-# 依据是本仓库已有的实测耗时：单个执行角色通常数分钟，
-# 监督审计需要独立重算依赖图与构建时间，耗时更高。
-$defaultTimeouts = @{
-    orchestrator = 45
-    probe        = 40
-    exploit      = 40
-    traffic      = 40
-    ui           = 40
-    test         = 40
-    supervisor   = 60
-}
 if (-not $PSBoundParameters.ContainsKey("TimeoutMinutes")) {
-    $TimeoutMinutes = $defaultTimeouts[$Role]
+    $TimeoutMinutes = Get-RoleDefaultTimeout -Role $Role
 }
 
 # 角色的默认沙箱：只读角色不给写权限，这是硬约束而非提醒
-$readOnlyRoles = @("supervisor")
+$readOnlyRoles = Get-ReadOnlyRoles
 if (-not $Sandbox) {
     $Sandbox = if ($readOnlyRoles -contains $Role) { "read-only" } else { "workspace-write" }
 }
@@ -108,27 +103,28 @@ $cards = @{
     orchestrator = @"
 你是主 agent（orchestrator）。职责：用 OpenSpec 的 propose 产出 change 规划件、
 判定改动是否跨写入域、集成各角色产出、归档 change、执行 Git 操作。
-禁止：不写功能代码（唯一可直接编辑的代码文件是 AGENTS.md 与构建脚本）。
+禁止：不写功能代码（唯一可直接编辑的代码文件是 AGENTS.md、构建脚本，以及共享内核 src/config/**、src/util/**）。
+共享内核约束：src/config/** 与 src/util/** 只由主 agent 单独开 change 修改，改前必须列出全部调用方。
 "@
     probe = @"
 你是功能开发 agent（probe）。写入域仅限 python/fj_probe.py 与 src/probe/Probe*.java。
-禁止：不改 src/ui/**、tests/**、src/util/**、src/config/**；不改配置项键名。
+禁止：不改 src/ui/**、tests/**、src/util/**、src/config/**、src/pom.xml；不改配置项键名。
 完成标志：python -m unittest discover -s tests 全绿。
 "@
     exploit = @"
 你是功能开发 agent（exploit）。写入域仅限 src/shiro/** 与 src/payload/**。
-禁止：不改 src/ui/**、tests/**、src/util/**、src/config/**；不改配置项键名。
+禁止：不改 src/ui/**、tests/**、src/util/**、src/config/**、src/pom.xml；不改配置项键名。
 完成标志：ShiroCheck 自检通过。
 "@
     traffic = @"
 你是功能开发 agent（traffic）。写入域仅限 src/proxy/** 与 src/probe/CaptureBridge.java。
-禁止：不改 src/ui/**、tests/**、src/util/**、src/config/**；不改配置项键名。
+禁止：不改 src/ui/**、tests/**、src/util/**、src/config/**、src/pom.xml；不改配置项键名。
 完成标志：ProxyServerCheck 自检通过。
 "@
     ui = @"
 你是 UI agent。写入域仅限 src/ui/** 与 src/Main.java。
 禁止：不改任何引擎行为（只接线，不改引擎逻辑）；不改 tests/**。
-硬性要求：新增的可长期保存配置必须同时进 src/config/AppConfig.java 与 src/ui/ConfigPage.java。
+硬性要求：新增的可长期保存配置要落进 src/ui/ConfigPage.java 的分组；
 完成标志：UiNavigationCheck、UiShiroCheck、UiSwitchEndToEndCheck 全绿。
 "@
     test = @"
@@ -148,20 +144,7 @@ $cards = @{
 # 写入域矩阵，与 docs/AGENT-ROLES.md 一致。
 # 用于提交前机械校验，防止越界改动被默默提交进来；
 # 这里只管提交范围，不代替审计。
-$writeScopes = @{
-    orchestrator = @(
-        "AGENTS.md", "README.md", "README.en.md", "PROGRESS.md", "AI_REPORT.md",
-        "build.ps1", "run.ps1", "tools/*", "docs/*", "openspec/*"
-    )
-    probe   = @("python/fj_probe.py", "src/probe/Probe*")
-    exploit = @("src/shiro/*", "src/payload/*")
-    traffic = @("src/proxy/*", "src/probe/CaptureBridge.java")
-    ui      = @("src/ui/*", "src/Main.java")
-    test    = @("tests/*")
-    supervisor = @()
-}
-if (-not $writeScopes.ContainsKey($Role)) { throw "未定义写入域：$Role" }
-$writeScope = $writeScopes[$Role]
+$writeScope = Get-RoleWriteScope -Role $Role
 
 $roleCard = $cards[$Role]
 if (-not $roleCard) { throw "未知角色：$Role" }
@@ -297,6 +280,11 @@ $previous = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
 $timedOut = $false
 $stalled = $false
+# 集成结果：供调用方判断能不能合并。
+# 0 = 无需提交或已提交；非 0 表示必须人工介入，切不可自动合并。
+$integrateCode = 0
+$committed = $false
+$outOfScopeCount = 0
 $stallStreak = 0
 $lastLength = -1
 $lastWrite = Get-Date
@@ -417,6 +405,7 @@ if ($Sandbox -ne "read-only") {
         & git -C $worktree add -A | Out-Null
         if ($LASTEXITCODE -ne 0) {
             Write-Host "`n[收尾] git add 失败，未提交，请手工检查 $worktree"
+            $integrateCode = 5
         } else {
             $changed = @(& git -C $worktree diff --cached --name-only)
             if ($changed.Count -eq 0) {
@@ -438,14 +427,20 @@ if ($Sandbox -ne "read-only") {
                     $outside | ForEach-Object { Write-Host "  $_" }
                     & git -C $worktree reset -q | Out-Null
                     Write-Host "[收尾] 如需保留，请先确认方案再手工提交。"
+                    # 越界不是“没事发生”：调用方必须能从退出码看出来，
+                    # 否则自动合并会把“被拒提交”当成“已完成”。
+                    $integrateCode = 3
+                    $outOfScopeCount = $outside.Count
                 } else {
                     $summary = ($Task -replace '\s+', ' ').Trim()
                     if ($summary.Length -gt 72) { $summary = $summary.Substring(0, 72) }
                     & git -C $worktree commit -q -m "agent($Role/$Slug): $summary" | Out-Null
                     if ($LASTEXITCODE -eq 0) {
                         Write-Host "[收尾] 已提交到分支 $branch"
+                        $committed = $true
                     } else {
                         Write-Host "[收尾] 提交失败，请手工处理 $worktree"
+                        $integrateCode = 4
                     }
                 }
             }
@@ -465,4 +460,23 @@ if ($readOnlyAudit) {
     Write-Host "清理工作区："
     Write-Host "  git worktree remove `"$worktree`" --force; git worktree prune"
 }
+# 机器可读结果：供 dispatch 判断能不能自动合并。
+if ($ResultFile) {
+    $result = @(
+        "role=$Role",
+        "slug=$Slug",
+        "branch=$branch",
+        "worktree=$worktree",
+        "agentExit=$code",
+        "timedOut=$timedOut",
+        "stalled=$stalled",
+        "committed=$committed",
+        "outOfScope=$outOfScopeCount"
+    ) -join "`n"
+    [System.IO.File]::WriteAllText($ResultFile, $result, (New-Object System.Text.UTF8Encoding $false))
+}
+
+# 退出码语义：0 成功；3 越界拒提交；4 提交失败；5 git add 失败；
+# 124 超时；其余为 agent 自身的退出码。
+if ($integrateCode -ne 0) { exit $integrateCode }
 exit $code

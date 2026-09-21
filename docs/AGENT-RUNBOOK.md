@@ -1,4 +1,4 @@
-# JavaSecExpToolKit 多 Agent 运行手册
+﻿# JavaSecExpToolKit 多 Agent 运行手册
 
 版本：1.0.0
 更新日期：2026-09-21
@@ -20,9 +20,10 @@
 | 监督 agent 会不会改坏东西 | **不会** | 监督角色强制 `-s read-only`，实测写入被拒（连系统临时目录也拒） |
 | agent 会自己提交吗 | **不会，由脚本代提交** | agent 退出后由 `tools/agent.ps1` 在沙箱外提交，并校验写入域 |
 | 需要多开终端吗 | **不需要** | 一个终端用 `Start-Process ... -WindowStyle Hidden` 后台并发多个角色，前台终端仍可用；实测杀掉一个不影响另一个 |
-| 主 agent 能自动派发子 agent 吗 | **不能** | 实测：agent 沙箱无法写 `.git/refs/heads/**`，`git worktree add` 报 `cannot lock ref`；派发权在沙箱外的 `tools/agent.ps1` |
+| 主 agent 能自动派发子 agent 吗 | **不能，但编排器可以代它派发** | 实测：agent 沙箱无法写 `.git/refs/heads/**`，`git worktree add` 报 `cannot lock ref`。改用 `tools/orchestrate.ps1` 在沙箱外完成「拆解 → 分批 → 派发 → 合并 → 汇报」，见四之三节 |
 | 监督 agent 需要另开终端实时监督吗 | **不需要** | 它是阶段末的一次只读审计，不是实时监控；各角色已提交的分支它能直接读到 |
 | 怎么分辨“在干活”与“卡住” | 看护 agent 读日志判三态 | 实测：静默 771 秒的正常等待判为 `WAITING` 不终止，反复重试同一命令判为 `STUCK` 并终止 |
+| 能否只给一句任务就自动拆解分发 | **能** | `tools/orchestrate.ps1 -Goal "..."`：LLM 按角色矩阵产出计划，按依赖与写入域分批派发，成功后自动合并并汇报；端到端实测 4 步 3 批全绿 |
 | 新派的角色能看到前一个角色的产出吗 | **不能，除非先合并** | 实测：`git worktree add` 从当前 HEAD 建，不合并就看不到前置分支的新文件；合并后可见 |
 | 哪些必须串行 | UI agent、有依赖关系的任务、收尾三项（后者由脚本代理） | `src/Main.java` 是全部页面的唯一汇合点；`.backups/`、`AI_REPORT.md`、构建产物是共享资源 |
 
@@ -485,6 +486,76 @@ git branch -D agent/exploit/payload-core
 
 ---
 
+## 四之三、自动拆解编排（主 agent 代拆任务）
+
+逐条派发要求人先读懂 tasks.md、自己判断依赖与写入域冲突，再依次敲命令。
+`tools/orchestrate.ps1` 把这件事交给 LLM：**你只给一句目标，它自己拆解、分批、派发、合并、汇报**。
+这就是你前面问的「主 agent 能否自动拆解任务并分发给不同角色」——能，但形态是**脚本里的编排器**，
+不是让主 agent 去当调度器（原因见第七节第 5 条：主 agent 的沙箱建不了 worktree）。
+
+```powershell
+# 只看它会怎么拆，不真的执行
+.\tools\orchestrate.ps1 -Goal "补齐 fastjson 1.2.73-1.2.80 的版本识别盲区" -DryRun
+
+# 真正执行：拆解 → 分批 → 并发派发 → 自动合并 → 汇报
+.\tools\orchestrate.ps1 -Goal "补齐 fastjson 1.2.73-1.2.80 的版本识别盲区"
+```
+
+### 它内部做什么
+
+| 阶段 | 动作 | 失败时 |
+| --- | --- | --- |
+| 1 拆解 | 以**只读**会话让 LLM 按角色矩阵产出 JSON 计划（角色、slug、任务、dependsOn） | 超时即报错退出，不留半成品 |
+| 2 校验 | 角色必须存在、slug 合规且唯一、依赖必须指向本计划内的 slug、步数不超 `-MaxSteps`、依赖不许成环 | 校验不过则**不创建任何 worktree** |
+| 3 执行 | 按「依赖 + 写入域冲突」分批；同批先串行预建 worktree，再并行启动各角色 | 单步失败只影响该步，其余照常 |
+| 4 汇报 | 逐步列出「已合并 / 无需改动 / 需人工处理」，附提交与残留现场，写入 `%TEMP%\jset-orchestrate-<runId>.md` | — |
+
+分批规则就是 `tools/lib/RoleMatrix.ps1` 的冲突判定：写入域证不出不相交就**串行**（宁可慢，不可撞）。
+`probe` 与 `traffic` 可同批（`src/probe/Probe*` 与 `src/probe/CaptureBridge.java` 文件名层面不相交），
+`ui` 与谁都不同批（`src/Main.java` 是唯一汇合点）。
+
+### 常用参数
+
+| 参数 | 用途 |
+| --- | --- |
+| `-Goal` | 必填，一句话目标，自然语言 |
+| `-DryRun` | 只拆解并打印计划，不建 worktree、不启动 agent |
+| `-NoMerge` | 真跑但不自动合并，全部留给人工审阅 |
+| `-MaxSteps` | 步数上限（默认 6），防止计划失控 |
+| `-StepTimeoutMinutes` | 单步超时上限；0 表示用该角色的默认预算（见 `RoleMatrix.ps1`） |
+| `-PlanTimeoutMinutes` | 拆解会话的超时上限（默认 8 分钟） |
+| `-SkipSupervisor` | 不追加监督复核步骤 |
+| `-PlanFile` | 直接用现成 JSON 计划（调试或复跑同一计划） |
+
+### 自动合并的安全边界
+
+**它不会为了让流程跑完而合并可疑产出。** 只有以下条件全部满足才自动合并：
+
+- agent 正常退出、未超时、未被看护判为卡死；
+- 改动全部落在该角色写入域内（越界会被 `agent.ps1` 拒绝提交，退出码 3）；
+- 分支上确实产生了新提交。
+
+任一不满足就记「需人工处理」并**保留分支与 worktree**，合并冲突时执行 `git merge --abort`，不留半个合并状态。
+收尾三项（备份 / `AI_REPORT.md` / `PROGRESS.md` / 构建校验）不在编排器里做，仍由主 agent 合并后统一执行——
+它们是全仓库共享资源，并发期间碰会互相覆盖。
+
+### 端到端实测（本仓库，用假 codex 替代真实 LLM）
+
+计划 4 步 3 批：`probe` ∥ `traffic` → `test` → `supervisor`。
+
+| 观测项 | 结果 |
+| --- | --- |
+| 分批 | 4 步分成 3 批，同批两个角色并行启动 |
+| 合并 | 3 个执行步全部自动合并，各自 `--no-ff` 产生合并提交 |
+| 监督步 | 在主仓库以 read-only 运行，退出码 0，不建 worktree |
+| 清理 | 结束后 `git worktree list` 只剩主仓库，`agent/*` 分支为空 |
+| 主仓库状态 | 结束后工作区干净 |
+| 汇报 | 写出逐步表格与汇总，列出「已合并 3 / 需人工处理 0」 |
+| 外层退出码 | 0 |
+
+只读审计步骤通过 `-SkipSupervisor` 可跳过；`-NoMerge` 与 `-DryRun` 也各自实测过。
+
+---
 ## 五、互相配合：合并与收尾
 
 ### 5.1 流程

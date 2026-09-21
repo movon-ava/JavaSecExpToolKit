@@ -1,4 +1,4 @@
-# JavaSecExpToolKit 多 Agent 职责说明
+﻿# JavaSecExpToolKit 多 Agent 职责说明
 
 版本：1.0.0
 更新日期：2026-09-21
@@ -13,12 +13,12 @@
 
 | 角色 | 写入域 | 核心产出 | 完成标志 |
 | --- | --- | --- | --- |
-| 主 agent | 根文档、`openspec/**`、`docs/**` | change 全生命周期、集成、Git | change 归档且校验通过 |
-| 功能开发 probe | `python/fj_probe.py`、`src/probe/Probe*.java` | 探测引擎改动 | `test_probe.py` 全绿 |
-| 功能开发 exploit | `src/shiro/**`、`src/payload/**` | 利用链与 payload 生成 | `ShiroCheck` 全绿 |
-| 功能开发 traffic | `src/proxy/**`、`src/probe/CaptureBridge.java` | 代理与抓包转换 | `ProxyServerCheck` 全绿 |
-| UI | `src/ui/**`、`src/Main.java` | 界面装配与交互 | 三个 `Ui*Check` 全绿 |
-| 测试 | `tests/**` | 自检与回归 | 全部自检通过 |
+| 主 agent | `AGENTS.md`、`README.md`、`README.en.md`、`PROGRESS.md`、`AI_REPORT.md`、`build.ps1`、`run.ps1`、`tools/*`、`docs/*`、`openspec/*`、`src/config/*`、`src/util/*`、`src/pom.xml` | change 全生命周期、集成、Git | change 归档且校验通过 |
+| 功能开发 probe | `python/fj_probe.py`、`src/probe/Probe*` | 探测引擎改动 | `test_probe.py` 全绿 |
+| 功能开发 exploit | `src/shiro/*`、`src/payload/*` | 利用链与 payload 生成 | `ShiroCheck` 全绿 |
+| 功能开发 traffic | `src/proxy/*`、`src/probe/CaptureBridge.java` | 代理与抓包转换 | `ProxyServerCheck` 全绿 |
+| UI | `src/ui/*`、`src/Main.java` | 界面装配与交互 | 三个 `Ui*Check` 全绿 |
+| 测试 | `tests/*` | 自检与回归 | 全部自检通过 |
 | 监督 | **无**（只读） | 审计报告 | 报告含明确阻断结论 |
 | 看护 | **无**（只读） | 停滞判定结论 | 输出 PROGRESSING / WAITING / STUCK |
 
@@ -35,11 +35,11 @@
 - 集成各角色的产出，执行 `openspec validate --all --strict`。
 - 归档 change，更新主 spec，执行 Git 提交与推送。
 - 维护根文档：`AGENTS.md`、`README.md`、`README.en.md`、`PROGRESS.md`、`AI_REPORT.md`。
-- 审议共享内核（`src/config/**`、`src/util/**`）的改动，并列出全部调用方。
+- 独占共享内核（`src/config/**`、`src/util/**`）与 `src/pom.xml` 的写入域：
 
 **不负责**
 
-- 不写功能代码。唯一可直接编辑的代码文件是 `AGENTS.md` 与构建脚本。
+- 不写功能代码。唯一可直接编辑的代码文件是 `AGENTS.md`、构建脚本，以及共享内核 `src/config/**`、`src/util/**`。
 - 不代替测试 agent 判断测试是否通过。
 
 **交付物**：`openspec/changes/<name>/` 四件套、归档目录、Git 提交记录。
@@ -57,6 +57,11 @@
 主 agent 负责的是**规划、判定是否跨域、集成与收尾**，不是当调度器。
 详见 `docs/AGENT-RUNBOOK.md` 第二之二节与第七节。
 
+**但「一句话任务自动拆解分发」这件事是可用的**：`tools/orchestrate.ps1` 在沙箱外代主 agent 完成
+「拆解 → 校验 → 分批 → 派发 → 合并 → 汇报」。拆解由一次只读 LLM 会话按角色矩阵产出 JSON 计划，
+派发与合并仍由脚本执行，主 agent 的沙箱限制不构成阻碍。
+见 `docs/AGENT-RUNBOOK.md` 四之三节。
+
 ---
 
 ## 三、功能开发 Agent（probe / exploit / traffic）
@@ -68,14 +73,16 @@
 - 按 tasks.md 逐条实现，只改写入域内的文件。
 - Bug 修复前先写出根因（Root Cause）分析，禁止试错式修改。
 - 为自己的改动补齐或更新对应自检。
-- 新增可持久化配置时，同时改 `src/config/AppConfig.java` 的键与 `src/ui/ConfigPage.java` 的分组。
+- 新增可持久化配置时，自己不写配置项：向主 agent 提出「共享内核 + 配置页」的需求，
+  由主 agent 开 change 改 `src/config/AppConfig.java` 的键，由 UI 角色改 `src/ui/ConfigPage.java` 的分组。
+  这两个路径都不在功能开发角色的写入域内，硬性越界会被拒绝提交。
 
 **不负责**
 
 - 不改 `src/ui/**`（界面外观归 UI agent）。
 - 不改 `tests/**`（断言归测试 agent）。
 - 不改配置项键名（避免让既有用户配置失效）。
-- 不改 `src/util/**` 与 `src/config/**`（共享内核，需主 agent 单独开 change）。
+- 不改 `src/util/**`、`src/config/**` 与 `src/pom.xml`（共享内核，需主 agent 单独开 change）。
 - 不自行 `git commit`：沙箱对共享的 `.git/objects` 只有部分写权限，自行提交会失败，
   且可能在对象库留下不可达对象。提交由 `tools/agent.ps1` 在沙箱外统一完成。
 
@@ -83,9 +90,9 @@
 
 | 角色 | 写入域 | 验证命令 |
 | --- | --- | --- |
-| probe | `python/fj_probe.py`、`src/probe/Probe*.java` | `python -m unittest discover -s tests` |
-| exploit | `src/shiro/**`、`src/payload/**` | `ShiroCheck` |
-| traffic | `src/proxy/**`、`src/probe/CaptureBridge.java` | `ProxyServerCheck` |
+| probe | `python/fj_probe.py`、`src/probe/Probe*` | `python -m unittest discover -s tests` |
+| exploit | `src/shiro/*`、`src/payload/*` | `ShiroCheck` |
+| traffic | `src/proxy/*`、`src/probe/CaptureBridge.java` | `ProxyServerCheck` |
 
 ---
 

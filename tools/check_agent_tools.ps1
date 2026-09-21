@@ -26,7 +26,11 @@ try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false } c
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $agentPath = Join-Path $PSScriptRoot "agent.ps1"
 $watchdogPath = Join-Path $PSScriptRoot "watchdog.ps1"
+$dispatchPath = Join-Path $PSScriptRoot "dispatch.ps1"
+$orchestratePath = Join-Path $PSScriptRoot "orchestrate.ps1"
 $sharedPath = Join-Path $PSScriptRoot "lib\CodexCli.ps1"
+$roleMatrixPath = Join-Path $PSScriptRoot "lib\RoleMatrix.ps1"
+$agentRunPath = Join-Path $PSScriptRoot "lib\AgentRun.ps1"
 $sandbox = Join-Path $env:TEMP "jset-tools-check"
 
 $script:checks = 0
@@ -181,7 +185,7 @@ Write-Host "== agent 工具链自检 =="
 
 Write-Host ""
 Write-Host "[1] 文件与语法"
-$scripts = @($agentPath, $watchdogPath, $sharedPath)
+$scripts = @($agentPath, $watchdogPath, $dispatchPath, $orchestratePath, $sharedPath, $roleMatrixPath, $agentRunPath)
 foreach ($script in $scripts) {
     Assert-That -Name "存在：$(Split-Path $script -Leaf)" -Condition (Test-Path -LiteralPath $script)
 }
@@ -219,7 +223,9 @@ Assert-That -Name "不再出现未赋值的 Watchdog 变量" -Condition (-not ($
 Assert-That -Name "看护计数器与 -StallRounds 参数不同名" -Condition ($agentText -cmatch '\$stallStreak') `
     -Detail "同名赋值会触发参数的 ValidateRange 校验并中断整个脚本"
 
-$rangeViolations = @(Get-RangeViolations -Path $agentPath) + @(Get-RangeViolations -Path $watchdogPath) + @(Get-RangeViolations -Path $sharedPath)
+$rangeViolations = @(Get-RangeViolations -Path $agentPath) + @(Get-RangeViolations -Path $watchdogPath) + `
+    @(Get-RangeViolations -Path $dispatchPath) + @(Get-RangeViolations -Path $orchestratePath) + `
+    @(Get-RangeViolations -Path $sharedPath) + @(Get-RangeViolations -Path $roleMatrixPath) + @(Get-RangeViolations -Path $agentRunPath)
 Assert-That -Name "无「整数赋值越出同名参数区间」" -Condition ($rangeViolations.Count -eq 0) `
     -Detail ($rangeViolations -join "；")
 
@@ -343,6 +349,122 @@ Assert-That -Name "监督角色在主仓库运行且为只读" `
                 ($agentText -match '\$worktree\s*=\s*if\s*\(\$readOnlyAudit\)\s*\{\s*\$root\s*\}')) `
     -Detail "监督必须直接审主仓库当前工作区（worktree 是从 HEAD 建的，看不到未提交改动）"
 
+Write-Host ""
+Write-Host "[9] 角色矩阵完整性"
+
+# 矩阵是「哪两个角色能并行」与「提交是否越界」的唯一依据，
+# 因此它自身必须自洽：调用方不能用 ,@() / 裸 return 把数组打散或退化。
+# 注释里出现这个写法是合法的（正是解释为什么不能用），因此先剥掉整行注释再判断。
+$roleMatrixCode = @((Read-Text -Path $roleMatrixPath) -split "`n" | Where-Object { $_ -notmatch '^\s*#' }) -join "`n"
+Assert-That -Name "RoleMatrix 不再用 ,@() 包装返回数组" `
+    -Condition (-not ($roleMatrixCode -match 'return\s+,@\(')) `
+    -Detail "return ,@(...) 会让 foreach 把整个数组当成一个元素，-Role 取值直接报参数转换错误"
+# 单条派发也要守同一条规矩：`return ,@(...)` 会让 $hits.Count 恒为 1，
+# 于是「无命中」与「多角色命中」两条防呆分支双双失效，任务会静默拿到空角色继续跑。
+$dispatchCode = @((Read-Text -Path $dispatchPath) -split "`n" | Where-Object { $_ -notmatch '^\s*#' }) -join "`n"
+Assert-That -Name "dispatch.ps1 的角色推断不用 ,@() 包装" `
+    -Condition (-not ($dispatchCode -match 'return\s+,@\(')) `
+    -Detail "逗号返回会让多角色/无命中两条防呆分支变成死代码"
+Assert-That -Name "dispatch.ps1 的角色推断仍做多命中拦截" `
+    -Condition ($dispatchCode -match '-not \$Role[\s\S]{0,600}\$hits\.Count\s*-gt\s*1') `
+    -Detail "缺少拦截时，写入域不同却按首个命中角色派发"
+Assert-That -Name "orchestrate.ps1 复用共享矩阵而非自带副本" `
+    -Condition (((Read-Text -Path $orchestratePath) -match 'lib\\RoleMatrix\.ps1') -and `
+                (-not ((Read-Text -Path $orchestratePath) -match '\$writeScopes\s*=\s*@\{'))) `
+    -Detail "自带副本会与 agent.ps1 的提交校验漂移"
+Assert-That -Name "dispatch.ps1 复用共享执行原语" `
+    -Condition (((Read-Text -Path $dispatchPath) -match 'lib\\AgentRun\.ps1') -and `
+                (-not ((Read-Text -Path $dispatchPath) -match 'function\s+Get-MergeDecision'))) `
+    -Detail "重复实现合并判定会出现两套不一致的安全策略"
+
+# agent.ps1 的退出码是自动化的判定输入，必须覆盖全部失败分支。
+$agentText2 = Read-Text -Path $agentPath
+# 退出码是自动化的判定输入。agent.ps1 先把集成阶段的失败码收进 $integrateCode，
+# 会话超时则直接落在 $code 上，因此按语义匹配而不是匹配字面量 "exit N"。
+foreach ($pair in @(
+    @("越界拒绝提交", '\$integrateCode\s*=\s*3'),
+    @("提交失败", '\$integrateCode\s*=\s*4'),
+    @("暂存失败", '\$integrateCode\s*=\s*5'),
+    @("会话超时", '\$code\s*=\s*124'),
+    @("失败码统一外抛", 'exit\s+\$integrateCode')
+)) {
+    Assert-That -Name "退出码覆盖：$($pair[0])" -Condition ($agentText2 -match $pair[1]) `
+        -Detail "缺 $($pair[1]) 时编排器无法区分「成功」与「没做完」，会把不完整产出当成可合并"
+}
+
+# 每个受管源文件都必须有且仅有一个角色可写。
+# 实测踩过：src/config/** 与 src/util/** 曾落在所有角色写入域之外，
+# 于是「共享内核需主 agent 单独开 change」这条规则在机械校验层面根本走不通。
+. $roleMatrixPath
+$scopes = Get-RoleWriteScopes
+$managed = @()
+foreach ($directory in @("src", "python", "tests")) {
+    $full = Join-Path $root $directory
+    if (-not (Test-Path -LiteralPath $full)) { continue }
+    foreach ($file in (Get-ChildItem -LiteralPath $full -Recurse -File)) {
+        $relative = $file.FullName.Substring($root.Length + 1).Replace('\', '/')
+        if ($relative -match '__pycache__|\.pyc$') { continue }
+        $managed += $relative
+    }
+}
+$orphans = @()
+foreach ($target in $managed) {
+    $owners = @()
+    foreach ($role in @($scopes.Keys)) {
+        foreach ($pattern in $scopes[$role]) {
+            if ($target -like $pattern) { $owners += $role; break }
+        }
+    }
+    if ($owners.Count -eq 0) { $orphans += $target }
+}
+Assert-That -Name "受管源文件都有角色可写（$($managed.Count) 个）" -Condition ($orphans.Count -eq 0) `
+    -Detail "无角色可写的路径会永远提交不了：$($orphans -join '、')"
+
+# 共享内核必须落在主 agent 手里，否则「单独开 change」的规定无人执行。
+foreach ($core in @("src/config/AppConfig.java", "src/util/Codec.java", "src/pom.xml")) {
+    Assert-That -Name "共享内核归主 agent：$core" `
+        -Condition (@($scopes['orchestrator'] | Where-Object { $core -like $_ }).Count -eq 1) `
+        -Detail "实际写入域：$($scopes['orchestrator'] -join '、')"
+}
+
+Assert-That -Name "只读角色写入域为空" `
+    -Condition (@((Get-ReadOnlyRoles) | Where-Object { @($scopes[$_]).Count -ne 0 }).Count -eq 0) `
+    -Detail "只读角色一旦有写入域，审计独立性就不再是结构保证"
+Assert-That -Name "全部角色的写入域非空且无空项" `
+    -Condition (@($scopes.Keys | Where-Object { @($scopes[$_]) -contains "" }).Count -eq 0) `
+    -Detail "空 glob 会匹配到任意路径，等于放开越界校验"
+
+# 文档总览表必须与矩阵逐项一致：两处说法不一，读文档的人就会照错的做。
+$rolesText = Read-Text -Path (Join-Path $root "docs\AGENT-ROLES.md")
+$documented = @{}
+foreach ($line in ($rolesText -split "`n")) {
+    if ($line -notmatch '^\|\s*(?<role>[^|]+?)\s*\|(?<scope>[^|]*)\|') { continue }
+    $documented[$Matches['role']] = $Matches['scope']
+}
+foreach ($pair in @(
+    @("主 agent", "orchestrator"),
+    @("功能开发 probe", "probe"),
+    @("功能开发 exploit", "exploit"),
+    @("功能开发 traffic", "traffic"),
+    @("UI", "ui"),
+    @("测试", "test")
+)) {
+    $label = $pair[0]
+    $role = $pair[1]
+    if (-not $documented.ContainsKey($label)) {
+        Assert-That -Name "角色总览表含：$label" -Condition $false -Detail "文档里找不到这一行"
+        continue
+    }
+    $cell = $documented[$label]
+    $missing = @()
+    foreach ($pattern in $scopes[$role]) {
+        if ($cell -notmatch [regex]::Escape($pattern)) { $missing += $pattern }
+    }
+    Assert-That -Name "总览表与矩阵一致：$label" -Condition ($missing.Count -eq 0) `
+        -Detail "文档缺这些写入域：$($missing -join '、')"
+}
+
+Write-Host ""
 Write-Host ""
 if ($script:failures.Count -eq 0) {
     Write-Host "agent 工具链自检通过（$($script:checks) 项）"

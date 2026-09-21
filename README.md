@@ -1,4 +1,4 @@
-# JavaSecExpToolKit
+﻿# JavaSecExpToolKit
 
 面向**授权**安全测试的 Java + Python 桌面工具集：Fastjson 指纹识别、本地拦截代理、
 抓包与格式转换，以及 Shiro 利用模块。
@@ -174,7 +174,7 @@ CEYE 确认作为附属阶段时仍依赖 DNS 阶段。未填 Token 就执行 `C
 | `src/config/` `src/util/` | `config.properties` 读写；报文解析与平台差异 |
 | `python/` | 探测引擎（`fj_probe.py`），打进 JAR |
 | `tests/` | Python 单元测试与 Java 界面自检 |
-| `tools/` | 维护辅助脚本：`agent.ps1`（启动角色化 agent）、`audit_boundary.py`（依赖边界审计）、`apply_patch.py` |
+| `tools/` | 维护辅助脚本：`agent.ps1`（启动角色化 agent）、`dispatch.ps1`（单条派发并自动合并）、`orchestrate.ps1`（一句话目标自动拆解编排）、`watchdog.ps1`（会话停滞看护）、`lib/`（角色矩阵与执行原语）、`audit_boundary.py`（依赖边界审计）、`apply_patch.py` |
 | `docs/` | 设计文档（`DESIGN.md`、`DESIGN-shiro.md`、`DESIGN-probe-accuracy.md`、`DESIGN-agents.md`、`DESIGN-modularization.md`、`DESIGN-payload.md`）与多 Agent 职责说明（`AGENT-ROLES.md`）与运行手册（`AGENT-RUNBOOK.md`） |
 | `openspec/` | 规格驱动开发：`specs/` 存能力规格，`changes/` 存待办与归档的变更，`config.yaml` 约束 AI 生成规划件 |
 | `.agents/` | OpenSpec 生成的 AI 工具指令（本仓库目标工具为 codex） |
@@ -197,11 +197,17 @@ CEYE 确认作为附属阶段时仍依赖 DNS 阶段。未填 Token 就执行 `C
 
 # 只看提示词、不启动
 .\tools\agent.ps1 -Role probe -Slug demo -Task "示例任务" -DryRun
+
+# 一句话目标：自动拆解 → 按依赖与写入域分批派发 → 成功后自动合并 → 汇报
+.\tools\orchestrate.ps1 -Goal "补齐 fastjson 1.2.73-1.2.80 的版本识别盲区"
+
+# 只拆解并打印计划，不创建 worktree、不启动 agent
+.\tools\orchestrate.ps1 -Goal "同上" -DryRun
 ```
 
 | 角色 | 写入域 | 沙箱 |
 | --- | --- | --- |
-| 主 agent | 根文档、`openspec/**`、`docs/**`、`tools/**` | 可写 |
+| 主 agent | 根文档、`openspec/**`、`docs/**`、`tools/**` + 共享内核 `src/config/**`、`src/util/**`、`src/pom.xml` | 可写 |
 | probe | `python/fj_probe.py`、`src/probe/Probe*.java` | 可写 |
 | exploit | `src/shiro/**`、`src/payload/**` | 可写 |
 | traffic | `src/proxy/**`、`src/probe/CaptureBridge.java` | 可写 |
@@ -221,8 +227,11 @@ CEYE 确认作为附属阶段时仍依赖 DNS 阶段。未填 Token 就执行 `C
 前台终端仍可继续下令（实测杀掉一个会话不影响另一个）。
 主 agent 不能自己派发子 agent：agent 沙箱无法写 `.git/refs/heads/**`，
 `git worktree add` 会报 `cannot lock ref`；派发由沙箱外的 `tools/agent.ps1` 完成。
+若想「只给一句任务」，用 `tools/orchestrate.ps1`：它在沙箱外代主 agent 拆解、分批、派发与合并，
+并逐步汇报「已合并 / 无需改动 / 需人工处理」。自动合并有硬门槛——
+超时、被判卡死、越界改动、无实际提交，任一命中都保留现场交人工。
 
-工具链自身的回归用 `tools\check_agent_tools.ps1`（34 项机械断言），
+工具链自身的回归用 `tools\check_agent_tools.ps1`（77 项机械断言），
 覆盖参数与变量同名、开关写错导致死代码、缺 BOM、`.gitignore` 未锚定等已实际发生过的缺陷：
 
 ```powershell

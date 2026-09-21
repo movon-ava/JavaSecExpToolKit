@@ -1,4 +1,4 @@
-schema: spec-driven
+﻿schema: spec-driven
 
 # 项目上下文：每次生成规划件（proposal / specs / design / tasks）时都会读到这里，
 # 因此只写「跨 capability 恒定成立」的约束，不写具体功能设计。
@@ -39,6 +39,8 @@ context: |
   - 运行 Java 自检需 JDK17 并加 --add-opens java.xml/...xalan...=ALL-UNNAMED
   - 构建后必须校验 JAR 构建时间晚于 src/、python/、tests/ 下全部源文件
   - 角色化 agent 的启动与写入域校验由 tools/agent.ps1 提供，内置矩阵必须与 docs/AGENT-ROLES.md 一致
+  - 单条派发用 tools/dispatch.ps1，一句话目标自动拆解编排用 tools/orchestrate.ps1；
+    两者与 tools/agent.ps1 共用 tools/lib/RoleMatrix.ps1（写入域/超时）与 tools/lib/AgentRun.ps1（合并判定），禁止各自维护副本
 
   ## 文档约定
   - README.md（中文）与 README.en.md（英文）必须同步更新，内容一一对应。
