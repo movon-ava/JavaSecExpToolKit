@@ -15,9 +15,11 @@
 | 配置页 | 可用 | 六个分组覆盖全部可持久化参数 |
 | 规格驱动开发（OpenSpec） | 可用 | `openspec/specs/traffic/capture-bridge` 已建立；`config.yaml` 承载跨角色约束 |
 | 多 Agent 协同框架 | 可用 | `tools/agent.ps1` 可启动角色化 agent；隔离与并发已实测，详见 `docs/AGENT-RUNBOOK.md` |
-| 多 Agent 职责说明 | 已建立 | `docs/AGENT-ROLES.md` 定义七个角色的职责、边界与协作顺序 |
+| 多 Agent 职责说明 | 已建立 | `docs/AGENT-ROLES.md` 定义八个角色的职责、边界与协作顺序 |
 | 写入域机械校验 | 可用 | `tools/agent.ps1` 提交前逐文件比对写入域，越界则撤回暂存 |
 | Agent 会话超时 | 可用 | `tools/agent.ps1` 按角色默认超时（监督 60 分钟，其余 40–45 分钟），超时终止进程树并保留日志 |
+| 会话停滞看护 | 可用 | `tools/watchdog.ps1` 读日志判定 `PROGRESSING`/`WAITING`/`STUCK`；长等待（实测静默 771 秒）不误杀，真卡死终止并保留现场 |
+| 工具链自检 | 可用 | `tools/check_agent_tools.ps1` 34 项机械断言，已用 6 个变体验证能报失败 |
 | 依赖边界（解耦） | 可用 | 通用链引擎已与 Shiro 解耦；边界规则由 `tests/test_decoupling.py` 机械校验 |
 
 ## 已完成阶段
@@ -34,6 +36,7 @@
 - 2026-09-21 — 链引擎解耦：Base64 下沉共享内核，依赖边界自检落地，多 Agent 职责文档成文
 - 2026-09-21 — 多 Agent 并发工具链：角色化启动脚本、写入域机械校验、运行手册成文
 - 2026-09-21 — Agent 会话超时上限：按角色默认超时，超时终止进程树并保留现场
+- 2026-09-21 — 看护 agent：按日志内容区分长等待与卡死，修复开关失效与变量同名两个真实缺陷
 
 ## 后续可做
 

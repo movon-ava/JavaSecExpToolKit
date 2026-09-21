@@ -233,6 +233,20 @@ developed in parallel without overwriting each other. See
 | ui | `src/ui/**`, `src/Main.java` | writable |
 | test | `tests/**` | writable |
 | supervisor | none (read-only audit) | read-only, enforced |
+| watchdog | none (read-only session health verdict) | read-only, enforced |
+
+Every session has a timeout ceiling; when a session goes quiet, a read-only watchdog
+agent reads its log and decides whether it is progressing, waiting on a genuinely slow
+command, or stuck — so a session waiting on a long command is not killed by mistake.
+
+The tooling has its own regression check (`tools\check_agent_tools.ps1`, 34 mechanical
+assertions) covering defects that actually happened: a counter colliding with a parameter
+name, a misspelled switch turning a branch into dead code, a missing BOM, and an
+unanchored `.gitignore` rule.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\check_agent_tools.ps1
+```
 
 Isolation comes from per-agent worktrees and branches. Agents only edit files; the
 script commits outside the sandbox and mechanically checks the write scope. Shared

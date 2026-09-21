@@ -2,8 +2,10 @@
 target/
 JavaSecExpToolKit.jar
 
-# 运行时依赖目录：构建时由 Maven 从 libs-repo/ 复制而来，可重新生成
-lib/
+# 运行时依赖目录：构建时由 Maven 从 libs-repo/ 复制而来，可重新生成。
+# 必须锚定到仓库根目录：写成 lib/ 会连带忽略 tools/lib/（工具链源码），
+# 导致 tools/lib/CodexCli.ps1 无法入库。
+/lib/
 
 # 本地修改快照：只用于回滚，保留最近三次即可，不入版本库
 .backups/

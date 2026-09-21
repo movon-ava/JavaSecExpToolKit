@@ -38,7 +38,19 @@ param(
     # 超时上限（分钟）。没有它时，一次跑偏的会话会无限期占用终端
     # 且拿不到任何产出（本仓库已实际发生过）。
     [ValidateRange(1, 600)]
-    [int]$TimeoutMinutes = 30
+    [int]$TimeoutMinutes = 30,
+
+    # 轮询间隔（秒）：判断会话是否还在推进的检查周期。
+    [ValidateRange(10, 600)]
+    [int]$PollSeconds = 60,
+
+    # 连续多少轮日志无新增才唤起看护判定。
+    # 用它控制调用频率，避免频繁判定造成额外开销。
+    [ValidateRange(1, 20)]
+    [int]$StallRounds = 2,
+
+    # 关闭看护判定，回到“只有总超时”的行为。
+    [switch]$NoWatchdog
 )
 
 $ErrorActionPreference = "Stop"
@@ -49,6 +61,7 @@ $OutputEncoding = New-Object System.Text.UTF8Encoding $false
 try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false } catch { }
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+. (Join-Path $PSScriptRoot "lib\CodexCli.ps1")
 
 # 角色的超时预算：不传 -TimeoutMinutes 时按此取值。
 # 依据是本仓库已有的实测耗时：单个执行角色通常数分钟，
@@ -272,30 +285,91 @@ $codexArgs += @("-o", "`"$outFile`"", "-")
 # 超时上限：没有它时，一次跑偏的会话会无限期占用终端且拿不到任何产出（已发生过）。
 # Windows 上 npm 安装的 codex 是 node 包装脚本，直接终止它不会带走 node 子进程，
 # 因此优先定位原生可执行文件。
-$codexExe = $env:CODEX_BIN
-if (-not $codexExe) {
-    $candidate = Join-Path $env:APPDATA "npm\node_modules\@openai\codex\node_modules\@openai\codex-win32-x64\vendor\x86_64-pc-windows-msvc\bin\codex.exe"
-    if (Test-Path -LiteralPath $candidate) { $codexExe = $candidate }
-}
-if (-not $codexExe) { $codexExe = "codex" }
+$codexExe = Get-CodexExecutable
 
 Write-Host "`n启动 agent（超时上限 $TimeoutMinutes 分钟）..."
 Write-Host "  实时日志: $errFile"
 Write-Host "  （codex 的会话输出走 stderr，该文件就是实时进度；超时或中断时靠它判断做到了哪一步）"
 
+# 等待循环：一次性阻塞只能回答「进程有没有退出」，回答不了「它是在干活还是卡住了」。
+# 因此改为轮询日志，出现连续静默时唤起只读看护 agent 读日志判定，再决定是否终止。
 $previous = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
 $timedOut = $false
+$stalled = $false
+$stallStreak = 0
+$lastLength = -1
+$lastWrite = Get-Date
+$deadline = (Get-Date).AddMinutes($TimeoutMinutes)
+$watchdogVerdicts = @()
+$watchdogFile = Join-Path $env:TEMP "jset-agent-verdict-$Role-$Slug.txt"
 $code = 1
+
 try {
     $proc = Start-Process -FilePath $codexExe -ArgumentList $codexArgs -NoNewWindow -PassThru `
         -RedirectStandardInput $stdinFile `
         -RedirectStandardOutput $logFile -RedirectStandardError $errFile
-    $proc | Wait-Process -Timeout ($TimeoutMinutes * 60) -ErrorAction SilentlyContinue
+
+    while (-not $proc.HasExited) {
+        $proc | Wait-Process -Timeout $PollSeconds -ErrorAction SilentlyContinue
+        if ($proc.HasExited) { break }
+
+        # 总超时作为兜底始终生效
+        if ((Get-Date) -ge $deadline) {
+            $timedOut = $true
+            break
+        }
+        if ($NoWatchdog) { continue }
+
+        $currentLength = 0
+        $currentWrite = $lastWrite
+        if (Test-Path -LiteralPath $errFile) {
+            $info = Get-Item -LiteralPath $errFile
+            $currentLength = $info.Length
+            $currentWrite = $info.LastWriteTime
+        }
+        if (($currentLength -eq $lastLength) -and ($currentWrite -eq $lastWrite)) {
+            $stallStreak++
+        } else {
+            $stallStreak = 0
+            $lastLength = $currentLength
+            $lastWrite = $currentWrite
+            continue
+        }
+
+        if ($stallStreak -lt $StallRounds) { continue }
+
+        # 达到静默轮数：唤起只读看护判定。
+        # 判定本身也带超时上限，避免看护自己卡住。
+        if (Test-Path -LiteralPath $watchdogFile) { [System.IO.File]::Delete($watchdogFile) }
+        Write-Host "`n[看护] 日志已静默 $StallRounds 轮，开始判定会话状态..."
+        $watchdogArgs = @(
+            "-NoProfile", "-ExecutionPolicy", "Bypass",
+            "-File", (Join-Path $PSScriptRoot "watchdog.ps1"),
+            "-LogPath", $errFile,
+            "-VerdictFile", $watchdogFile,
+            "-Quiet"
+        )
+        & powershell @watchdogArgs | Out-Null
+
+        $verdict = "UNKNOWN"
+        if (Test-Path -LiteralPath $watchdogFile) {
+            $verdict = (Get-Content -Raw -Encoding UTF8 $watchdogFile).Trim()
+        }
+        Write-Host "[看护] 判定结论：$verdict"
+        $watchdogVerdicts += $verdict
+        $stallStreak = 0
+
+        if ($verdict -eq "STUCK") {
+            $stalled = $true
+            break
+        }
+        # WAITING / PROGRESSING / UNKNOWN 一律继续等待：宁可多等，不可误杀。
+    }
+
     if ($proc.HasExited) {
         $code = $proc.ExitCode
     } else {
-        $timedOut = $true
         $code = 124
     }
 } catch {
@@ -307,13 +381,18 @@ try {
 
 if ($timedOut) {
     Write-Host "`n[超时] 已运行满 $TimeoutMinutes 分钟，正在终止 agent 及其子进程..."
-    try { & taskkill /PID $proc.Id /T /F 2>&1 | Out-Null } catch { }
+    Stop-ProcessTree -ProcessId $proc.Id | Out-Null
     Write-Host "[超时] 现场保留在 $worktree（未提交）。处置建议："
     Write-Host "  - 结果可能不完整，不要直接合并；先看下面打印的日志尾部判断进度；"
     Write-Host "  - 需续做时加 -ReuseWorktree 并缩小任务范围；"
     Write-Host "  - 任务确实需要更久，就显式调大 -TimeoutMinutes。"
+} elseif ($stalled) {
+    Write-Host "`n[卡死] 看护判定会话已停滞，正在终止 agent 及其子进程..."
+    Stop-ProcessTree -ProcessId $proc.Id | Out-Null
+    Write-Host "[卡死] 现场保留在 $worktree（未提交）。判定历史：$($watchdogVerdicts -join ' -> ')"
+    Write-Host "  - 日志尾部见下，据此判断卡在哪一步；"
+    Write-Host "  - 建议缩小任务范围后重新派发。"
 }
-
 Write-Host "`nagent 退出码: $code"
 if (Test-Path $outFile) {
     Write-Host "`n===== agent 最终回复 ====="

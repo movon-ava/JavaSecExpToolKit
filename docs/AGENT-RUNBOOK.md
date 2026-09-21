@@ -19,6 +19,7 @@
 | 多个 agent 能同时跑测试吗 | **能** | 全部自检用 `InetSocketAddress(host, 0)` 动态端口，并把 `user.home` 指向临时目录，实测无端口冲突、无配置互相污染 |
 | 监督 agent 会不会改坏东西 | **不会** | 监督角色强制 `-s read-only`，实测写入被拒（连系统临时目录也拒） |
 | agent 会自己提交吗 | **不会，由脚本代提交** | agent 退出后由 `tools/agent.ps1` 在沙箱外提交，并校验写入域 |
+| 怎么分辨“在干活”与“卡住” | 看护 agent 读日志判三态 | 实测：静默 771 秒的正常等待判为 `WAITING` 不终止，反复重试同一命令判为 `STUCK` 并终止 |
 | 哪些必须串行 | UI agent、收尾三项（后者由脚本代理） | `src/Main.java` 是全部页面的唯一汇合点；`.backups/`、`AI_REPORT.md`、构建产物是共享资源 |
 
 **一句话**：隔离靠 **worktree + 分支 + 沙箱**，配合靠 **Git 分支 + OpenSpec change**。
@@ -120,6 +121,74 @@ codex -C G:\java\jset-agents\exploit-a
 
 **结论**：任何可能长时间运行的任务都必须有超时上限；这是默认行为，
 不需要每次手动设置，仅在「任务确实更久」时才显式调大。
+
+---
+
+### 2.5 看护 agent：区分「推进中」「长等待」与「卡死」
+
+超时上限只能回答「进程有没有退出」，回答不了「它是在干活还是卡住了」。
+实测证据：执行 `ping -n 400` 时日志会静默数分钟且毫无新增，但这是**正常等待**；
+若按「静默多久」一刀切就会误杀正常会话。
+
+因此 `tools/agent.ps1` 在等待期间轮询日志，出现连续静默时唤起**只读看护 agent**
+读日志尾部（默认 120 行）判定，输出三态：
+
+| 结论 | 含义 | 启动脚本的动作 |
+| --- | --- | --- |
+| `PROGRESSING` | 有推进痕迹（新的工具调用、新的输出块） | 继续等待 |
+| `WAITING` | 在等一个明确的耗时操作（长命令、完整测试、构建） | 继续等待，**不终止** |
+| `STUCK` | 反复重试同一命令、重复同一错误、无等待对象且零输出 | 终止会话及子进程，保留现场与日志 |
+| `UNKNOWN` | 判定不可用（输出无法解析、看护自身超时） | 保守继续等待，由总超时兜底 |
+
+**判定方不终止进程**：看护 agent 以只读沙箱运行，没有杀进程的权限；
+终止由持有进程句柄的启动脚本执行。这是设计与权限的双重保证。
+
+相关参数：
+
+```powershell
+# 每 60 秒检查一次，连续 2 轮日志无变化才判定（默认值，用 -PollSeconds / -StallRounds 调整）
+.\tools\agent.ps1 -Role probe -Slug demo -Task "示例任务"
+
+# 关闭看护判定，回到「只有总超时」的行为
+.\tools\agent.ps1 -Role probe -Slug demo -Task "示例任务" -NoWatchdog
+
+# 对任意日志手动跑一次判定（可独立使用，不启动 agent）
+.\tools\watchdog.ps1 -LogPath "$env:TEMP\jset-agent-log-probe-demo.err.txt"
+
+# 只看结论，便于脚本读取
+.\tools\watchdog.ps1 -LogPath <日志> -Quiet
+```
+
+实测定论（两种样本对比）：
+
+| 样本 | 日志特征 | 判定 | 结果 |
+| --- | --- | --- | --- |
+| 真实长等待 | 执行 `ping -n 400`，静默 771 秒，日志写明在等待该命令 | `WAITING` | 未终止，继续等待 |
+| 合成真卡死 | 同一命令连续 5 次、同一错误重复、无等待对象 | `STUCK` | 已终止进程树 |
+
+端到端链路实测（用真实 `tools/agent.ps1` + 冻结日志的假会话，而非单测函数）：
+
+| 场景 | 观察到的行为 | 耗时 |
+| --- | --- | --- |
+| 冻结「反复重试同一命令」日志 | `[看护] 日志已静默 1 轮` → `[看护] 判定结论：STUCK` → `[卡死] ... 正在终止` | 30 秒 |
+| 冻结「长等待」日志 | 连续 3 次 `WAITING`，**未误杀**，最后由总超时兜底终止 | 72 秒 |
+| 加 `-NoWatchdog` | 完全不调用看护，行为回到纯超时 | 73 秒 |
+
+判定方本身的侧效应也已实测：
+
+| 输入 | 结果 |
+| --- | --- |
+| 日志写明在等 `ping -n 400` | `WAITING`（理由指向那一行） |
+| 日志三轮重试同一命令 + 同一错误 | `STUCK`（理由为重试模式本身，非静默时长） |
+| 判定输出里没有 `VERDICT` 行 | `UNKNOWN`（不崩溃、不误判为 `STUCK`） |
+| 日志文件不存在 | `UNKNOWN` 且退出码 2 |
+
+注意：`STUCK` 判定需要“静默到一定程度”才会被唤起。真实 codex 会话在长等待期间会持续输出心跳文本，
+日志一直在增长，因此端到端跑真实 agent 时看护通常不会触发——这是正确行为，
+不是缺陷；验证停滞检测本身必须用冻结日志的方式。
+
+判定历史会打印在卡死提示里（例如 `WAITING -> WAITING -> STUCK`），
+便于事后回溯为什么做了这个决定。
 
 ---
 
@@ -298,6 +367,11 @@ git branch -d agent/probe/version-blindspot
 | agent 报告 `index.lock: Permission denied` | 沙箱未放行 worktree 的 Git 目录 | 用 `tools/agent.ps1` 启动；手工启动时自己加 `--add-dir` |
 | agent 报告 `external filter 'git-lfs filter-process' failed` | 未放行 `.git\lfs` | 同上 |
 | agent 报 `insufficient permission for adding an object` | agent 在自己提交（沙箱对 `.git\objects` 只有部分写权限） | 不要让 agent 提交；用 `tools/agent.ps1`，它在沙箱外提交 |
+| 脚本启动后立即报 `value 0 is not a valid value for the StallRounds variable` | 计数器变量与 `-StallRounds` 参数同名（PowerShell 变量名大小写不敏感），赋值 `0` 会触发参数校验 | 已修复：计数器改名为 `$stallStreak` |
+| `-NoWatchdog` 不生效 | 判断处写成了未赋值的 `$Watchdog` | 已修复：改为 `$NoWatchdog` |
+| `tools/lib/CodexCli.ps1` 无法入库 | `.gitignore` 的 `lib/` 未锚定根目录，兼容忽略了 `tools/lib/` | 已修复：改为 `/lib/` |
+| 会话被看护误判为卡死而终止 | 日志不足以看出等待对象 | 调大 `-StallRounds`，或用 `-NoWatchdog` 关闭判定 |
+| 看护判定总返回 `UNKNOWN` | 判定方输出未含 `VERDICT` 行，或看护自身超时 | 用 `tools/watchdog.ps1 -LogPath <日志>` 单独跑一次看原因；此时不会误杀，由总超时兜底 |
 | `--worktree requires the worktrees feature` | 忘记开特性开关 | 加 `--enable worktrees` |
 | 提示词里的中文变成 `?` | PowerShell 5.1 管道传参会按 ASCII 编码 | 把提示词作为**参数**传给 `codex exec`，不要走管道 |
 

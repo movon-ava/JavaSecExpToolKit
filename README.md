@@ -208,10 +208,21 @@ CEYE 确认作为附属阶段时仍依赖 DNS 阶段。未填 Token 就执行 `C
 | ui | `src/ui/**`、`src/Main.java` | 可写 |
 | test | `tests/**` | 可写 |
 | supervisor | 无（纯只读审计） | 只读，强制 |
+| watchdog | 无（只读判定会话状态） | 只读，强制 |
 
 隔离靠独立 worktree 与分支；agent 只改文件，提交由脚本在沙箱外完成并机械校验写入域。
+每个会话都有超时上限；出现静默时会唤起只读看护 agent 读日志判定
+是「推进中 / 长等待 / 卡死」，避免把等待耗时命令的正常会话误杀。
+
 并发期间不碰共享资源：`.backups/`、`AI_REPORT.md`、`PROGRESS.md` 与构建产物的收尾
 统一由主 agent 合并后执行。
+
+工具链自身的回归用 `tools\check_agent_tools.ps1`（34 项机械断言），
+覆盖参数与变量同名、开关写错导致死代码、缺 BOM、`.gitignore` 未锚定等已实际发生过的缺陷：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\check_agent_tools.ps1
+```
 
 ## 抓包格式直接探测
 
