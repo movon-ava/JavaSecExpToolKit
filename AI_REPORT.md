@@ -2123,3 +2123,136 @@ README 中已把「`ShiroCheck` / `PayloadCheck` 需要这两个参数」写进�
    当前规模下可接受；若上游节点数大幅增长，需要缓存。
 5. `Main.java` 仍为 1500 行量级 —— 本轮按「最小改动」只做接线，模块化仍按
    `docs/DESIGN-modularization.md` 的方案留待专门一轮实施。
+
+## 2026-09-21（本轮：恶意服务器 + 预设链 + 载荷编码缺陷修复）
+
+### 一、需求
+
+1. UI 改造成接近网页版 JavaChains（左侧导航含 Generate / JNDI / FakeMySQL / RMI-JRMP / TCP / HTTP Server 等）；
+2. 新增**恶意服务器**功能（JNDI / HTTP / TCP / FakeMySQL / JRMP 监听与载荷发布）；
+3. **主窗口默认全屏**；
+4. 参考 JavaChains 源码设计，无可参考则自己设计；
+5. 用户已明确：如需 Spring 可引入 SpringMVC。
+
+### 二、先实测再动手：不需要 Spring（结论有据）
+
+按「机制性问题必须实测」的要求，先验证上游服务端适配器能否在纯 JDK 17 下驱动，再决定是否引入 Spring：
+
+| 实测项 | 结论 |
+| --- | --- |
+| `ServiceLifecycleService` + `ProtocolRuntimeRegistry` 直接 `new` 组装 | 可运行，五类服务全部真实绑定端口 |
+| LDAP 端口取回已发布对象 | 成功（真实客户端拉取） |
+| 是否需要 Spring / Servlet 容器 | **不需要**，上游适配器是纯 JDK 实现 |
+
+因此**未引入 Spring**（用户授权的是「如需要」），`src/pom.xml` 一个依赖都没加，符合仓库
+「禁止新增第三方依赖」的硬约束。
+
+### 三、上游真实约束（决定了实现写法，均为实测）
+
+1. **端口键**：JNDI 用 `ldap` / `rmi` / `http` / `ldaps`；HTTP / FakeMySQL / JRMP / TCP **必须**用
+   `main`，写成别的键会被绑定层直接拒绝。
+2. **LDAPS 的坑（已修的真实缺陷）**：上游要求「启用 LDAPS 就必须同时给出 JKS 证书路径」，
+   默认下发该端口会让**整个 JNDI 启动被拒**（`invalid start configuration`）。
+   改为「可选端口」（`PortSpec.optional`），未显式填写就不下发。
+3. **载荷类型**：JRMP 只收 `OBJECT`；JNDI / FakeMySQL 收 `OBJECT` / `BYTES` / `COMPOUND`（**不收 TEXT**）；
+   HTTP / TCP 收 `BYTES` / `TEXT`。实现按协议挑类型，类型不符返回可读失败结论。
+4. **发布入口**：三参 `publish(...)` 必然被拒
+   （`SCOPE_FORBIDDEN: runtime:control is required when autoStart=true`）；
+   四参版本可用，但绕开 autoStart 与载荷构建契约层的
+   `ProtocolRuntimePort.putPublication(PutPublicationCommand)` 更稳，本次采用后者。
+5. **地址拼装**：上游 `output` 对 JNDI 不含地址、对 TCP / JRMP 只有占位符，
+   `ServiceManager.addressOf` 按协议补出可复制的真实地址。
+6. **预设数据**：内置 `default-chains.yaml` 实测 **52 条、7 个分类**；
+   预设里载体与节点名是大驼峰、引擎按小写注册，生成时必须转小写。
+
+### 四、修复的真实缺陷：载荷双重 Base64 编码（先给根因）
+
+**现象**：`ShiroCheck` 的「生成的 payload 可被本机密钥解密」失败，`UiShiroCheck` 同样失败。
+
+**根因**（不是试错，是逐行追出来的）：上一轮把 `PayloadEngine.build` 拆成
+「`buildRaw` 构建 → `build` 汇总」时，`buildRaw` 对 `String` 形态产物做了 `getBytes(UTF_8)`，
+于是 `build` 里的判断
+
+```java
+if (raw.bytes.length > 0) return PayloadResult.ok(payloadId.trim(), chain, raw.bytes);
+```
+
+**恒真**，永远走字节分支；而 `PayloadResult.ok` 会再做一次 `Codec.base64(bytes)`。
+Shiro 载体产出的本来就是 Base64 文本，被当成「待编码字节」又编码一次，
+`decodeBase64` → `decrypt` 自然解不出来。
+
+**修复**：`build` 先判对象是否本就是 `String`，是则直接走 `okText`（按文本原样交付）；
+同时把 `buildRaw` 的文本转字节改为「先 Base64 解码、失败再按 UTF-8」，
+使 `buildRaw.bytes` 与 `PayloadResult.okText.bytes` 指向同一份载荷字节。
+
+**回归**：`ShiroCheck`、`UiShiroCheck` 均恢复退出码 0。
+
+### 五、代码改动
+
+新增（功能开发 exploit 写入域）：
+
+| 路径 | 职责 |
+| --- | --- |
+| `src/service/ServiceSpec.java` | 五类服务的静态描述（含可选端口） |
+| `src/service/ServiceEndpoint.java` | 服务状态纯数据 |
+| `src/service/PublicationResult.java` | 发布结果纯数据 |
+| `src/service/ServiceDefaults.java` | 默认监听参数纯数据（端口键用「服务标识.端口键」） |
+| `src/service/ServiceManager.java` | **唯一**直接调用 java-chains 服务端适配器的类 |
+| `src/preset/PresetItem.java` | 预设链纯数据 |
+| `src/preset/PresetCatalogService.java` | **唯一**引用上游预设模型的类，失败返回空清单 |
+
+新增（界面 agent 写入域）：`src/ui/ChainEditor.java`（两页共用的链编辑状态）、
+`src/ui/ServicePage.java` / `ServiceController.java`、`src/ui/PresetPage.java` / `PresetController.java`。
+
+修改：`src/Main.java`（导航重组为 主页 / Payload / 服务 / 代理 / FastJson / 配置；默认最大化；
+新页装配；配置页新增两个分组；退出前停服务）、`src/payload/PayloadEngine.java`（缺陷修复 + 原始对象入口）、
+`src/ui/PayloadController.java`（改用 `ChainEditor`）、`src/ui/UiKit.java`、`src/ui/ServicePage.java`
+（删除未接线的死字段 `timeoutSeconds`）。
+
+### 六、实测结果
+
+| 验证项 | 结果 |
+| --- | --- |
+| Java 编译（41 个源文件，`--release 8`） | 通过 |
+| `ShiroCheck` | 退出码 0 |
+| `PayloadCheck` | 61 项，失败 0 |
+| `ProxyServerCheck` | 退出码 0 |
+| `UiNavigationCheck` | 全部通过（新增预设链页与服务页断言） |
+| `UiShiroCheck` | 退出码 0 |
+| `UiSwitchEndToEndCheck` | 退出码 0 |
+| Python 单测 | 99 项 OK |
+| `tools/audit_boundary.py` | 结论「全部通过」 |
+| `tools/check_agent_tools.ps1` | 91 项通过 |
+| `openspec validate --all --strict` | 5 项全 passed |
+| `.\build.ps1` | JAR 时间 `2026-09-21 18:00:52`，277540 字节，50 个源文件校验通过 |
+
+端到端实测（在配置里写入自定义值后进入服务页）：绑定地址 `0.0.0.0`、公布地址 `10.1.2.3`、
+JNDI LDAP `51111`、HTTP 服务端口 `59999` 均按配置生效，且未配置的端口（RMI/HTTP）保持默认——
+证明「配置页 → 服务页」的下发链路真实可用，不是只在界面上显示。
+
+### 七、界面自检的一处加固
+
+`UiNavigationCheck` 原来把导航项数与索引写死（`size() == 6`、`labels().get(2)` 之类），
+导航顺序一改就集体失效，且失败信息只说明「数字不对」，看不出真正原因。
+改为 `expectedNavSize()`：读 `NAV_ITEMS` 的展开状态**现算**应有项数，
+断言因此变成对「`rebuildNavigation` 是否补全每个已展开分组的子项」的真实校验。
+另外新增前置断言明确报出「java-chains 引擎未就绪（需 `--add-opens`）」——
+此前缺参数会表现为一连串「生成失败」，掩盖了运行方式问题。
+
+### 八、多 Agent 协作
+
+| 角色 | 主要工作 |
+| --- | --- |
+| 主 agent | 需求拆解与实测调研、缺陷根因定位、依赖边界契约与角色矩阵同步、OpenSpec 规划件、构建与收尾 |
+| 利用链 agent（exploit） | `src/service/**`、`src/preset/**`、载荷引擎缺陷修复 |
+| 界面 agent（ui） | 三个页面与 `Main.java` 装配、导航重组、默认最大化、配置页新分组 |
+| 测试 agent（test） | `UiNavigationCheck` 断言重写与新增、边界规则同步 |
+
+### 九、如实说明的局限
+
+1. 界面自检需要 `--add-opens`（预设链首个内置链含字节码类 gadget）；缺参数时已由前置断言
+   明确报出，但**必须按 `run.ps1` 的方式运行**才能全绿。
+2. 恶意服务器只做「监听 + 发布」，**不主动向目标发送载荷**。
+3. 预设里出现分叉的链仍按线性顺序构建，「分支型链」尚未暴露到界面。
+4. LDAPS 未内置 JKS 证书，需 HTTPS 回调时使用者要自行准备证书后再启用该端口。
+5. `Main.java` 现约 1600 行，模块化仍按 `docs/DESIGN-modularization.md` 留待专门一轮。

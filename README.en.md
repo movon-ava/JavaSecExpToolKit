@@ -132,13 +132,16 @@ Python 3.10+ at runtime; set `FJ_PYTHON` when `python` is not on `PATH`.
 The sidebar is grouped by feature:
 
 - `主页` — workspace overview
+- `Payload` — first-level category; click it to expand / collapse `Payload 生成` and `预设链`
+- `服务` — first-level category; click it to expand / collapse `恶意服务器` and `Shiro 漏洞利用`
+- `代理` — first-level category; click it to expand / collapse `代理抓包` (local HTTP proxy)
+  and `抓包转换` (capture one request, inspect the raw response, convert formats)
+- `FastJson` — first-level category; click it to expand / collapse `Fastjson 探测`
 - `配置` — settings, grouped into `通用配置` and per-feature sections
-- `代理` — first-level category holding both traffic tools; click it to expand / collapse
-  the second-level `代理抓包` (local HTTP proxy) and `抓包转换` (capture one request,
-  inspect the raw response, convert formats) items
-- `FastJson` — first-level category; click it to expand / collapse the second-level `Fastjson 探测` item
-- `Shiro` — first-level category; click it to expand / collapse the second-level `Shiro 漏洞利用` item
-- `Payload` — first-level category; click it to expand / collapse the second-level `Payload 生成` item
+
+The order mirrors the left-hand menu of the java-chains web UI. The main window now starts
+**maximized**: the server page has to fit the service list, listen parameters, payload publishing
+and the output pane at once, and the parameter column gets squeezed at smaller widths.
 
 First-level categories show a `▾` / `▸` marker pinned to the right edge of the row; clicking one toggles its children without leaving the current page. `打开探测` on the home card expands the group and jumps straight to the probe page.
 
@@ -154,8 +157,12 @@ The `配置` page stores fixed parameters in
 - `抓包转换配置` — default request method, default Content-Type, default convert target
 - `Shiro 配置` — default target URL, cookie name, key, AES-GCM, echo header, gadget chain, command, default request body
 - `Payload 生成配置` — default export directory for generated payloads (blank writes to the user home)
+- `恶意服务器配置` — default bind address, default advertised address, and the JNDI LDAP / RMI / HTTP
+  ports plus the HTTP service, JRMP, FakeMySQL and TCP ports (blank or 0 keeps the default)
+- `预设链配置` — default category filter for the preset page (choices come from the built-in preset file itself)
 
-Saved values pre-fill **every feature page** (probe, proxy, capture, Shiro, Payload). After the proxy
+Saved values pre-fill **every feature page** (probe, proxy, capture, Shiro, Payload, presets,
+malicious servers) and are pushed to already-open pages right after saving, with no restart needed. After the proxy
 starts, the address and port actually used are written back into the settings, so the port shown
 on the settings page reflects real usage. The Python engine reads the same file, and explicit
 CLI arguments always win over stored values.
@@ -195,14 +202,16 @@ readable hint instead of an engine error — set CEYE Token on the settings page
 | Path | Purpose |
 | --- | --- |
 | `src/` | Java Swing UI (`Main.java`), `pom.xml`, the local proxy (`proxy/ProxyServer.java`), and the Shiro module (`shiro/`) |
-| `src/ui/` | Per-feature page views (`HomePage` / `ProbePage` / `CapturePage` / `ProxyPage` / `ShiroPage` / `PayloadPage` / `ConfigPage`) and styling (`UiKit`) |
+| `src/ui/` | Per-feature page views and behaviour (`HomePage` / `ProbePage` / `CapturePage` / `ProxyPage` / `ShiroPage` / `PayloadPage` / `PresetPage` / `ServicePage` / `ConfigPage`, each with a matching `*Controller`, plus the shared `ChainEditor`) and styling (`UiKit`) |
 | `src/payload/` | Generic payload generation (`PayloadEngine` / `PayloadCatalog` / `PayloadResult`), decoupled from concrete features such as Shiro |
+| `src/service/` | Malicious servers (`ServiceManager` / `ServiceSpec` / `ServiceEndpoint` / `ServiceDefaults`): the only package that talks to the java-chains server-side adapters |
+| `src/preset/` | Built-in preset chains (`PresetCatalogService` / `PresetItem`): the only package that touches the upstream preset model, exposing plain data |
 | `src/probe/` | Engine invocation and command-line assembly (`ProbeEngine` / `ProbeCommand` / `CaptureBridge`) |
 | `src/config/` `src/util/` | `config.properties` read/write; message parsing and platform differences |
 | `python/` | probe engine (`fj_probe.py`), packaged into the JAR |
 | `tests/` | Python unit tests and Java UI self-checks |
 | `tools/` | maintenance helpers: `agent.ps1` (launch a role-scoped agent), `dispatch.ps1` (dispatch one role and auto-merge), `orchestrate.ps1` (one-sentence goal, automatic decomposition and orchestration), `watchdog.ps1` (stall watchdog), `lib/` (role matrix and execution primitives), `audit_boundary.py` (dependency audit), `apply_patch.py` |
-| `docs/` | design documentation (`DESIGN.md`, `DESIGN-shiro.md`, `DESIGN-probe-accuracy.md`, `DESIGN-agents.md`, `DESIGN-modularization.md`, `DESIGN-payload.md`) plus the multi-agent role guide (`AGENT-ROLES.md`) and the runbook (`AGENT-RUNBOOK.md`) |
+| `docs/` | design documentation (`DESIGN.md`, `DESIGN-shiro.md`, `DESIGN-probe-accuracy.md`, `DESIGN-agents.md`, `DESIGN-modularization.md`, `DESIGN-payload.md`, `DESIGN-services.md`) plus the multi-agent role guide (`AGENT-ROLES.md`) and the runbook (`AGENT-RUNBOOK.md`) |
 | `openspec/` | spec-driven development: `specs/` holds capability specs, `changes/` holds active and archived changes, `config.yaml` constrains AI-generated planning artifacts |
 | `.agents/` | AI tool instructions generated by OpenSpec (target tool for this repo is codex) |
 | `target/` | Maven build output (Maven writes here via `src/pom.xml`) |
@@ -237,7 +246,7 @@ developed in parallel without overwriting each other. See
 | --- | --- | --- |
 | orchestrator | root docs, `openspec/**`, `docs/**`, `tools/**`, shared kernel `src/config/**`, `src/util/**`, `src/pom.xml` | writable |
 | probe | `python/fj_probe.py`, `src/probe/Probe*.java` | writable |
-| exploit | `src/shiro/**`, `src/payload/**` | writable |
+| exploit | `src/shiro/**`, `src/payload/**`, `src/service/**`, `src/preset/**` | writable |
 | traffic | `src/proxy/**`, `src/probe/CaptureBridge.java` | writable |
 | ui | `src/ui/**`, `src/Main.java` | writable |
 | test | `tests/**` | writable |
@@ -359,7 +368,7 @@ the response is actually non-empty, and notes already covered by the summary are
 
 ## Shiro module
 
-`主页 → Shiro → Shiro 漏洞利用` covers rememberMe detection, dictionary key cracking
+`主页 → 服务 → Shiro 漏洞利用` covers rememberMe detection, dictionary key cracking
 (1108 built-in keys), echo-chain generation and command execution. Chains are built with
 [java-chains](https://github.com/vulhub/java-chains) `2.0.0-beta4`, which is a declared
 dependency of `src/pom.xml`; `lib/` holds the runtime jar and the manifest adds it to
@@ -411,6 +420,64 @@ The generic part lives in `src/payload/` (independent of any vulnerability type 
 module is just one consumer), and the UI wiring is in `src/ui/PayloadPage.java` and
 `src/ui/PayloadController.java`. See [docs/DESIGN-payload.md](docs/DESIGN-payload.md).
 
+## Preset chains
+
+`主页 → Payload → 预设链` turns the built-in java-chains preset templates (52 of them across
+7 categories) into a visual entry point, so you do not have to build every chain from scratch.
+
+- The left side filters by **category**; the choices come from the built-in preset file itself,
+  not from constants hard-coded in the source
+- The right side shows the preset's **chain steps** (read-only, with each step's default
+  parameters) and its **inputs**; the widget type follows the declared input type — booleans
+  become checkboxes and inputs with candidate values become dropdowns, so you never have to
+  guess which spellings are legal
+- `生成载荷` builds locally and reports the chain order, byte length, a body-free digest and the
+  Base64 text; `复制` copies it and `填入抓包页` drops it into the request body of `抓包转换`
+- `发到恶意服务器` hands the carrier, chain and entered parameters to the server page, ready to publish
+
+Preset carrier and node names are written in upper camel case while the engine registers them in
+lower case, so the page converts them automatically. Parameters are resolved through
+"step id → node name" before being assembled into the form the engine expects; using the step id
+directly would be rejected as an unknown parameter.
+
+## Malicious servers
+
+`主页 → 服务 → 恶意服务器` really starts and stops the five java-chains server-side services so a
+built payload can be published and pulled back by a target. It **only listens locally and never
+sends a payload to any target on its own.**
+
+| Service | Purpose | Default port |
+| --- | --- | --- |
+| JNDI | LDAP / RMI / HTTP trio for JNDI injection chains; enable LDAPS when an HTTPS callback is needed | LDAP 50389, RMI 50388, HTTP 58080 |
+| HTTP | Hosts payload bytes for a target to fetch by URL | 50000 |
+| TCP | Raw TCP delivery of a deserialization payload | 11527 |
+| FakeMySQL | Masquerades as a MySQL server to trigger JDBC deserialization | 3308 |
+| JRMP | Listens and returns serialized objects | 13999 |
+
+Three steps: pick a service, fill in the ports (pre-filled from the settings page), click
+`启动服务`; then choose a carrier and chain below and click `发布载荷`. The output pane prints a
+**ready-to-copy callback address**:
+
+- HTTP yields `http://<advertised host>:<port>/<publication id>`
+- TCP / JRMP yield protocol addresses, FakeMySQL yields a JDBC URL carrying the user name
+- JNDI: upstream returns no address, so the tool assembles the LDAP / RMI / HTTP entries from the
+  enabled ports (multi-line; the first line is what gets filled into the capture page)
+
+Several measured constraints are encoded in the implementation: non-JNDI services must use the
+port key `main` while JNDI must use its per-protocol keys; LDAPS additionally requires a JKS
+certificate path, so that port is **not sent** unless explicitly filled in (otherwise the whole
+JNDI start is rejected); payload type must match the protocol — JRMP accepts objects only,
+JNDI / FakeMySQL reject text, and HTTP / TCP take bytes or text.
+
+**Closing the main window stops every service before exiting**: once started, a service really
+holds its ports, and leaving them behind makes the next launch fail with "address already in use".
+
+`src/service/` is the only package in this project that talks to the java-chains server-side
+adapters (it exposes plain data classes upwards); the UI wiring lives in `src/ui/ServicePage.java`
+and `src/ui/ServiceController.java`, with the design in
+[docs/DESIGN-services.md](docs/DESIGN-services.md). **No Spring or web container is needed**: the upstream adapters
+are plain-JDK and were measured to run directly on Java 17.
+
 ## CLI smoke test
 
 ```powershell
@@ -454,22 +521,35 @@ python .\python\fj_probe.py http://127.0.0.1:8080/api/json --mode version --form
 python -m unittest discover -s tests
 ```
 
-The Java UI self-checks run against the compiled classes and print their own assertions:
+The Java self-checks run against the compiled classes and print their own assertions:
 
 ```powershell
-E:\java\jdk17\bin\javac.exe -encoding UTF-8 -cp target\classes -d target\classes tests\*.java
-E:\java\jdk17\bin\java.exe -Dfile.encoding=UTF-8 -cp target\classes UiNavigationCheck
-E:\java\jdk17\bin\java.exe -Dfile.encoding=UTF-8 -cp target\classes UiSwitchEndToEndCheck
-E:\java\jdk17\bin\java.exe -Dfile.encoding=UTF-8 -cp target\classes ProxyServerCheck
+# build first (produces target\classes and lib\java-chains-cli-2.0.0-beta4.jar), then compile the checks
+.\build.ps1
+E:\java\jdk17\bin\javac.exe -encoding UTF-8 -cp "target\classes;lib\java-chains-cli-2.0.0-beta4.jar" -d target\tmp2 tests\*.java
+
+# all six checks (--add-opens lets bytecode gadgets reach the JDK-internal xalan classes; run.ps1 already adds them)
+$opens = @('--add-opens', 'java.xml/com.sun.org.apache.xalan.internal.xsltc.trax=ALL-UNNAMED',
+           '--add-opens', 'java.xml/com.sun.org.apache.xalan.internal.xsltc.runtime=ALL-UNNAMED')
+E:\java\jdk17\bin\java.exe @opens -cp "target\tmp2;target\classes;lib\java-chains-cli-2.0.0-beta4.jar" UiNavigationCheck
+E:\java\jdk17\bin\java.exe @opens -cp "target\tmp2;target\classes;lib\java-chains-cli-2.0.0-beta4.jar" UiSwitchEndToEndCheck
+E:\java\jdk17\bin\java.exe @opens -cp "target\tmp2;target\classes;lib\java-chains-cli-2.0.0-beta4.jar" ProxyServerCheck
 ```
 
-`UiNavigationCheck` verifies the sidebar expand / collapse behaviour and writes page
-screenshots to `target/ui-check/`; `UiSwitchEndToEndCheck` drives the UI switches
-through the real Python engine against a local stub endpoint (including starting the proxy
-from the UI and reading the recorded flow); `ProxyServerCheck` covers the proxy itself —
-plain-HTTP capture, 404 handling, `CONNECT` tunneling with byte pass-through, callbacks,
-`find` / `clear`. `ShiroCheck` (Shiro engine), `UiShiroCheck` (Shiro page) and `PayloadCheck`
-(payload generation engine) can be run too. `ShiroCheck` / `PayloadCheck` need the two
-`--add-opens` flags from `run.ps1` (bytecode gadgets reach into the JDK-internal xalan classes).
+| Self-check | Coverage | Needs `--add-opens` |
+| --- | --- | --- |
+| `UiNavigationCheck` | Sidebar expand / collapse, per-page widgets and end-to-end flows; screenshots go to `target/ui-check/` | Yes (preset end-to-end build) |
+| `UiSwitchEndToEndCheck` | Captured headers fed to the probe page through the real Python engine | Yes |
+| `UiShiroCheck` | Full Shiro page flow | Yes |
+| `ShiroCheck` | Shiro engine (detect / crack / chain build / echo) | Yes |
+| `PayloadCheck` | Payload engine (catalog, groups, navigation, dual form, failure paths, safety) | Yes |
+| `ProxyServerCheck` | The proxy itself: plain-HTTP capture, 404 handling, `CONNECT` tunneling with byte pass-through, callbacks, `find` / `clear` | No |
+
+Dependency-boundary and toolchain checks:
+
+```powershell
+python -X utf8 tools\audit_boundary.py        # package dependency boundaries (acyclic / layering / generic components / shared kernel)
+powershell -File tools\check_agent_tools.ps1  # 91 mechanical assertions for the multi-agent toolchain
+```
 
 Only run this against systems where testing is explicitly authorized.

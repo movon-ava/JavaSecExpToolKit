@@ -15,7 +15,7 @@
 | --- | --- | --- | --- |
 | 主 agent | `AGENTS.md`、`README.md`、`README.en.md`、`PROGRESS.md`、`AI_REPORT.md`、`build.ps1`、`run.ps1`、`tools/*`、`docs/*`、`openspec/*`、`src/config/*`、`src/util/*`、`src/pom.xml` | change 全生命周期、集成、Git | change 归档且校验通过 |
 | 功能开发 probe | `python/fj_probe.py`、`src/probe/Probe*` | 探测引擎改动 | `test_probe.py` 全绿 |
-| 功能开发 exploit | `src/shiro/*`、`src/payload/*` | 利用链与 payload 生成 | `ShiroCheck` 全绿 |
+| 功能开发 exploit | `src/shiro/*`、`src/payload/*`、`src/service/*`、`src/preset/*` | 利用链、载荷生成与恶意服务器 | `ShiroCheck` 全绿 |
 | 功能开发 traffic | `src/proxy/*`、`src/probe/CaptureBridge.java` | 代理与抓包转换 | `ProxyServerCheck` 全绿 |
 | UI | `src/ui/*`、`src/Main.java` | 界面装配与交互 | 三个 `Ui*Check` 全绿 |
 | 测试 | `tests/*` | 自检与回归 | 全部自检通过 |
@@ -111,7 +111,7 @@
 | 角色 | 写入域 | 验证命令 |
 | --- | --- | --- |
 | probe | `python/fj_probe.py`、`src/probe/Probe*` | `python -m unittest discover -s tests` |
-| exploit | `src/shiro/*`、`src/payload/*` | `ShiroCheck` |
+| exploit | `src/shiro/*`、`src/payload/*`、`src/service/*`、`src/preset/*` | `ShiroCheck` |
 | traffic | `src/proxy/*`、`src/probe/CaptureBridge.java` | `ProxyServerCheck` |
 
 ---

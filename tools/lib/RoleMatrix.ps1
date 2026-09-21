@@ -23,7 +23,7 @@ function Get-RoleWriteScopes {
             "src/config/*", "src/util/*", "src/pom.xml"
         )
         probe   = @("python/fj_probe.py", "src/probe/Probe*")
-        exploit = @("src/shiro/*", "src/payload/*")
+        exploit = @("src/shiro/*", "src/payload/*", "src/service/*", "src/preset/*")
         traffic = @("src/proxy/*", "src/probe/CaptureBridge.java")
         ui      = @("src/ui/*", "src/Main.java")
         test    = @("tests/*")

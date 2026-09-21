@@ -115,12 +115,15 @@ Maven 的 POM 位于 Java 工作区（`src/pom.xml`，与源码同级），产�
 侧边栏按功能分组：
 
 - `主页` — 工作区概览
-- `配置` — 设置项，分为 `通用配置` 与各功能分组
-- `代理` — 一级分类，含两个流量工具；点击可展开 / 收起二级项 `代理抓包`（本地 HTTP 代理）
+- `Payload` — 一级分类；点击可展开 / 收起二级项 `Payload 生成`、`预设链`
+- `服务` — 一级分类；点击可展开 / 收起二级项 `恶意服务器`、`Shiro 漏洞利用`
+- `代理` — 一级分类；点击可展开 / 收起二级项 `代理抓包`（本地 HTTP 代理）
   与 `抓包转换`（单次抓包、格式转换）
 - `FastJson` — 一级分类；点击可展开 / 收起二级项 `Fastjson 探测`
-- `Shiro` — 一级分类；点击可展开 / 收起二级项 `Shiro 漏洞利用`
-- `Payload` — 一级分类；点击可展开 / 收起二级项 `Payload 生成`
+- `配置` — 设置项，分为 `通用配置` 与各功能分组
+
+顺序对齐网页版 java-chains 的左侧菜单。主窗口**默认最大化**：
+服务页要同时放下服务清单、监听参数、载荷发布与运行输出四块，非最大化时参数区会被压窄。
 
 一级分类行右侧固定显示 `▾` / `▸` 标记；点击它只展开 / 收起子项，不会离开当前页面。
 主页卡片上的 `打开探测` 会展开分组并直接跳到探测页。
@@ -137,8 +140,12 @@ Maven 的 POM 位于 Java 工作区（`src/pom.xml`，与源码同级），产�
 - `抓包转换配置` — 默认请求方法、默认 Content-Type、默认转换目标
 - `Shiro 配置` — 默认目标 URL、Cookie 名、密钥、AES-GCM、回显请求头、利用链、命令、默认请求体
 - `Payload 生成配置` — Payload 生成页的默认导出目录（留空则写入用户目录）
+- `恶意服务器配置` — 默认绑定地址、默认公布地址，以及 JNDI 的 LDAP / RMI / HTTP 端口、
+  HTTP 服务端口、JRMP 端口、FakeMySQL 端口、TCP 端口（留空或填 0 表示沿用默认值）
+- `预设链配置` — 预设链页的默认分类筛选（候选值来自内置预设文件本身）
 
-保存后的值会预填到**全部功能页**（探测页 + 代理页 + 抓包页 + Shiro 页 + Payload 页）。代理启动后会
+保存后的值会预填到**全部功能页**（探测页 + 代理页 + 抓包页 + Shiro 页 + Payload 页 +
+预设链页 + 恶意服务器页），保存后即刻下发到已经打开的页面，不需要重开程序。代理启动后会
 把**实际使用的**地址与端口写回配置，所以配置页里的代理端口反映真实使用情况。
 Python 引擎读取同一份文件；**显式命令行参数始终优先于**存储值。
 
@@ -171,14 +178,16 @@ CEYE 确认作为附属阶段时仍依赖 DNS 阶段。未填 Token 就执行 `C
 | 路径 | 用途 |
 | --- | --- |
 | `src/` | Java Swing 界面（`Main.java`）、`pom.xml`、本地代理（`proxy/ProxyServer.java`）与 Shiro 模块（`shiro/`） |
-| `src/ui/` | 各功能页视图（`HomePage` / `ProbePage` / `CapturePage` / `ProxyPage` / `ShiroPage` / `PayloadPage` / `ConfigPage`）与样式（`UiKit`） |
+| `src/ui/` | 各功能页视图与行为（`HomePage` / `ProbePage` / `CapturePage` / `ProxyPage` / `ShiroPage` / `PayloadPage` / `PresetPage` / `ServicePage` / `ConfigPage`，配套 `*Controller` 与共用链编辑 `ChainEditor`）与样式（`UiKit`） |
 | `src/payload/` | 通用载荷生成（`PayloadEngine` / `PayloadCatalog` / `PayloadResult`），与 Shiro 等具体功能解耦 |
+| `src/service/` | 恶意服务器（`ServiceManager` / `ServiceSpec` / `ServiceEndpoint` / `ServiceDefaults`）：唯一直接调用 java-chains 服务端适配器的包 |
+| `src/preset/` | 内置预设链读取（`PresetCatalogService` / `PresetItem`）：唯一引用上游预设模型的包，纯数据出参 |
 | `src/probe/` | 引擎调用与命令行拼装（`ProbeEngine` / `ProbeCommand` / `CaptureBridge`） |
 | `src/config/` `src/util/` | `config.properties` 读写；报文解析与平台差异 |
 | `python/` | 探测引擎（`fj_probe.py`），打进 JAR |
 | `tests/` | Python 单元测试与 Java 界面自检 |
 | `tools/` | 维护辅助脚本：`agent.ps1`（启动角色化 agent）、`dispatch.ps1`（单条派发并自动合并）、`orchestrate.ps1`（一句话目标自动拆解编排）、`watchdog.ps1`（会话停滞看护）、`lib/`（角色矩阵与执行原语）、`audit_boundary.py`（依赖边界审计）、`apply_patch.py` |
-| `docs/` | 设计文档（`DESIGN.md`、`DESIGN-shiro.md`、`DESIGN-probe-accuracy.md`、`DESIGN-agents.md`、`DESIGN-modularization.md`、`DESIGN-payload.md`）与多 Agent 职责说明（`AGENT-ROLES.md`）与运行手册（`AGENT-RUNBOOK.md`） |
+| `docs/` | 设计文档（`DESIGN.md`、`DESIGN-shiro.md`、`DESIGN-probe-accuracy.md`、`DESIGN-agents.md`、`DESIGN-modularization.md`、`DESIGN-payload.md`、`DESIGN-services.md`）与多 Agent 职责说明（`AGENT-ROLES.md`）与运行手册（`AGENT-RUNBOOK.md`） |
 | `openspec/` | 规格驱动开发：`specs/` 存能力规格，`changes/` 存待办与归档的变更，`config.yaml` 约束 AI 生成规划件 |
 | `.agents/` | OpenSpec 生成的 AI 工具指令（本仓库目标工具为 codex） |
 | `target/` | Maven 构建输出（经 `src/pom.xml` 写入） |
@@ -212,7 +221,7 @@ CEYE 确认作为附属阶段时仍依赖 DNS 阶段。未填 Token 就执行 `C
 | --- | --- | --- |
 | 主 agent | 根文档、`openspec/**`、`docs/**`、`tools/**` + 共享内核 `src/config/**`、`src/util/**`、`src/pom.xml` | 可写 |
 | probe | `python/fj_probe.py`、`src/probe/Probe*.java` | 可写 |
-| exploit | `src/shiro/**`、`src/payload/**` | 可写 |
+| exploit | `src/shiro/**`、`src/payload/**`、`src/service/**`、`src/preset/**` | 可写 |
 | traffic | `src/proxy/**`、`src/probe/CaptureBridge.java` | 可写 |
 | ui | `src/ui/**`、`src/Main.java` | 可写 |
 | test | `tests/**` | 可写 |
@@ -318,7 +327,7 @@ python .\python\fj_probe.py http://127.0.0.1:8080/api/json --mode detect --probe
 
 ## Shiro 模块
 
-`主页 → Shiro → Shiro 漏洞利用` 覆盖 rememberMe 识别、字典密钥爆破（内置 1108 条）、
+`主页 → 服务 → Shiro 漏洞利用` 覆盖 rememberMe 识别、字典密钥爆破（内置 1108 条）、
 回显链生成与命令执行。链由 [java-chains](https://github.com/vulhub/java-chains) `2.0.0-beta4`
 生成，该依赖声明在 `src/pom.xml`；`lib/` 存放运行时 JAR，清单把它加入 `Class-Path`。
 
@@ -356,6 +365,54 @@ Shiro 页为**每个动作保留独立回显框**（`指纹检测` / `密钥爆�
 实现上，通用部分在 `src/payload/`（与漏洞类型无关，Shiro 模块只是它的一个使用者），
 界面装配在 `src/ui/PayloadPage.java` 与 `src/ui/PayloadController.java`，设计见
 [docs/DESIGN-payload.md](docs/DESIGN-payload.md)。
+
+## 预设链
+
+`主页 → Payload → 预设链` 把 java-chains 内置的预设模板（实测 52 条、7 个分类）做成可视化入口：
+不用每次从空链自己搭，挑一条现成模板即可出载荷。
+
+- 左侧按**分类**筛选，清单显示预设名与分类；分类候选项来自内置预设文件本身，不是代码里写死的常量
+- 右侧展示该预设的**链步骤**（只读，含每步的默认参数）与**可填输入**；
+  输入控件形态由预设声明的类型决定——布尔型渲染成勾选框，带候选值的渲染成下拉框，
+  不需要使用者去猜哪些拼写合法
+- `生成载荷` 在本地构建并给出链序、字节长度、不含正文的摘要与 Base64；
+  `复制` 写入剪贴板，`填入抓包页` 送进 `抓包转换` 的请求体
+- `发到恶意服务器` 把当前预设的载体、链与已填参数交给服务页，选好服务后直接发布
+
+载体名与节点名在预设里是大驼峰写法、引擎按小写注册，页面会自动转换；
+参数按「步骤 id → 节点名」反查后再拼成引擎认识的形式，直接用步骤 id 会被判为未知参数。
+
+## 恶意服务器
+
+`主页 → 服务 → 恶意服务器` 真实启停 java-chains 的五类服务端，用于把已构建的载荷发布出去、
+让目标回连拉取。**只在本地监听，不主动向任何目标发送载荷。**
+
+| 服务 | 用途 | 默认端口 |
+| --- | --- | --- |
+| JNDI | LDAP / RMI / HTTP 三件套，配合 JNDI 注入链；需要 HTTPS 回调时启用 LDAPS | LDAP 50389、RMI 50388、HTTP 58080 |
+| HTTP | 托管载荷字节，供目标按 URL 拉取 | 50000 |
+| TCP | 反序列化载荷的裸 TCP 投递 | 11527 |
+| FakeMySQL | 伪装 MySQL 服务端，诱导 JDBC 反序列化 | 3308 |
+| JRMP | 监听并回传序列化对象 | 13999 |
+
+用法是三步：选服务 → 填端口（初值来自配置页）→ `启动服务`，然后在下方选载体与链、
+`发布载荷`，输出区给出**可直接复制的回连地址**：
+
+- HTTP 给出 `http://<公布地址>:<端口>/<发布标识>`
+- TCP / JRMP 给出协议地址，FakeMySQL 给出带用户名的 JDBC URL
+- JNDI 上游不返回地址，本工具按已启用端口补出 LDAP / RMI / HTTP 三个入口（多行取第一行填入抓包页）
+
+几处实测约束写在实现里：非 JNDI 服务的端口键必须是 `main`，JNDI 必须用各协议端口键；
+LDAPS 需要同时提供 JKS 证书路径，未显式填写端口时**不下发**该端口（否则整个 JNDI 启动会被拒）；
+载荷类型必须与协议匹配——JRMP 只收对象形态，JNDI / FakeMySQL 不收文本形态，HTTP / TCP 收字节或文本。
+
+**关闭主窗口会先停止全部服务再退出**：服务一旦启动就真实占用端口，
+不释放的话下次启动会撞上「端口被占用」。
+
+实现上，`src/service/` 是本项目唯一直接调用 java-chains 服务端适配器的包（对上层只暴露纯数据类），
+界面装配在 `src/ui/ServicePage.java` 与 `src/ui/ServiceController.java`，
+设计见 [docs/DESIGN-services.md](docs/DESIGN-services.md)。
+**不需要 Spring 或任何 Web 容器**：上游适配器是纯 JDK 实现，实测在 Java 17 下可直接驱动。
 
 ## 命令行速查
 
@@ -403,17 +460,32 @@ python -m unittest discover -s tests
 Java 界面自检针对已编译的 class 运行，并自行打印断言：
 
 ```powershell
-E:\java\jdk17\bin\javac.exe -encoding UTF-8 -cp target\classes -d target\classes tests\*.java
-E:\java\jdk17\bin\java.exe -Dfile.encoding=UTF-8 -cp target\classes UiNavigationCheck
-E:\java\jdk17\bin\java.exe -Dfile.encoding=UTF-8 -cp target\classes UiSwitchEndToEndCheck
-E:\java\jdk17\bin\java.exe -Dfile.encoding=UTF-8 -cp target\classes ProxyServerCheck
+# 先构建（产出 target\classes 与 lib\java-chains-cli-2.0.0-beta4.jar），再编译自检
+.\build.ps1
+E:\java\jdk17\bin\javac.exe -encoding UTF-8 -cp "target\classes;lib\java-chains-cli-2.0.0-beta4.jar" -d target\tmp2 tests\*.java
+
+# 六套自检（--add-opens 用于字节码类 gadget 访问 JDK 内部 xalan 实现，run.ps1 已内置）
+$opens = @('--add-opens', 'java.xml/com.sun.org.apache.xalan.internal.xsltc.trax=ALL-UNNAMED',
+           '--add-opens', 'java.xml/com.sun.org.apache.xalan.internal.xsltc.runtime=ALL-UNNAMED')
+E:\java\jdk17\bin\java.exe @opens -cp "target\tmp2;target\classes;lib\java-chains-cli-2.0.0-beta4.jar" UiNavigationCheck
+E:\java\jdk17\bin\java.exe @opens -cp "target\tmp2;target\classes;lib\java-chains-cli-2.0.0-beta4.jar" UiSwitchEndToEndCheck
+E:\java\jdk17\bin\java.exe @opens -cp "target\tmp2;target\classes;lib\java-chains-cli-2.0.0-beta4.jar" ProxyServerCheck
 ```
 
-`UiNavigationCheck` 校验侧边栏展开 / 收起行为，并把页面截图写入 `target/ui-check/`；
-`UiSwitchEndToEndCheck` 通过真实 Python 引擎驱动界面开关（含从界面启动代理并读取记录）；
-`ProxyServerCheck` 覆盖代理本身——明文抓包、404、`CONNECT` 隧道字节透传、回调与
-`find` / `clear`。另有 `ShiroCheck`（Shiro 引擎）、`UiShiroCheck`（Shiro 页）与
-`PayloadCheck`（载荷生成引擎）可一并运行。`ShiroCheck` / `PayloadCheck` 需要
-`run.ps1` 里的两个 `--add-opens`（字节码类 gadget 要访问 JDK 内部 xalan 实现）。
+| 自检 | 覆盖范围 | 是否需要 `--add-opens` |
+| --- | --- | --- |
+| `UiNavigationCheck` | 侧边栏展开 / 收起、各页面控件与端到端流程，截图写入 `target/ui-check/` | 需要（预设链端到端生成） |
+| `UiSwitchEndToEndCheck` | 抓包头经真实 Python 引擎送入探测页 | 需要 |
+| `UiShiroCheck` | Shiro 页全流程 | 需要 |
+| `ShiroCheck` | Shiro 引擎（检测 / 爆破 / 链生成 / 回显） | 需要 |
+| `PayloadCheck` | 载荷生成引擎（目录、分组、导航、双形态、失败路径、安全） | 需要 |
+| `ProxyServerCheck` | 代理本身：明文抓包、404、`CONNECT` 隧道字节透传、回调与 `find` / `clear` | 不需要 |
+
+依赖边界自检与工具链自检：
+
+```powershell
+python -X utf8 tools\audit_boundary.py        # 包级依赖边界（无环 / 分层 / 通用组件 / 共享内核）
+powershell -File tools\check_agent_tools.ps1  # 多 Agent 工具链 91 项机械断言
+```
 
 **请仅在获得明确测试授权的系统上运行。**

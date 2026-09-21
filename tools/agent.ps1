@@ -112,7 +112,7 @@ $cards = @{
 完成标志：python -m unittest discover -s tests 全绿。
 "@
     exploit = @"
-你是功能开发 agent（exploit）。写入域仅限 src/shiro/** 与 src/payload/**。
+你是功能开发 agent（exploit）。写入域仅限 src/shiro/**、src/payload/**、src/service/** 与 src/preset/**。
 禁止：不改 src/ui/**、tests/**、src/util/**、src/config/**、src/pom.xml；不改配置项键名。
 完成标志：ShiroCheck 自检通过。
 "@

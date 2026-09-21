@@ -79,7 +79,7 @@
 | --- | ---: | --- | --- |
 | 主 agent（orchestrator） | 1 | 根目录文档、`openspec/**` | change 全生命周期、集成、Git |
 | 功能开发（probe） | 1 | `python/fj_probe.py`、`src/probe/Probe*.java` | 探测引擎改动 |
-| 功能开发（exploit） | 1 | `src/shiro/**`、`src/payload/**` | 利用链与 payload 生成 |
+| 功能开发（exploit） | 1 | `src/shiro/**`、`src/payload/**`、`src/service/**`、`src/preset/**` | 利用链、载荷生成与恶意服务器 |
 | 功能开发（traffic） | 1 | `src/proxy/**`、`src/probe/CaptureBridge.java` | 代理与抓包转换 |
 | UI | 1 | `src/ui/**`、`src/Main.java` | 界面装配与交互 |
 | 测试 | 1 | `tests/**` | 自检与回归 |
@@ -136,6 +136,8 @@
 | `src/probe/Probe*.java` | R | W | - | - | - | R | R |
 | `src/probe/CaptureBridge.java` | R | R | - | W | - | R | R |
 | `src/shiro/**` | R | - | W | - | - | R | R |
+| `src/service/**` | R | - | W | - | - | R | R |
+| `src/preset/**` | R | - | W | - | - | R | R |
 | `src/payload/**` | R | - | W | - | - | R | R |
 | `src/proxy/**` | R | - | - | W | - | R | R |
 | `src/ui/**` | R | - | - | - | W | R | R |
