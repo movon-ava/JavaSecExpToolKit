@@ -350,7 +350,43 @@ Assert-That -Name "监督角色在主仓库运行且为只读" `
     -Detail "监督必须直接审主仓库当前工作区（worktree 是从 HEAD 建的，看不到未提交改动）"
 
 Write-Host ""
-Write-Host "[9] 角色矩阵完整性"
+Write-Host "[9] 汇报必须写明角色与产出"
+
+# 用户要求：每次任务结束后，汇报里要能看出「调用了哪些 agent 角色、各自做了什么」。
+# 光有逐步表格不够——并行批次里步骤顺序不等于角色分工，得按角色聚合。
+$orchCode = @((Read-Text -Path $orchestratePath) -split "`n" | Where-Object { $_ -notmatch '^\s*#' }) -join "`n"
+# 必须匹配「调用」而不是函数定义：只删调用点、留着定义时，
+# 按函数名匹配会假通过（已用变体验证过一次）。
+Assert-That -Name "编排汇报按角色聚合调用情况" `
+    -Condition ($orchCode -match '\$breakdown\s*=\s*Get-RoleBreakdown') `
+    -Detail "缺少按角色聚合时，人只能从逐步表格反推「谁做了什么」"
+Assert-That -Name "编排汇报列出本次调用的角色" `
+    -Condition ($orchCode -match '本次调用的角色') `
+    -Detail "缺少该节时，汇报无法一眼回答「这次用了哪些角色」"
+Assert-That -Name "编排汇报逐角色列出主要工作" `
+    -Condition ($orchCode -match '各角色主要工作') `
+    -Detail "缺少该节时，只能看到步骤状态，看不到各角色的职责分工"
+Assert-That -Name "编排汇报记录每步的产出文件" `
+    -Condition (($orchCode -match 'Get-StepFiles') -and ($orchCode -match '产出文件')) `
+    -Detail "产出文件是判断「这一步到底做了什么」的直接证据"
+Assert-That -Name "每步都带上交给角色做的事" `
+    -Condition (([regex]::Matches($orchCode, '-Task \$task')).Count -ge 1 -and `
+                ([regex]::Matches($orchCode, '-Task \$handle\.Task')).Count -ge 1) `
+    -Detail "并行批次若不传任务描述，汇报里那一步的「主要工作」会是空的"
+
+# 产出文件的取值区间必须只覆盖这一次合并带来的改动。
+# 实测踩过：并行批次共用批次基线，先合并的步骤会串进后一步的产出清单
+# （traffic 的清单里出现 probe 的 python/fj_probe.py）。
+Assert-That -Name "产出文件按合并提交的父提交对比" `
+    -Condition (([regex]::Matches($orchCode, 'newHead\^1\.\.\$newHead')).Count -ge 2) `
+    -Detail "写成基线..新 HEAD 时，并行批次里后合并的步骤会把他人的改动算进自己的产出"
+Assert-That -Name "派发命令的收尾汇报也写明角色与产出" `
+    -Condition (((Read-Text -Path $dispatchPath) -match '主 agent 本次调用角色') -and `
+                ((Read-Text -Path $dispatchPath) -match '该角色主要工作')) `
+    -Detail "单条派发是更常用的入口，同样要能回答「调了谁、做了什么」"
+
+Write-Host ""
+Write-Host "[10] 角色矩阵完整性"
 
 # 矩阵是「哪两个角色能并行」与「提交是否越界」的唯一依据，
 # 因此它自身必须自洽：调用方不能用 ,@() / 裸 return 把数组打散或退化。

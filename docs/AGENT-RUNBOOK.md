@@ -508,11 +508,27 @@ git branch -D agent/exploit/payload-core
 | 1 拆解 | 以**只读**会话让 LLM 按角色矩阵产出 JSON 计划（角色、slug、任务、dependsOn） | 超时即报错退出，不留半成品 |
 | 2 校验 | 角色必须存在、slug 合规且唯一、依赖必须指向本计划内的 slug、步数不超 `-MaxSteps`、依赖不许成环 | 校验不过则**不创建任何 worktree** |
 | 3 执行 | 按「依赖 + 写入域冲突」分批；同批先串行预建 worktree，再并行启动各角色 | 单步失败只影响该步，其余照常 |
-| 4 汇报 | 逐步列出「已合并 / 无需改动 / 需人工处理」，附提交与残留现场，写入 `%TEMP%\jset-orchestrate-<runId>.md` | — |
+| 4 汇报 | 先按角色聚合（**调用了哪些角色、各自做了哪几步、主要工作与产出文件**），再给逐步表格「已合并 / 无需改动 / 需人工处理」，附提交与残留现场，写入 `%TEMP%\jset-orchestrate-<runId>.md` | — |
 
 分批规则就是 `tools/lib/RoleMatrix.ps1` 的冲突判定：写入域证不出不相交就**串行**（宁可慢，不可撞）。
 `probe` 与 `traffic` 可同批（`src/probe/Probe*` 与 `src/probe/CaptureBridge.java` 文件名层面不相交），
 `ui` 与谁都不同批（`src/Main.java` 是唯一汇合点）。
+
+### 汇报里能看到什么
+
+每次执行结束都会给出三段，用来回答「这次调用了哪些 agent、各自做了什么」：
+
+| 段落 | 内容 |
+| --- | --- |
+| 本次调用的角色 | 本次实际启动的角色清单，以及各自占用第几步 |
+| 各角色主要工作 | 每个角色一句任务描述 + 该步实际改动的文件清单 |
+| 逐步结果 | 逐步的状态、说明、提交记录（诊断用） |
+
+单条派发（`tools/dispatch.ps1`）结束时同样打印「调用了哪个角色 / 主要工作 / 产出文件」。
+
+产出文件取自 **合并提交的一号父提交到该合并提交**，而不是批次基线。
+这一点是实测修正的：并行批次共用批次基线时，先合并的步骤会串进后一步的产出清单
+（实测 `traffic` 的清单里出现过 `probe` 的 `python/fj_probe.py`）。
 
 ### 常用参数
 
@@ -550,7 +566,8 @@ git branch -D agent/exploit/payload-core
 | 监督步 | 在主仓库以 read-only 运行，退出码 0，不建 worktree |
 | 清理 | 结束后 `git worktree list` 只剩主仓库，`agent/*` 分支为空 |
 | 主仓库状态 | 结束后工作区干净 |
-| 汇报 | 写出逐步表格与汇总，列出「已合并 3 / 需人工处理 0」 |
+| 汇报 | 按角色聚合（3 个角色各 1 步 + 产出文件）与逐步表格；"调用角色数：3（probe、traffic、test）"、"已合并 3 / 需人工处理 0" |
+| 产出文件归属 | 3 步的文件清单互不串扰（`python/fj_probe.py`、`src/proxy/ProxyServer.java`、`tests/test_probe.py`） |
 | 外层退出码 | 0 |
 
 只读审计步骤通过 `-SkipSupervisor` 可跳过；`-NoMerge` 与 `-DryRun` 也各自实测过。

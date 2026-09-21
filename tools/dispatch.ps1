@@ -231,10 +231,26 @@ $cleanup = Remove-AgentWorkspace -Repository $root -Role $Role -Slug $Slug
 $cleanup.Messages | ForEach-Object { Write-Host "  $_" }
 
 $newHead = (Invoke-GitOn -Repository $root -Options @("rev-parse") -Operands @("HEAD")).Output[0]
+
+# 收尾汇报：明确回答「调用了哪个角色、做了什么、改到哪些文件」。
+# 取 <合并提交>^1..<合并提交> 而不是 main(Baseline)..新 HEAD：
+# 若期间主线已前进，后者会把别人的改动算到本次名下。
+$filesResult = Invoke-GitOn -Repository $root -Options @("diff", "--name-only") -Operands @("$newHead^1..$newHead")
+$changedFiles = @($filesResult.Output | Where-Object { $_ })
+$summary = ($Task -replace '\s+', ' ').Trim()
+
 Write-Host ""
 Write-Host "== 完成 =="
-Write-Host "  main   : $baseline -> $newHead"
-Write-Host "  已清理 : $worktree、分支 $branch"
-Write-Host "  下一步 : 你来做测试与验收，再提修改建议"
+Write-Host "  主 agent 本次调用角色：$Role"
+Write-Host "  该角色主要工作       ：$summary"
+Write-Host "  产出文件（$($changedFiles.Count) 个）："
+if ($changedFiles.Count -eq 0) {
+    Write-Host "    （本次合并提交没有引入文件改动）"
+} else {
+    $changedFiles | ForEach-Object { Write-Host "    $_" }
+}
+Write-Host "  main                 : $baseline -> $newHead"
+Write-Host "  已清理               : $worktree、分支 $branch"
+Write-Host "  下一步               : 你来做测试与验收，再提修改建议"
 
 $ErrorActionPreference = $previous

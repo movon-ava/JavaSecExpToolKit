@@ -88,11 +88,36 @@ function Add-StepRecord {
         [Parameter(Mandatory = $true)][string]$Role,
         [Parameter(Mandatory = $true)][string]$Status,
         [string]$Detail = "",
-        [string]$Commits = ""
+        [string]$Commits = "",
+        # 该步交给角色做的事，用于汇报里的「主要工作」
+        [string]$Task = "",
+        # 该步实际改动的文件（逗号分隔），用于汇报里的「产出文件」
+        [string]$Files = ""
     )
     $script:stepRecords += @{
         Step = $Step; Role = $Role; Status = $Status; Detail = $Detail; Commits = $Commits
+        Task = $Task; Files = $Files
     }
+}
+
+# 按角色汇总本次调用情况：谁被调用、做了几步、主要做什么、产出哪些文件。
+# 汇报里给出这一节，是为了让人一眼看清「哪些角色参与了、各自负责什么」，
+# 而不必从逐步表格里自己反推。
+function Get-RoleBreakdown {
+    $order = @()
+    $byRole = @{}
+    foreach ($record in $script:stepRecords) {
+        if (-not $byRole.ContainsKey($record.Role)) {
+            $byRole[$record.Role] = @{ Steps = @(); Tasks = @(); Files = @(); Statuses = @() }
+            $order += $record.Role
+        }
+        $entry = $byRole[$record.Role]
+        $entry.Steps += $record.Step
+        if ($record.Task) { $entry.Tasks += $record.Task }
+        if ($record.Files) { $entry.Files += ($record.Files -split ', ') }
+        $entry.Statuses += $record.Status
+    }
+    return @{ Order = $order; ByRole = $byRole }
 }
 
 # ---- 角色清单文本（喂给拆解用的 LLM，避免它凭空发明角色） ----
@@ -286,6 +311,24 @@ function Get-PlanBatches {
     return @{ Batches = $batches; Cyclic = $false }
 }
 
+# 取某一步实际改动的文件（相对路径，逗号分隔）。
+# 传入的区间应能唯一定位「这一步带来的改动」（合并后取 <合并提交>^1..<合并提交>）；
+# 取不到时返回空串，由调用方按「无产出」处理。
+function Get-StepFiles {
+    param(
+        [Parameter(Mandatory = $true)][string]$Range,
+        [int]$Limit = 6
+    )
+    $result = Invoke-GitOn -Repository $root -Options @("diff", "--name-only") -Operands @($Range)
+    if ($result.Code -ne 0) { return "" }
+    $files = @($result.Output | Where-Object { $_ })
+    if ($files.Count -eq 0) { return "" }
+    $shown = @($files | Select-Object -First $Limit)
+    $joined = $shown -join ', '
+    if ($files.Count -gt $Limit) { $joined = "$joined 等 $($files.Count) 个" }
+    return $joined
+}
+
 # ---- 第 4 步：执行一个步骤 ----
 function Invoke-PlanStep {
     param(
@@ -316,9 +359,9 @@ function Invoke-PlanStep {
         $code = $LASTEXITCODE
         $detail = "退出码 $code"
         if ($code -eq 0) {
-            Add-StepRecord -Step "$Index" -Role $role -Status "已执行" -Detail $detail
+            Add-StepRecord -Step "$Index" -Role $role -Status "已执行" -Detail $detail -Task $task
         } else {
-            Add-StepRecord -Step "$Index" -Role $role -Status "失败" -Detail $detail
+            Add-StepRecord -Step "$Index" -Role $role -Status "失败" -Detail $detail -Task $task
         }
         return
     }
@@ -354,7 +397,7 @@ function Invoke-PlanStep {
         # 并行：后台启动，由调用方统一收集
         $process = Start-Process -FilePath "powershell" -ArgumentList $arguments -PassThru -WindowStyle Hidden `
             -RedirectStandardOutput $outFile -RedirectStandardError $errFile
-        return @{ Process = $process; Role = $role; Slug = $slug; Step = $Step; Index = $Index; Baseline = $baseline; Branch = $branch; ResultFile = $resultFile }
+        return @{ Process = $process; Role = $role; Slug = $slug; Step = $Step; Index = $Index; Baseline = $baseline; Branch = $branch; ResultFile = $resultFile; Task = $task }
     }
 
     & powershell @arguments | Out-Host
@@ -363,7 +406,7 @@ function Invoke-PlanStep {
 
 
     if ($NoMerge) {
-        Add-StepRecord -Step "$Index" -Role $role -Status "已执行（未合并）" -Detail "退出码 $code；分支 $branch"
+        Add-StepRecord -Step "$Index" -Role $role -Status "已执行（未合并）" -Detail "退出码 $code；分支 $branch" -Task $task
         return
     }
 
@@ -371,21 +414,21 @@ function Invoke-PlanStep {
     switch ($decision.Action) {
         "skip" {
             Remove-AgentWorkspace -Repository $root -Role $role -Slug $slug | Out-Null
-            Add-StepRecord -Step "$Index" -Role $role -Status "无需改动" -Detail $decision.Reason
+            Add-StepRecord -Step "$Index" -Role $role -Status "无需改动" -Detail $decision.Reason -Task $task
         }
         "manual" {
-            Add-StepRecord -Step "$Index" -Role $role -Status "需人工处理" -Detail "$($decision.Reason)；现场：$branch"
+            Add-StepRecord -Step "$Index" -Role $role -Status "需人工处理" -Detail "$($decision.Reason)；现场：$branch" -Task $task
         }
         "merge" {
             $merge = Invoke-GitOn -Repository $root -Options @("merge", "--no-ff", "--no-edit") -Operands @($branch)
             if ($merge.Code -ne 0) {
                 Invoke-GitOn -Repository $root -Options @("merge", "--abort") | Out-Null
-                Add-StepRecord -Step "$Index" -Role $role -Status "需人工处理" -Detail "合并失败：$($merge.Output -join ' ')"
+                Add-StepRecord -Step "$Index" -Role $role -Status "需人工处理" -Detail "合并失败：$($merge.Output -join ' ')" -Task $task
             } else {
                 $newHead = (Invoke-GitOn -Repository $root -Options @("rev-parse") -Operands @("HEAD")).Output[0]
                 $commits = (Invoke-GitOn -Repository $root -Options @("log", "--oneline") -Operands @("$baseline..$newHead")).Output
                 Remove-AgentWorkspace -Repository $root -Role $role -Slug $slug | Out-Null
-                Add-StepRecord -Step "$Index" -Role $role -Status "已合并" -Detail "分支 $branch" -Commits (($commits | Select-Object -First 3) -join ' / ')
+                Add-StepRecord -Step "$Index" -Role $role -Status "已合并" -Detail "分支 $branch" -Task $task -Files (Get-StepFiles -Range "$newHead^1..$newHead") -Commits (($commits | Select-Object -First 3) -join ' / ')
             }
         }
     }
@@ -492,7 +535,7 @@ foreach ($batch in $batches.Batches) {
         $exitCode = $handle.Process.ExitCode
 
         if ($NoMerge) {
-            Add-StepRecord -Step "$($handle.Index)" -Role $role -Status "已执行（未合并）" -Detail "退出码 $exitCode；分支 $branch"
+            Add-StepRecord -Step "$($handle.Index)" -Role $role -Status "已执行（未合并）" -Detail "退出码 $exitCode；分支 $branch" -Task $handle.Task
             continue
         }
 
@@ -500,21 +543,21 @@ foreach ($batch in $batches.Batches) {
         switch ($decision.Action) {
             "skip" {
                 Remove-AgentWorkspace -Repository $root -Role $role -Slug $slug | Out-Null
-                Add-StepRecord -Step "$($handle.Index)" -Role $role -Status "无需改动" -Detail $decision.Reason
+                Add-StepRecord -Step "$($handle.Index)" -Role $role -Status "无需改动" -Detail $decision.Reason -Task $handle.Task
             }
             "manual" {
-                Add-StepRecord -Step "$($handle.Index)" -Role $role -Status "需人工处理" -Detail "$($decision.Reason)；现场：$branch"
+                Add-StepRecord -Step "$($handle.Index)" -Role $role -Status "需人工处理" -Detail "$($decision.Reason)；现场：$branch" -Task $handle.Task
             }
             "merge" {
                 $merge = Invoke-GitOn -Repository $root -Options @("merge", "--no-ff", "--no-edit") -Operands @($branch)
                 if ($merge.Code -ne 0) {
                     Invoke-GitOn -Repository $root -Options @("merge", "--abort") | Out-Null
-                    Add-StepRecord -Step "$($handle.Index)" -Role $role -Status "需人工处理" -Detail "合并失败：$($merge.Output -join ' ')"
+                    Add-StepRecord -Step "$($handle.Index)" -Role $role -Status "需人工处理" -Detail "合并失败：$($merge.Output -join ' ')" -Task $handle.Task
                 } else {
                     $newHead = (Invoke-GitOn -Repository $root -Options @("rev-parse") -Operands @("HEAD")).Output[0]
                     $commits = (Invoke-GitOn -Repository $root -Options @("log", "--oneline") -Operands @("$($handle.Baseline)..$newHead")).Output
                     Remove-AgentWorkspace -Repository $root -Role $role -Slug $slug | Out-Null
-                    Add-StepRecord -Step "$($handle.Index)" -Role $role -Status "已合并" -Detail "分支 $branch" -Commits (($commits | Select-Object -First 3) -join ' / ')
+                    Add-StepRecord -Step "$($handle.Index)" -Role $role -Status "已合并" -Detail "分支 $branch" -Task $handle.Task -Files (Get-StepFiles -Range "$newHead^1..$newHead") -Commits (($commits | Select-Object -First 3) -join ' / ')
                 }
             }
         }
@@ -540,16 +583,42 @@ $report.Add("- 目标：$Goal")
 $report.Add("- 计划：$($steps.Count) 步 / $($batches.Batches.Count) 批")
 $report.Add("- 当前主线：$headLine")
 $report.Add("")
+
+# 先给结论：这次调用了哪些角色、各自做了多少步。
+# 逐步明细在下面，但人第一眼想看的是「谁参与了」。
+$breakdown = Get-RoleBreakdown
+$report.Add("## 本次调用的角色")
+$report.Add("")
+foreach ($roleName in $breakdown.Order) {
+    $entry = $breakdown.ByRole[$roleName]
+    $report.Add("- **$roleName**：$($entry.Steps.Count) 步（第 $($entry.Steps -join '、') 步）")
+}
+$report.Add("")
+
+$report.Add("## 各角色主要工作")
+$report.Add("")
+foreach ($roleName in $breakdown.Order) {
+    $entry = $breakdown.ByRole[$roleName]
+    $report.Add("### $roleName")
+    $report.Add("")
+    foreach ($record in ($script:stepRecords | Where-Object { $_.Role -eq $roleName })) {
+        $report.Add("- 第 $($record.Step) 步[$($record.Status)]：$($record.Task)")
+        if ($record.Files) { $report.Add("  - 产出文件：$($record.Files)") }
+    }
+    $report.Add("")
+}
+
 $report.Add("## 逐步结果")
 $report.Add("")
-$report.Add("| 步 | 角色 | 状态 | 说明 | 提交 |")
-$report.Add("| --- | --- | --- | --- | --- |")
+$report.Add("| 步 | 角色 | 状态 | 主要工作 | 说明 | 提交 |")
+$report.Add("| --- | --- | --- | --- | --- | --- |")
 foreach ($record in $script:stepRecords) {
-    $report.Add("| $($record.Step) | $($record.Role) | $($record.Status) | $($record.Detail) | $($record.Commits) |")
+    $report.Add("| $($record.Step) | $($record.Role) | $($record.Status) | $($record.Task) | $($record.Detail) | $($record.Commits) |")
 }
 $report.Add("")
 $report.Add("## 汇总")
 $report.Add("")
+$report.Add("- 调用角色数：$($breakdown.Order.Count)（$($breakdown.Order -join '、')）")
 $report.Add("- 已合并：$mergedCount")
 $report.Add("- 无需改动：$skipCount")
 $report.Add("- 需人工处理：$manualCount")
@@ -566,6 +635,7 @@ foreach ($line in $worktrees.Output) { if ($line) { $report.Add("- $line") } }
 $report.Add("")
 $report.Add("残留分支：")
 if ($branches.Output.Count -eq 0) { $report.Add("- （无）") } else { foreach ($line in $branches.Output) { if ($line) { $report.Add("- $line") } } }
+$report.Add("")
 
 $reportText = ($report -join "`n")
 [System.IO.File]::WriteAllText($reportPath, $reportText, (New-Object System.Text.UTF8Encoding $false))

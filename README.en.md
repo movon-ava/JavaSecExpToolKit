@@ -245,7 +245,12 @@ Every session has a timeout ceiling; when a session goes quiet, a read-only watc
 agent reads its log and decides whether it is progressing, waiting on a genuinely slow
 command, or stuck — so a session waiting on a long command is not killed by mistake.
 
-The tooling has its own regression check (`tools\check_agent_tools.ps1`, 77 mechanical
+Every dispatch ends with a report of **which roles were invoked, what each one did, and which
+files it produced**: the orchestrator groups results by role first (steps per role, main work,
+produced files) and then lists step-by-step detail; a single dispatch prints the role, its work
+and the produced files as well.
+
+The tooling has its own regression check (`tools\check_agent_tools.ps1`, 84 mechanical
 assertions) covering defects that actually happened: a counter colliding with a parameter
 name, a misspelled switch turning a branch into dead code, a missing BOM, an unanchored
 `.gitignore` rule, a `,@()` return that silently disabled two guard branches, and managed
