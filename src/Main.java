@@ -55,7 +55,9 @@ public final class Main {
             new ui.NavItem("fastjson", "FastJson", Arrays.asList(
                     new ui.NavItem("fastjson.detect", "Fastjson 探测"))),
             new ui.NavItem("shiro", "Shiro", Arrays.asList(
-                    new ui.NavItem("shiro.exploit", "Shiro 漏洞利用"))));
+                    new ui.NavItem("shiro.exploit", "Shiro 漏洞利用"))),
+            new ui.NavItem("payload", "Payload", Arrays.asList(
+                    new ui.NavItem("payload.build", "Payload 生成"))));
 
     private final JFrame frame = new JFrame("JavaSecExpToolKit");
     private final JPanel content = new JPanel(new BorderLayout());
@@ -161,6 +163,7 @@ public final class Main {
     private final JTextField shiroKey = new JTextField("kPH+bIxk5D2deZiIxcaaaA==", 26);
     private final JCheckBox shiroGcm = new JCheckBox("AES-GCM（Shiro \u2265 1.4.2）", false);
     private final JTextField shiroEchoHeader = new JTextField("X-Authorization", 14);
+    private final JTextField configPayloadExportDir = new JTextField("", 32);
     private final JComboBox<shiro.ShiroExploit.ChainKind> shiroChain = new JComboBox<shiro.ShiroExploit.ChainKind>(shiro.ShiroExploit.ChainKind.values());
     private final JTextField shiroCommand = new JTextField("whoami", 22);
     private final JTextArea shiroHeaders = new JTextArea(3, 32);
@@ -202,6 +205,10 @@ public final class Main {
     private volatile int interceptDecision;
     private volatile byte[] forwardedHead;
     private volatile byte[] forwardedBody;
+    /** Payload 生成页的控件：与其它页面一样由主窗口持有，反复进出不累积状态。 */
+    private final ui.PayloadPage.Widgets payloadWidgets = new ui.PayloadPage.Widgets();
+    private ui.PayloadController payloadController;
+
     private JPanel navigation;
     private JList<ui.NavItem> navigationList;
     private List<ui.NavItem> navigationItems = new ArrayList<ui.NavItem>();
@@ -317,6 +324,7 @@ public final class Main {
         else if ("capture".equals(item.key)) showCapture();
         else if ("fastjson.detect".equals(item.key)) showFastjson();
         else if ("shiro.exploit".equals(item.key)) showShiro();
+        else if ("payload.build".equals(item.key)) showPayload();
         else showHome();
     }
 
@@ -749,7 +757,11 @@ public final class Main {
                                 new ConfigPage.Row("默认回显请求头", configShiroEchoHeader, "例如 X-Authorization"),
                                 new ConfigPage.Row("默认利用链", configShiroChain, "回显链的 gadget 前缀"),
                                 new ConfigPage.Row("默认命令", configShiroCommand, "例如 whoami"),
-                                new ConfigPage.Row("默认请求体", configShiroBody, "目标接口的业务参数")})};
+                                new ConfigPage.Row("默认请求体", configShiroBody, "目标接口的业务参数")}),
+                new ConfigPage.Group("Payload 生成配置",
+                        "生成利用链载荷时的默认参数；导出目录留空则写入用户目录。",
+                        new ConfigPage.Row[]{
+                                new ConfigPage.Row("默认导出目录", configPayloadExportDir, "载荷导出文件的落盘目录，留空则用用户目录")})};
         widgets.status = configStatus;
         widgets.onSave = this::saveConfigFromForm;
         widgets.onReset = this::resetConfigForm;
@@ -785,6 +797,29 @@ public final class Main {
         widgets.buildOutput = shiroBuildOutput;
         widgets.runOutput = shiroRunOutput;
         setContent(ShiroPage.build(widgets, fonts));
+    }
+
+    /**
+     * 打开 Payload 生成页。
+     *
+     * <p>控制器只在第一次进页时创建：它持有当前链与已生成载荷，
+     * 每次进页都重建会把使用者刚配好的链清空。
+     */
+    private void showPayload() {
+        payloadWidgets.exportDirectory = config.getProperty("payload_export_dir", "").trim();
+        payloadWidgets.onSendToCapture = payload -> {
+            captureBody.setText(payload);
+            selectNav("capture");
+        };
+        if (payloadController == null) {
+            payloadController = new ui.PayloadController(payloadWidgets, fonts,
+                    new ui.PayloadController.View() {
+                        @Override public void setStatus(String text) { payloadWidgets.status.setText(text); }
+
+                        @Override public void setOutput(String text) { payloadWidgets.output.setText(text); }
+                    });
+        }
+        setContent(ui.PayloadPage.build(payloadWidgets, fonts));
     }
 
     private shiro.ShiroEngine.Options shiroOptions() {
@@ -1439,6 +1474,7 @@ public final class Main {
         selectConfigChain(config.getProperty("shiro_chain", ""));
         configShiroCommand.setText(config.getProperty("shiro_command", ""));
         configShiroBody.setText(config.getProperty("shiro_body", ""));
+        configPayloadExportDir.setText(config.getProperty("payload_export_dir", ""));
         configStatus.setText("已载入当前配置");
     }
 
@@ -1490,6 +1526,7 @@ public final class Main {
         config.setProperty("shiro_chain", chain == null ? "" : ((shiro.ShiroExploit.ChainKind) chain).name());
         config.setProperty("shiro_command", configShiroCommand.getText().trim());
         config.setProperty("shiro_body", configShiroBody.getText().trim());
+        config.setProperty("payload_export_dir", configPayloadExportDir.getText().trim());
         try {
             AppConfig.save(config);
             applyConfigToForms();

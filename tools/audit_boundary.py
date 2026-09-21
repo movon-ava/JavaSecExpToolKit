@@ -21,10 +21,11 @@ SRC = os.path.join(ROOT, "src")
 
 # 允许的依赖方向，与 tests/test_decoupling.py 的 ALLOWED_EDGES 保持一致
 ALLOWED_EDGES = {
-    "<default>": {"probe", "proxy", "shiro", "config", "util", "ui"},
-    "ui": {"probe", "proxy", "shiro", "config", "util"},
+    "<default>": {"probe", "proxy", "shiro", "payload", "config", "util", "ui"},
+    "ui": {"probe", "proxy", "shiro", "payload", "config", "util"},
     "probe": {"util"},
-    "shiro": {"util"},
+    "shiro": {"payload", "util"},
+    "payload": {"util"},
     "proxy": set(),
     "config": set(),
     "util": set(),
@@ -32,11 +33,25 @@ ALLOWED_EDGES = {
 
 LEAF_PACKAGES = ("config", "proxy", "util")
 KERNEL_PACKAGES = ("util", "config")
-UP_LAYERS = ("probe", "proxy", "shiro", "ui", "config")
+UP_LAYERS = ("probe", "proxy", "shiro", "payload", "ui", "config")
+
+# 具体功能模块里的类名：通用组件一旦引用它们，就无法跨功能复用
+FEATURE_MODULE_CLASSES = (
+    "ShiroEngine", "ShiroExploit",
+    "ProbeEngine", "ProbeCommand", "CaptureBridge",
+    "ProxyServer",
+    "CapturePage", "ConfigPage", "FlowRenderer", "HomePage", "NavigationRenderer",
+    "NavItem", "PayloadController", "PayloadPage", "ProbePage", "ProxyPage",
+    "ShiroPage", "UiKit",
+)
 
 # 通用组件：文件 -> 不得出现的具体功能模块标识符
 GENERIC_MODULES = {
     "src/shiro/ChainsEngine.java": ("ShiroEngine",),
+    # 载荷生成包是通用组件：Shiro 只是它的使用者，反过来引用会让它绑死在某个功能上
+    "src/payload/PayloadEngine.java": FEATURE_MODULE_CLASSES,
+    "src/payload/PayloadCatalog.java": FEATURE_MODULE_CLASSES,
+    "src/payload/PayloadResult.java": FEATURE_MODULE_CLASSES,
 }
 
 

@@ -1,31 +1,22 @@
 package shiro;
 
-import org.vulhub.javachains.api.Gadget;
-import org.vulhub.javachains.api.BuildResult;
-import org.vulhub.javachains.api.GadgetContext;
-import org.vulhub.javachains.common.GadgetParam;
-import org.vulhub.javachains.core.ChainsRuntime;
-import org.vulhub.javachains.core.ExecutionEngine;
-import org.vulhub.javachains.core.GadgetFactory;
-
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
-import java.util.TreeMap;
+import org.vulhub.javachains.common.GadgetParam;
+import payload.PayloadEngine;
+import payload.PayloadResult;
 
 /**
- * java-chains 2.0.0-beta4 的封装层。
+ * Shiro 侧的链封装：只保留 Shiro 专属内容（预置链模板与默认参数），
+ * 通用实现（载体重目录、节点导航、参数查询、载荷构建）全部委派给 {@code payload.PayloadEngine}。
  *
- * <p>java-chains 是链式 payload 生成引擎：先选一个「payload 载体」（如 shiropayload、
- * javanativepayload、fastjsonpayload），再依次追加若干「gadget 节点」（如
- * commonscollectionsk1 → templatesimpl → bytecodeconvert → exec），
- * 引擎会按节点之间的 tag 约束校验链是否合法，最后产出 Base64 或字节数组形式的 payload。
+ * <p>这样拆分的理由：载体枚举、节点导航与载荷构建与漏洞类型无关，属通用能力；
+ * 留在本模块会让其它功能无法复用，也会让「通用组件依赖具体功能模块」的反向耦合长期存在。
  *
- * <p>本类只把它的能力暴露成适合本地工具调用的形式：初始化一次、查询节点与参数、构建 payload。
- * 所有生成动作都在本地内存中完成，不会发起任何网络请求。
+ * <p>公开方法签名与 {@link Generated} 嵌套类型保持不变，既有调用方零改动。
  */
 public final class ChainsEngine {
 
@@ -44,7 +35,7 @@ public final class ChainsEngine {
         }
     }
 
-    /** payload 构建结果。 */
+    /** payload 构建结果。字段与语义保持不变，内部由 {@link PayloadResult} 适配而来。 */
     public static final class Generated {
         public boolean success;
         public String message = "";
@@ -68,149 +59,57 @@ public final class ChainsEngine {
         }
     }
 
-    private static volatile boolean initialized;
-    private static volatile String initMessage = "java-chains 尚未初始化。";
-
     private ChainsEngine() {
     }
 
-    /**
-     * 初始化引擎并加载全部节点。
-     *
-     * <p>java-chains 启动时需要访问 JDK 内部 xalan 实现（字节码 gadget 依赖），
-     * Java 17 必须由启动参数开放：见项目 run.ps1 中的 --add-opens 设置。
-     */
-    public static synchronized void init() {
-        if (initialized) return;
-        try {
-            ChainsRuntime.start();
-            initialized = true;
-            initMessage = "java-chains 已就绪，可用节点 " + GadgetFactory.getGadgetMap().size() + " 个。";
-        } catch (Throwable error) {
-            initialized = false;
-            initMessage = "java-chains 初始化失败：" + describe(error)
-                    + "。若为模块访问异常，请使用 run.ps1 启动（已包含 --add-opens 参数）。";
-        }
+    /** 初始化引擎；委派给通用引擎，本类不再持有初始化状态。 */
+    public static void init() {
+        PayloadEngine.init();
     }
 
     public static boolean isReady() {
-        return initialized;
+        return PayloadEngine.isReady();
     }
 
     public static String statusMessage() {
-        return initMessage;
+        return PayloadEngine.statusMessage();
     }
 
     /** 全部节点 id（含 payload 与 gadget），按字母排序。 */
     public static List<String> nodeIds() {
-        init();
-        if (!initialized) return new ArrayList<String>();
-        return new ArrayList<String>(new TreeMap<String, Class<? extends Gadget>>(GadgetFactory.getGadgetMap()).keySet());
+        return PayloadEngine.nodeIds();
     }
 
     /** 所有 payload 载体 id。 */
     public static List<String> payloadIds() {
-        List<String> payloads = new ArrayList<String>();
-        for (String id : nodeIds()) {
-            if (id.toLowerCase(Locale.ROOT).endsWith("payload")) payloads.add(id);
-        }
-        return payloads;
+        return PayloadEngine.payloadIds();
     }
 
     /** 查询某个节点的可配置参数。 */
     public static List<GadgetParam> paramsOf(String nodeId) {
-        init();
-        if (!initialized || nodeId == null || nodeId.trim().isEmpty()) return new ArrayList<GadgetParam>();
-        try {
-            return ExecutionEngine.getParamsFromGadget(nodeId.trim());
-        } catch (Throwable error) {
-            return new ArrayList<GadgetParam>();
-        }
+        return PayloadEngine.paramsOf(nodeId);
     }
 
     /** 查询某个节点之后可以继续追加的节点 id。 */
     public static List<String> nextNodes(String nodeId) {
-        init();
-        List<String> result = new ArrayList<String>();
-        if (!initialized || nodeId == null || nodeId.trim().isEmpty()) return result;
-        try {
-            org.vulhub.javachains.common.Result next = ExecutionEngine.getNextGadgets(nodeId.trim());
-            if (next == null || !next.isSuccess() || next.getData() == null) return result;
-            Object data = next.getData();
-            if (data instanceof Iterable) {
-                for (Object item : (Iterable<?>) data) {
-                    String id = toNodeId(item);
-                    if (!id.isEmpty() && !result.contains(id)) result.add(id);
-                }
-            }
-            Collections.sort(result);
-        } catch (Throwable ignored) {
-            // 节点无后续时返回空列表
-        }
-        return result;
-    }
-
-    /** 把 Class 或字符串统一转成节点 id。 */
-    private static String toNodeId(Object item) {
-        if (item == null) return "";
-        String simple;
-        if (item instanceof Class) {
-            simple = ((Class<?>) item).getSimpleName();
-        } else {
-            simple = String.valueOf(item);
-            int dot = simple.lastIndexOf('.');
-            if (dot >= 0) simple = simple.substring(dot + 1);
-        }
-        if (simple.isEmpty()) return "";
-        // java-chains 注册节点时把类名整体小写（C3p0_C3p0Jndi -> c3p0_c3p0jndi），此处保持一致
-        return simple.toLowerCase(Locale.ROOT);
+        return PayloadEngine.nextNodes(nodeId);
     }
 
     /**
      * 构建 payload。
      *
-     * @param payloadId payload 载体 id，例如 shiropayload
-     * @param gadgets   依次追加的 gadget 节点 id
-     * @param params    节点参数，键既支持完整形式（如 {@code Exec.cmd}）也支持字段名（如 {@code cmd}）
+     * <p>失败结论仍以 {@link Generated#message} 暴露：Shiro 侧的调用方与自检都依赖这两个字段，
+     * 因此这里做一次适配，而不是把通用结果类型直接抛给它们。
      */
     public static Generated build(String payloadId, List<String> gadgets, Map<String, Object> params) {
-        init();
-        if (!initialized) return Generated.fail(initMessage);
-        if (payloadId == null || payloadId.trim().isEmpty()) return Generated.fail("请先选择 payload 类型。");
-        try {
-            Gadget payload = GadgetFactory.create(payloadId.trim());
-            if (payload == null) return Generated.fail("找不到 payload：" + payloadId);
-            ExecutionEngine engine = ExecutionEngine.create(payload);
-            if (gadgets != null && !gadgets.isEmpty()) engine.addAll(new ArrayList<String>(gadgets));
-            if (params != null && !params.isEmpty()) {
-                engine.setAll(new LinkedHashMap<String, Object>(params));
-            }
-            BuildResult<?> result = engine.build(new GadgetContext());
-            if (result == null) return Generated.fail("引擎没有返回构建结果。");
-            if (!result.isSuccess()) {
-                return Generated.fail(result.getMessage() == null ? "构建失败。" : result.getMessage());
-            }
-            Object data = result.getData();
-            if (data instanceof byte[]) {
-                return Generated.ok(util.Codec.base64((byte[]) data));
-            }
-            return Generated.ok(String.valueOf(data));
-        } catch (Throwable error) {
-            return Generated.fail(describe(error));
-        }
+        PayloadResult result = PayloadEngine.build(payloadId, gadgets, params);
+        if (!result.success) return Generated.fail(result.message);
+        return Generated.ok(result.base64);
     }
 
     /** 把参数名归一化：既接受 {@code Exec.cmd}，也接受 {@code cmd}。 */
     public static Map<String, Object> normalizeParams(Map<String, String> raw) {
-        Map<String, Object> params = new LinkedHashMap<String, Object>();
-        if (raw == null) return params;
-        for (Map.Entry<String, String> entry : raw.entrySet()) {
-            String key = entry.getKey() == null ? "" : entry.getKey().trim();
-            if (key.isEmpty()) continue;
-            String value = entry.getValue() == null ? "" : entry.getValue();
-            params.put(key, value);
-        }
-        return params;
+        return PayloadEngine.normalizeParams(raw);
     }
 
     /** 内置预置链：覆盖 Shiro 场景下最常用的几条。 */

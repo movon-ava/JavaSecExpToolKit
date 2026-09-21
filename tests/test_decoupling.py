@@ -26,10 +26,11 @@ SRC = os.path.join(ROOT, "src")
 # "<default>" 是组合根（Main），职责就是装配全部模块，允许依赖任何包；
 # "ui" 是界面层，可以依赖它要展示的功能模块。
 ALLOWED_EDGES = {
-    "<default>": {"probe", "proxy", "shiro", "config", "util", "ui"},
-    "ui": {"probe", "proxy", "shiro", "config", "util"},
+    "<default>": {"probe", "proxy", "shiro", "payload", "config", "util", "ui"},
+    "ui": {"probe", "proxy", "shiro", "payload", "config", "util"},
     "probe": {"util"},
-    "shiro": {"util"},
+    "shiro": {"payload", "util"},
+    "payload": {"util"},
     "proxy": set(),
     "config": set(),
     "util": set(),
@@ -42,8 +43,22 @@ LEAF_PACKAGES = ("config", "proxy", "util")
 KERNEL_PACKAGES = ("util", "config")
 
 # 通用组件：文件 -> 该文件不允许出现的具体功能模块标识符
+# 具体功能模块里的类名：通用组件一旦引用它们，就无法跨功能复用了。
+FEATURE_MODULE_CLASSES = (
+    "ShiroEngine", "ShiroExploit",
+    "ProbeEngine", "ProbeCommand", "CaptureBridge",
+    "ProxyServer",
+    "CapturePage", "ConfigPage", "FlowRenderer", "HomePage", "NavigationRenderer",
+    "NavItem", "PayloadController", "PayloadPage", "ProbePage", "ProxyPage",
+    "ShiroPage", "UiKit",
+)
+
 GENERIC_MODULES = {
     os.path.join("src", "shiro", "ChainsEngine.java"): ("ShiroEngine",),
+    # 载荷生成包是通用组件：Shiro 只是它的一个使用者，反过来引用会让它绑死在某个功能上。
+    os.path.join("src", "payload", "PayloadEngine.java"): FEATURE_MODULE_CLASSES,
+    os.path.join("src", "payload", "PayloadCatalog.java"): FEATURE_MODULE_CLASSES,
+    os.path.join("src", "payload", "PayloadResult.java"): FEATURE_MODULE_CLASSES,
 }
 
 
@@ -177,7 +192,7 @@ class DependencyBoundaryTest(unittest.TestCase):
     def test_sources_are_discovered(self):
         """确保扫描真的读到了源码，避免规则因扫不到文件而恒真通过。"""
         packages = {pkg for _full, pkg, _c in java_sources()}
-        for expected in ("ui", "probe", "proxy", "shiro", "config", "util"):
+        for expected in ("ui", "probe", "proxy", "shiro", "payload", "config", "util"):
             self.assertIn(expected, packages, "未扫描到包 %s" % expected)
 
     def test_no_package_cycle(self):

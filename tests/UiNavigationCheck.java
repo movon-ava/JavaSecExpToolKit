@@ -39,17 +39,19 @@ public final class UiNavigationCheck {
         final JList<?> list = (JList<?>) field(main, "navigationList");
         List<?> collapsed = (List<?>) field(main, "navigationItems");
         System.out.println("初始导航项: " + labels(collapsed));
-        check("初始应为 5 项（主页/配置/代理/FastJson/Shiro）", collapsed.size() == 5);
+        check("初始应为 6 项（主页/配置/代理/FastJson/Shiro/Payload）", collapsed.size() == 6);
         check("初始含代理分类", labels(collapsed).get(2).startsWith("代理"));
         check("初始代理分类应显示收起箭头", labels(collapsed).get(2).endsWith("\u25b8"));
         check("初始 FastJson 应显示收起箭头", labels(collapsed).get(3).endsWith("\u25b8"));
+        check("初始含 Payload 分类", labels(collapsed).get(5).startsWith("Payload"));
+        check("初始 Payload 应显示收起箭头", labels(collapsed).get(5).endsWith("\u25b8"));
         check("展开箭头位于文字右侧", labels(collapsed).get(3).indexOf("\u25b8") > labels(collapsed).get(3).indexOf("FastJson"));
 
         select(main, "fastjson");
         toggle(main);
         List<?> expanded = (List<?>) field(main, "navigationItems");
         System.out.println("展开后导航项: " + labels(expanded));
-        check("展开后应为 6 项（含 Fastjson 探测）", expanded.size() == 6);
+        check("展开后应为 7 项（含 Fastjson 探测）", expanded.size() == 7);
         check("展开后 FastJson 应显示展开箭头", labels(expanded).get(3).endsWith("\u25be"));
         System.out.println("展开后选中项: " + displayFor(list.getSelectedValue()));
         snapshot(frame, "target/ui-check/01-expanded.png");
@@ -57,13 +59,13 @@ public final class UiNavigationCheck {
         toggle(main);
         List<?> recollapsed = (List<?>) field(main, "navigationItems");
         System.out.println("收起后导航项: " + labels(recollapsed));
-        check("再次点击应收起回 5 项", recollapsed.size() == 5);
+        check("再次点击应收起回 6 项", recollapsed.size() == 6);
         check("收起后 FastJson 应显示收起箭头", labels(recollapsed).get(3).endsWith("\u25b8"));
 
         select(main, "fastjson.detect");
         List<?> afterJump = (List<?>) field(main, "navigationItems");
         System.out.println("跳转探测页后: " + labels(afterJump));
-        check("跳转二级功能应自动展开分类", afterJump.size() == 6);
+        check("跳转二级功能应自动展开分类", afterJump.size() == 7);
         check("跳转后选中二级功能", "Fastjson 探测".equals(plain(list.getSelectedValue())));
 
         check("识别默认勾选", ((AbstractButton) field(main, "modeDetect")).isSelected());
@@ -139,6 +141,9 @@ public final class UiNavigationCheck {
         check("配置页含代理配置分组", configTexts.contains("代理配置"));
         check("配置页含抓包转换配置分组", configTexts.contains("抓包转换配置"));
         check("配置页含 Shiro 配置分组", configTexts.contains("Shiro 配置"));
+        check("配置页含 Payload 生成配置分组", configTexts.contains("Payload 生成配置"));
+        check("配置页含 Payload 默认导出目录输入框",
+                fieldQuiet(main, "configPayloadExportDir") instanceof JTextField);
         check("配置页含报告详细度下拉框", fieldQuiet(main, "configProbeReport") instanceof JComboBox);
         check("报告详细度默认精简",
                 "精简".equals(String.valueOf(((JComboBox<?>) fieldQuiet(main, "configProbeReport")).getSelectedItem())));
@@ -164,7 +169,7 @@ public final class UiNavigationCheck {
         // 代理 / FastJson / Shiro 三个分类此前都已展开（5 个一级项 + 2 + 1 + 1）
         System.out.println("跳转抓包页后: " + labels(navItems(main)));
         check("抓包转换已并入代理分类且跳转会展开", labels(navItems(main)).contains("抓包转换")
-                && labels(navItems(main)).size() == 9);
+                && labels(navItems(main)).size() == 10);
         check("抓包页含目标 URL 输入框", fieldQuiet(main, "captureUrl") instanceof JTextField);
         check("抓包页含请求方法下拉框", fieldQuiet(main, "captureMethod") instanceof JComboBox);
         check("抓包页含请求头输入框", fieldQuiet(main, "captureHeaders") instanceof JTextField);
@@ -204,6 +209,80 @@ public final class UiNavigationCheck {
         check("未启动时放行与丢弃不可用", !((JButton) fieldQuiet(main, "proxyForward")).isEnabled()
                 && !((JButton) fieldQuiet(main, "proxyDrop")).isEnabled());
         snapshot(frame, "target/ui-check/06-proxy.png");
+
+        // Payload 生成页：导航项 + 控件 + 端到端生成 + 填入抓包页
+        select(main, "payload.build");
+        List<String> payloadTexts = contentLabels(main);
+        System.out.println("Payload 页标题: " + payloadTexts);
+        check("跳转 Payload 二级项打开 Payload 页", payloadTexts.contains("Payload 生成"));
+        check("跳转 Payload 二级项不回落到主页", !payloadTexts.contains("安全测试工具箱"));
+        check("Payload 页选中项正确", "Payload 生成".equals(plain(list.getSelectedValue())));
+        check("Payload 分类自动展开且含二级项", labels(navItems(main)).contains("Payload 生成")
+                && labels(navItems(main)).size() == 11);
+
+        Object widgets = fieldQuiet(main, "payloadWidgets");
+        check("Payload 页含分组下拉框", fieldQuiet(widgets, "group") instanceof JComboBox);
+        check("Payload 页含载体下拉框", fieldQuiet(widgets, "kind") instanceof JComboBox);
+        check("Payload 页载体列表非空", ((JComboBox<?>) fieldQuiet(widgets, "kind")).getItemCount() > 0);
+        check("Payload 页含链文本框", fieldQuiet(widgets, "chain") instanceof JTextField);
+        check("Payload 页链初始为所选载体",
+                ((JTextField) fieldQuiet(widgets, "chain")).getText()
+                        .equals(String.valueOf(((JComboBox<?>) fieldQuiet(widgets, "kind")).getSelectedItem())));
+        check("Payload 页含后继节点下拉框", fieldQuiet(widgets, "next") instanceof JComboBox);
+        check("Payload 页首节点候选非空", ((JComboBox<?>) fieldQuiet(widgets, "next")).getItemCount() > 0);
+        check("Payload 页含追加 / 删除末节点 / 清空链按钮",
+                fieldQuiet(widgets, "addNode") instanceof JButton
+                        && fieldQuiet(widgets, "undo") instanceof JButton
+                        && fieldQuiet(widgets, "clear") instanceof JButton);
+        check("Payload 页含参数面板", fieldQuiet(widgets, "params") instanceof javax.swing.JPanel);
+        check("Payload 页含生成 / 复制 / 导出 / 填入抓包页按钮",
+                fieldQuiet(widgets, "build") instanceof JButton
+                        && fieldQuiet(widgets, "copy") instanceof JButton
+                        && fieldQuiet(widgets, "export") instanceof JButton
+                        && fieldQuiet(widgets, "toCapture") instanceof JButton);
+        check("Payload 页含状态标签", fieldQuiet(widgets, "status") instanceof javax.swing.JLabel);
+        check("Payload 页含载荷输出文本域", fieldQuiet(widgets, "output") instanceof JTextArea);
+        check("Payload 页输出区只读", !((JTextArea) fieldQuiet(widgets, "output")).isEditable());
+        check("Payload 页生成前输出为空",
+                ((JTextArea) fieldQuiet(widgets, "output")).getText().trim().isEmpty());
+        java.awt.Container payloadViewport = ((JTextArea) fieldQuiet(widgets, "output")).getParent();
+        System.out.println("Payload 输出区可视高度: " + payloadViewport.getHeight() + "px");
+        // 输出区必须能一次看到多行 Base64，而不是被表单挤成一条细线
+        check("Payload 页输出区有可用高度", payloadViewport.getHeight() > 120);
+        check("Payload 页生成按钮可见",
+                ((javax.swing.AbstractButton) fieldQuiet(widgets, "build")).isShowing());
+
+        // 端到端：选一个不依赖回连地址的节点，追加后生成，再把载荷填入抓包页
+        System.out.println("Payload 载体下拉项数: "
+                + ((JComboBox<?>) fieldQuiet(widgets, "kind")).getItemCount());
+        selectComboItem(main, widgets, "next", "clojure");
+        clickButton(widgets, "addNode");
+        check("追加节点后链变为两段",
+                ((JTextField) fieldQuiet(widgets, "chain")).getText().endsWith(" -> clojure"));
+        check("链上节点的必填参数已渲染",
+                !((java.util.List<?>) fieldQuiet(widgets, "fields")).isEmpty());
+        check("参数行含命令输入框",
+                hasParamField(widgets, "Clojure.cmd"));
+        clickButton(widgets, "build");
+        String payloadOutput = ((JTextArea) fieldQuiet(widgets, "output")).getText();
+        String payloadStatus = ((javax.swing.JLabel) fieldQuiet(widgets, "status")).getText();
+        System.out.println("Payload 生成状态: " + payloadStatus);
+        check("生成后状态栏报告成功", payloadStatus.startsWith("生成成功"));
+        check("生成后输出区含 Base64 段", payloadOutput.contains("Base64："));
+        check("生成后输出区含链序", payloadOutput.contains("clojure"));
+        check("生成后输出区含摘要", payloadOutput.contains("摘要："));
+        check("生成后载荷非空", payloadOutput.length() > 200);
+        snapshot(frame, "target/ui-check/07-payload.png");
+
+        // 未生成前导出应只给提示：先清空链，避免误写文件
+        clickButton(widgets, "clear");
+        check("清空链后只剩载体",
+                !((JTextField) fieldQuiet(widgets, "chain")).getText().contains("->"));
+        clickButton(widgets, "toCapture");
+        String captureFromPayload = ((JTextArea) fieldQuiet(main, "captureBody")).getText();
+        check("填入抓包页后请求体带上生成的载荷",
+                !captureFromPayload.trim().isEmpty() && payloadOutput.contains(captureFromPayload.trim()));
+        check("填入抓包页后跳转到抓包页", "抓包转换".equals(plain(list.getSelectedValue())));
 
         select(main, "home");
         snapshot(frame, "target/ui-check/04-home.png");
@@ -357,6 +436,41 @@ public final class UiNavigationCheck {
     @SuppressWarnings("unchecked")
     private static List<String> castList(Object value) {
         return (List<String>) value;
+    }
+
+    /** 选中下拉框中指定的一项；不存在时保持原状，由调用处的断言暴露问题。 */
+    private static void selectComboItem(Object main, Object widgets, String name, String wanted)
+            throws Exception {
+        final javax.swing.JComboBox<?> combo = (javax.swing.JComboBox<?>) fieldQuiet(widgets, name);
+        for (int index = 0; index < combo.getItemCount(); index++) {
+            if (wanted.equals(String.valueOf(combo.getItemAt(index)))) {
+                final int target = index;
+                onEdt(new Runnable() {
+                    public void run() { combo.setSelectedIndex(target); }
+                });
+                return;
+            }
+        }
+    }
+
+    /** 点击页面上的某个按钮：必须走真实点击路径，否则动作监听器不会触发。 */
+    private static void clickButton(Object widgets, String name) throws Exception {
+        final javax.swing.AbstractButton button =
+                (javax.swing.AbstractButton) fieldQuiet(widgets, name);
+        onEdt(new Runnable() {
+            public void run() { button.doClick(); }
+        });
+    }
+
+    /** 参数行里是否存在指定引擎键（例如 Clojure.cmd）。 */
+    private static boolean hasParamField(Object widgets, String key) throws Exception {
+        java.util.List<?> fields = (java.util.List<?>) fieldQuiet(widgets, "fields");
+        for (Object field : fields) {
+            java.lang.reflect.Field declared = field.getClass().getDeclaredField("key");
+            declared.setAccessible(true);
+            if (key.equals(String.valueOf(declared.get(field)))) return true;
+        }
+        return false;
     }
 
     private static void check(String message, boolean condition) {
