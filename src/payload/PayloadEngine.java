@@ -151,46 +151,86 @@ public final class PayloadEngine {
      * @param params    节点参数，键用引擎给出的完整形式（如 {@code Exec.cmd}）
      */
     public static PayloadResult build(String payloadId, List<String> gadgets, Map<String, Object> params) {
-        init();
-        if (!initialized) return PayloadResult.fail(initMessage);
-        if (payloadId == null || payloadId.trim().isEmpty()) return PayloadResult.fail("请先选择 payload 载体。");
-        List<String> chain = new ArrayList<String>();
-        if (gadgets != null) {
-            for (String gadget : gadgets) {
-                if (gadget != null && !gadget.trim().isEmpty()) chain.add(gadget.trim());
-            }
+        RawPayload raw = buildRaw(payloadId, gadgets, params);
+        if (!raw.success) return PayloadResult.fail(raw.message);
+        List<String> chain = cleanChain(gadgets);
+        // 文本形态的载体（如 Shiro）产出的是「已经是 Base64 的文本」，而不是待编码的字节。
+        // 必须按文本原样交付：若当成字节再 Base64 一次，调用方拿到的就是双重编码的结果，
+        // 解出来既不是原载荷、解密也会失败（实测 Shiro 回显链正是这样被破坏的）。
+        if (raw.object instanceof String) {
+            return PayloadResult.okText(payloadId.trim(), chain, (String) raw.object);
         }
+        if (raw.bytes.length > 0) return PayloadResult.ok(payloadId.trim(), chain, raw.bytes);
+        return PayloadResult.fail("载体没有产出任何可交付的载荷：" + payloadId.trim());
+    }
+
+    /**
+     * 构建载荷并保留原始对象形态。
+     *
+     * <p>与 {@link #build} 走同一条链路，区别只在返回值：部分载体（如 JRMP 监听载荷）
+     * 产出的是可序列化对象而不是字节，发布到只接受 OBJECT 的服务时必须拿到对象本身。
+     * 两者共用同一段校验与构建逻辑，避免「文本能生成、发布却报类型不符」这种不一致。
+     *
+     * @param payloadId 载体 id
+     * @param gadgets   依次追加的节点 id
+     * @param params    节点参数，键用引擎给出的完整形式（如 {@code Exec.cmd}）
+     */
+    public static RawPayload buildRaw(String payloadId, List<String> gadgets, Map<String, Object> params) {
+        init();
+        if (!initialized) return RawPayload.fail(initMessage);
+        if (payloadId == null || payloadId.trim().isEmpty()) return RawPayload.fail("请先选择 payload 载体。");
+        List<String> chain = cleanChain(gadgets);
         if (chain.isEmpty()) {
-            return PayloadResult.fail("请至少追加一个 gadget 节点：载体自身不是完整利用链。");
+            return RawPayload.fail("请至少追加一个 gadget 节点：载体自身不是完整利用链。");
         }
         List<String> full = new ArrayList<String>();
         full.add(payloadId.trim());
         full.addAll(chain);
         if (!isChainValid(full)) {
-            return PayloadResult.fail("这条链不被引擎认可：" + String.join(" -> ", full)
+            return RawPayload.fail("这条链不被引擎认可：" + String.join(" -> ", full)
                     + "。请调整节点顺序或改选后继节点。");
         }
         try {
             Gadget payload = GadgetFactory.create(payloadId.trim());
-            if (payload == null) return PayloadResult.fail("找不到载体：" + payloadId);
+            if (payload == null) return RawPayload.fail("找不到载体：" + payloadId);
             ExecutionEngine engine = ExecutionEngine.create(payload);
             engine.addAll(chain);
             if (params != null && !params.isEmpty()) {
                 engine.setAll(new LinkedHashMap<String, Object>(params));
             }
             BuildResult<?> result = engine.build(new GadgetContext());
-            if (result == null) return PayloadResult.fail("引擎没有返回构建结果。");
+            if (result == null) return RawPayload.fail("引擎没有返回构建结果。");
             if (!result.isSuccess()) {
-                return PayloadResult.fail(result.getMessage() == null ? "构建失败。" : result.getMessage());
+                return RawPayload.fail(result.getMessage() == null ? "构建失败。" : result.getMessage());
             }
             Object data = result.getData();
             if (data instanceof byte[]) {
-                return PayloadResult.ok(payloadId.trim(), chain, (byte[]) data);
+                return RawPayload.ok((byte[]) data, data);
             }
-            return PayloadResult.okText(payloadId.trim(), chain, String.valueOf(data));
+            if (data instanceof String) {
+                // 文本形态的载体（如 Shiro）产出的是 Base64 文本，发布时需要的是它解码后的
+                // 真实载荷字节。解码失败说明该载体产出的是普通文本，此时按 UTF-8 取字节，
+                // 与 PayloadResult.okText 的判据保持一致。
+                String text = (String) data;
+                byte[] decoded = util.Codec.decodeBase64(text);
+                byte[] bytes = decoded == null
+                        ? text.getBytes(java.nio.charset.StandardCharsets.UTF_8) : decoded;
+                return RawPayload.ok(bytes, data);
+            }
+            return RawPayload.ok(new byte[0], data);
         } catch (Throwable error) {
-            return PayloadResult.fail(describe(error));
+            return RawPayload.fail(describe(error));
         }
+    }
+
+    /** 去掉空白节点，得到干净的追加序列。 */
+    private static List<String> cleanChain(List<String> gadgets) {
+        List<String> chain = new ArrayList<String>();
+        if (gadgets == null) return chain;
+        for (String gadget : gadgets) {
+            if (gadget != null && !gadget.trim().isEmpty()) chain.add(gadget.trim());
+        }
+        return chain;
     }
 
     /** 把 {@code Exec.cmd} 与 {@code cmd} 两种写法统一成引擎认识的完整键。 */
