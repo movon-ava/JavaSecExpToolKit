@@ -461,14 +461,9 @@ public final class UiNavigationCheck {
         return fieldQuiet(target, name);
     }
 
+    /** 取控件：走 ui.UiHandle 稳定门面，界面内部拆分不再影响断言。 */
     private static Object fieldQuiet(Object target, String name) {
-        try {
-            Field field = target.getClass().getDeclaredField(name);
-            field.setAccessible(true);
-            return field.get(target);
-        } catch (Exception e) {
-            throw new IllegalStateException(e);
-        }
+        return ui.UiHandle.get(target, name);
     }
 
     /** 读取下拉框的全部选项文字，用于断言「一键发送」的目标清单。 */
@@ -544,15 +539,7 @@ public final class UiNavigationCheck {
     }
 
     private static boolean hasDeclaredField(Object target, String name) {
-        for (Class<?> type = target.getClass(); type != null; type = type.getSuperclass()) {
-            try {
-                type.getDeclaredField(name);
-                return true;
-            } catch (NoSuchFieldException ignored) {
-                // 继续向父类查找
-            }
-        }
-        return false;
+        return ui.UiHandle.declares(target, name);
     }
 
     private static List<String> modeKeys(Object main) {

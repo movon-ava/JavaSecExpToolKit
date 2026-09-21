@@ -191,14 +191,9 @@ public final class UiShiroCheck {
         return fieldQuiet(target, name);
     }
 
+    /** 取控件：走 ui.UiHandle 稳定门面，界面内部拆分不再影响断言。 */
     private static Object fieldQuiet(Object target, String name) {
-        try {
-            Field field = target.getClass().getDeclaredField(name);
-            field.setAccessible(true);
-            return field.get(target);
-        } catch (Exception e) {
-            throw new IllegalStateException(e);
-        }
+        return ui.UiHandle.get(target, name);
     }
 
     private static Object invoke(Object target, String name, Class<?>[] types, Object argument) {

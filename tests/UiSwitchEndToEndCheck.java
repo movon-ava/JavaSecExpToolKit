@@ -617,14 +617,9 @@ public final class UiSwitchEndToEndCheck {
         method.invoke(main, key);
     }
 
+    /** 取控件：走 ui.UiHandle 稳定门面，界面内部拆分不再影响断言。 */
     private static Object read(Object main, String name) {
-        try {
-            Field field = main.getClass().getDeclaredField(name);
-            field.setAccessible(true);
-            return field.get(main);
-        } catch (Exception e) {
-            throw new IllegalStateException(e);
-        }
+        return ui.UiHandle.get(main, name);
     }
 
     private static String conclusion(String output) {
