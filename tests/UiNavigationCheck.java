@@ -39,20 +39,28 @@ public final class UiNavigationCheck {
         final JList<?> list = (JList<?>) field(main, "navigationList");
         List<?> collapsed = (List<?>) field(main, "navigationItems");
         System.out.println("初始导航项: " + labels(collapsed));
-        check("初始应为 6 项（主页/配置/代理/FastJson/Shiro/Payload）", collapsed.size() == 6);
-        check("初始含代理分类", labels(collapsed).get(2).startsWith("代理"));
-        check("初始代理分类应显示收起箭头", labels(collapsed).get(2).endsWith("\u25b8"));
-        check("初始 FastJson 应显示收起箭头", labels(collapsed).get(3).endsWith("\u25b8"));
-        check("初始含 Payload 分类", labels(collapsed).get(5).startsWith("Payload"));
-        check("初始 Payload 应显示收起箭头", labels(collapsed).get(5).endsWith("\u25b8"));
-        check("展开箭头位于文字右侧", labels(collapsed).get(3).indexOf("\u25b8") > labels(collapsed).get(3).indexOf("FastJson"));
+        // 一级分类顺序对齐网页版 java-chains：主页 / Payload / 服务 / 代理 / FastJson / 配置。
+        check("初始应为 6 项（主页/Payload/服务/代理/FastJson/配置）", collapsed.size() == 6);
+        check("初始第二项为 Payload 分类", labels(collapsed).get(1).startsWith("Payload"));
+        check("初始含服务分类", labels(collapsed).get(2).startsWith("服务"));
+        check("初始含代理分类", labels(collapsed).get(3).startsWith("代理"));
+        check("初始含 FastJson 分类", labels(collapsed).get(4).startsWith("FastJson"));
+        check("末项为配置", "配置".equals(labels(collapsed).get(5)));
+        check("初始各分类都显示收起箭头",
+                labels(collapsed).get(1).endsWith("\u25b8")
+                        && labels(collapsed).get(2).endsWith("\u25b8")
+                        && labels(collapsed).get(3).endsWith("\u25b8")
+                        && labels(collapsed).get(4).endsWith("\u25b8"));
+        check("展开箭头位于文字右侧",
+                labels(collapsed).get(4).indexOf("\u25b8") > labels(collapsed).get(4).indexOf("FastJson"));
 
         select(main, "fastjson");
         toggle(main);
         List<?> expanded = (List<?>) field(main, "navigationItems");
         System.out.println("展开后导航项: " + labels(expanded));
         check("展开后应为 7 项（含 Fastjson 探测）", expanded.size() == 7);
-        check("展开后 FastJson 应显示展开箭头", labels(expanded).get(3).endsWith("\u25be"));
+        check("展开后 FastJson 应显示展开箭头", labels(expanded).get(4).endsWith("\u25be"));
+        check("展开后子项紧跟其分类", "Fastjson 探测".equals(labels(expanded).get(5)));
         System.out.println("展开后选中项: " + displayFor(list.getSelectedValue()));
         snapshot(frame, "target/ui-check/01-expanded.png");
 
@@ -60,7 +68,7 @@ public final class UiNavigationCheck {
         List<?> recollapsed = (List<?>) field(main, "navigationItems");
         System.out.println("收起后导航项: " + labels(recollapsed));
         check("再次点击应收起回 6 项", recollapsed.size() == 6);
-        check("收起后 FastJson 应显示收起箭头", labels(recollapsed).get(3).endsWith("\u25b8"));
+        check("收起后 FastJson 应显示收起箭头", labels(recollapsed).get(4).endsWith("\u25b8"));
 
         select(main, "fastjson.detect");
         List<?> afterJump = (List<?>) field(main, "navigationItems");
@@ -163,13 +171,36 @@ public final class UiNavigationCheck {
         check("配置页含 Shiro 利用链下拉框", fieldQuiet(main, "configShiroChain") instanceof JComboBox);
         check("配置页含 Shiro 命令输入框", fieldQuiet(main, "configShiroCommand") instanceof JTextField);
         check("配置页含 Shiro 请求体输入框", fieldQuiet(main, "configShiroBody") instanceof JTextField);
+        check("配置页含恶意服务器配置分组", configTexts.contains("恶意服务器配置"));
+        check("配置页含预设链配置分组", configTexts.contains("预设链配置"));
+        check("配置页含恶意服务器绑定地址输入框",
+                fieldQuiet(main, "configServerBindHost") instanceof JTextField);
+        check("配置页含恶意服务器公布地址输入框",
+                fieldQuiet(main, "configServerAdvertiseHost") instanceof JTextField);
+        check("配置页含五类服务端口输入框",
+                fieldQuiet(main, "configServerJndiLdap") instanceof JTextField
+                        && fieldQuiet(main, "configServerJndiRmi") instanceof JTextField
+                        && fieldQuiet(main, "configServerJndiHttp") instanceof JTextField
+                        && fieldQuiet(main, "configServerHttp") instanceof JTextField
+                        && fieldQuiet(main, "configServerJrmp") instanceof JTextField
+                        && fieldQuiet(main, "configServerMysql") instanceof JTextField
+                        && fieldQuiet(main, "configServerTcp") instanceof JTextField);
+        check("恶意服务器端口默认值与上游一致",
+                "50389".equals(((JTextField) fieldQuiet(main, "configServerJndiLdap")).getText())
+                        && "50000".equals(((JTextField) fieldQuiet(main, "configServerHttp")).getText())
+                        && "3308".equals(((JTextField) fieldQuiet(main, "configServerMysql")).getText()));
+        check("配置页含预设链默认分类下拉框",
+                fieldQuiet(main, "configPresetCategory") instanceof JComboBox);
+        check("预设链默认分类含「全部分类」",
+                "全部分类".equals(String.valueOf(
+                        ((JComboBox<?>) fieldQuiet(main, "configPresetCategory")).getSelectedItem())));
         snapshot(frame, "target/ui-check/03-config.png");
 
         select(main, "capture");
         // 代理 / FastJson / Shiro 三个分类此前都已展开（5 个一级项 + 2 + 1 + 1）
         System.out.println("跳转抓包页后: " + labels(navItems(main)));
         check("抓包转换已并入代理分类且跳转会展开", labels(navItems(main)).contains("抓包转换")
-                && labels(navItems(main)).size() == 10);
+                && labels(navItems(main)).size() == expectedNavSize());
         check("抓包页含目标 URL 输入框", fieldQuiet(main, "captureUrl") instanceof JTextField);
         check("抓包页含请求方法下拉框", fieldQuiet(main, "captureMethod") instanceof JComboBox);
         check("抓包页含请求头输入框", fieldQuiet(main, "captureHeaders") instanceof JTextField);
@@ -218,7 +249,13 @@ public final class UiNavigationCheck {
         check("跳转 Payload 二级项不回落到主页", !payloadTexts.contains("安全测试工具箱"));
         check("Payload 页选中项正确", "Payload 生成".equals(plain(list.getSelectedValue())));
         check("Payload 分类自动展开且含二级项", labels(navItems(main)).contains("Payload 生成")
-                && labels(navItems(main)).size() == 11);
+                && labels(navItems(main)).size() == expectedNavSize());
+
+        // java-chains 的字节码类 gadget 要访问 JDK 内部 xalan 实现，Java 17 下必须
+        // 由启动参数开放（同 run.ps1）。缺参数时后续端到端断言会集体失败在
+        // 「生成失败」上，看不出真正原因；这里先把它单独判出来。
+        check("java-chains 引擎已就绪（需 --add-opens xalan，见 run.ps1）",
+                payload.PayloadEngine.isReady());
 
         Object widgets = fieldQuiet(main, "payloadWidgets");
         check("Payload 页含分组下拉框", fieldQuiet(widgets, "group") instanceof JComboBox);
@@ -284,11 +321,106 @@ public final class UiNavigationCheck {
                 !captureFromPayload.trim().isEmpty() && payloadOutput.contains(captureFromPayload.trim()));
         check("填入抓包页后跳转到抓包页", "抓包转换".equals(plain(list.getSelectedValue())));
 
+        // 预设链页：分类 / 清单 / 步骤 / 输入 / 生成
+        select(main, "payload.preset");
+        List<String> presetTexts = contentLabels(main);
+        System.out.println("预设链页标题: " + presetTexts);
+        check("跳转预设链二级项打开预设链页", presetTexts.contains("预设链"));
+        check("预设链页选中项正确", "预设链".equals(plain(list.getSelectedValue())));
+        check("预设链分类自动展开且含二级项", labels(navItems(main)).contains("预设链")
+                && labels(navItems(main)).size() == expectedNavSize());
+        Object presetWidgets = fieldQuiet(main, "presetWidgets");
+        check("预设链页含分类下拉框", fieldQuiet(presetWidgets, "category") instanceof JComboBox);
+        check("预设链页分类非空", ((JComboBox<?>) fieldQuiet(presetWidgets, "category")).getItemCount() > 0);
+        check("预设链页含预设清单", fieldQuiet(presetWidgets, "presetList") instanceof JList);
+        check("预设链页清单已载入内置预设",
+                ((javax.swing.DefaultListModel<?>) fieldQuiet(presetWidgets, "presets")).size() > 0);
+        check("预设链页含步骤容器", fieldQuiet(presetWidgets, "steps") instanceof javax.swing.JPanel);
+        check("预设链页含输入容器", fieldQuiet(presetWidgets, "inputs") instanceof javax.swing.JPanel);
+        check("预设链页含生成 / 复制 / 发到服务器 / 填入抓包页按钮",
+                fieldQuiet(presetWidgets, "build") instanceof JButton
+                        && fieldQuiet(presetWidgets, "copy") instanceof JButton
+                        && fieldQuiet(presetWidgets, "toServers") instanceof JButton
+                        && fieldQuiet(presetWidgets, "toCapture") instanceof JButton);
+        check("预设链页含载荷输出文本域", fieldQuiet(presetWidgets, "output") instanceof JTextArea);
+        check("预设链页输出区只读", !((JTextArea) fieldQuiet(presetWidgets, "output")).isEditable());
+        // 端到端：内置预设必须真的能构建出载荷，只渲染不生成等于模板库不可用
+        clickButton(presetWidgets, "build");
+        String presetOutput = ((JTextArea) fieldQuiet(presetWidgets, "output")).getText();
+        String presetStatus = ((javax.swing.JLabel) fieldQuiet(presetWidgets, "status")).getText();
+        System.out.println("预设链生成状态: " + presetStatus);
+        check("预设链生成后状态栏报告成功", presetStatus.startsWith("生成成功"));
+        check("预设链生成后输出含 Base64", presetOutput.contains("Base64："));
+        check("预设链生成后输出含载体", presetOutput.contains("载体："));
+        snapshot(frame, "target/ui-check/08-preset.png");
+
+        // 恶意服务器页：五类服务 / 端口表单 / 发布 / 状态
+        select(main, "service.servers");
+        List<String> serviceTexts = contentLabels(main);
+        System.out.println("恶意服务器页标题: " + serviceTexts);
+        check("跳转恶意服务器二级项打开服务页", serviceTexts.contains("恶意服务器"));
+        check("恶意服务器页选中项正确", "恶意服务器".equals(plain(list.getSelectedValue())));
+        check("服务分类自动展开且含二级项", labels(navItems(main)).contains("Shiro 漏洞利用")
+                && labels(navItems(main)).size() == expectedNavSize());
+        Object serviceWidgets = fieldQuiet(main, "serviceWidgets");
+        check("服务页含服务清单", fieldQuiet(serviceWidgets, "serviceList") instanceof JList);
+        check("服务页列出五类服务",
+                ((javax.swing.DefaultListModel<?>) fieldQuiet(serviceWidgets, "services")).size() == 5);
+        check("服务页含端口容器", fieldQuiet(serviceWidgets, "portPanel") instanceof javax.swing.JPanel);
+        check("服务页含绑定地址输入框", fieldQuiet(serviceWidgets, "bindHost") instanceof JTextField);
+        check("服务页含对外地址输入框", fieldQuiet(serviceWidgets, "advertiseHost") instanceof JTextField);
+        check("服务页含启动 / 停止 / 发布 / 刷新按钮",
+                fieldQuiet(serviceWidgets, "start") instanceof JButton
+                        && fieldQuiet(serviceWidgets, "stop") instanceof JButton
+                        && fieldQuiet(serviceWidgets, "publish") instanceof JButton
+                        && fieldQuiet(serviceWidgets, "refresh") instanceof JButton);
+        check("服务页含复制地址与填入抓包页按钮",
+                fieldQuiet(serviceWidgets, "copyAddress") instanceof JButton
+                        && fieldQuiet(serviceWidgets, "toCapture") instanceof JButton);
+        check("服务页含载荷编辑控件（分组 / 载体 / 链 / 参数）",
+                fieldQuiet(serviceWidgets, "group") instanceof JComboBox
+                        && fieldQuiet(serviceWidgets, "kind") instanceof JComboBox
+                        && fieldQuiet(serviceWidgets, "chain") instanceof JTextField
+                        && fieldQuiet(serviceWidgets, "params") instanceof javax.swing.JPanel);
+        check("服务页含运行输出文本域", fieldQuiet(serviceWidgets, "output") instanceof JTextArea);
+        check("服务页输出区只读", !((JTextArea) fieldQuiet(serviceWidgets, "output")).isEditable());
+        // 未选服务时不能启动：启动按钮必须是被状态驱动的，而不是恒可点
+        check("未启动时停止按钮不可用", !((JButton) fieldQuiet(serviceWidgets, "stop")).isEnabled());
+        // 端口输入框的初值必须来自配置页保存的默认值，而不是代码里的常量
+        check("服务页端口初值来自配置",
+                ((JTextField) ((java.util.Map<?, ?>) fieldQuiet(serviceWidgets, "portFields"))
+                        .get("ldap")).getText().equals("50389"));
+        snapshot(frame, "target/ui-check/09-servers.png");
+
         select(main, "home");
         snapshot(frame, "target/ui-check/04-home.png");
 
         System.out.println("全部界面自检通过");
         System.exit(0);
+    }
+
+    /**
+     * 侧边栏应有的项数：6 个一级项 + 每个已展开分组各自的子项。
+     *
+     * <p>直接读 {@code Main.NAV_ITEMS} 的展开标志现算，而不是把数字写死：
+     * 导航顺序调整过一次就够痛了——写死的数字与索引在每次调整后都要重新数一遍。
+     * 这条断言真正校验的是「rebuildNavigation 是否把每个已展开分组的子项都补全」。
+     */
+    private static int expectedNavSize() throws Exception {
+        Field field = Class.forName("Main").getDeclaredField("NAV_ITEMS");
+        field.setAccessible(true);
+        List<?> groups = (List<?>) field.get(null);
+        int total = 0;
+        for (Object group : groups) {
+            total += 1;
+            Field expanded = group.getClass().getDeclaredField("expanded");
+            expanded.setAccessible(true);
+            if (!((Boolean) expanded.get(group)).booleanValue()) continue;
+            Field children = group.getClass().getDeclaredField("children");
+            children.setAccessible(true);
+            total += ((List<?>) children.get(group)).size();
+        }
+        return total;
     }
 
     private static void select(Object main, String key) throws Exception {

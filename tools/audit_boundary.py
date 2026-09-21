@@ -21,17 +21,22 @@ SRC = os.path.join(ROOT, "src")
 
 # 允许的依赖方向，与 tests/test_decoupling.py 的 ALLOWED_EDGES 保持一致
 ALLOWED_EDGES = {
-    "<default>": {"probe", "proxy", "shiro", "payload", "config", "util", "ui"},
-    "ui": {"probe", "proxy", "shiro", "payload", "config", "util"},
+    "<default>": {"probe", "proxy", "shiro", "payload", "config", "util", "ui", "service", "preset"},
+    "ui": {"probe", "proxy", "shiro", "payload", "config", "util", "service", "preset"},
     "probe": {"util"},
     "shiro": {"payload", "util"},
     "payload": {"util"},
+    # service 只依赖载荷构建这一件事：它把链交给引擎，再把结果发布到端口上。
+    # 反向依赖（payload -> service）会让你拿到载荷字节就必须连服务端适配器一起加载。
+    "service": {"payload"},
+    # preset 是纯读取层：只碰 java-chains 的预设模型与自己的数据类，不依赖任何项目包。
+    "preset": set(),
     "proxy": set(),
     "config": set(),
     "util": set(),
 }
 
-LEAF_PACKAGES = ("config", "proxy", "util")
+LEAF_PACKAGES = ("config", "proxy", "util", "preset")
 KERNEL_PACKAGES = ("util", "config")
 UP_LAYERS = ("probe", "proxy", "shiro", "payload", "ui", "config")
 
@@ -43,6 +48,9 @@ FEATURE_MODULE_CLASSES = (
     "CapturePage", "ConfigPage", "FlowRenderer", "HomePage", "NavigationRenderer",
     "NavItem", "PayloadController", "PayloadPage", "ProbePage", "ProxyPage",
     "ShiroPage", "UiKit",
+    "ChainEditor", "PresetPage", "PresetController", "ServicePage", "ServiceController",
+    "ServiceManager", "ServiceSpec", "ServiceEndpoint", "PublicationResult",
+    "PresetItem", "PresetCatalogService",
 )
 
 # 通用组件：文件 -> 不得出现的具体功能模块标识符
