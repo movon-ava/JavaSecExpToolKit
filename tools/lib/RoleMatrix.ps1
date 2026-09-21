@@ -73,6 +73,36 @@ function Get-RoleWriteScope {
     return $scopes[$Role]
 }
 
+# 角色的中文显示名。
+#
+# 汇报里若直接打印 probe / traffic 这样的标识，读的人还要对照文档才知道是谁；
+# 显示名用于面向人的输出（汇报、收尾打印），角色标识仍用于分支名、写入域与命令参数，
+# 两者不要混用：显示名一旦被当成参数传给 -Role，参数校验会直接拒绝。
+function Get-RoleDisplayNames {
+    [CmdletBinding()]
+    param()
+    return @{
+        orchestrator = "主 agent"
+        probe        = "探测 agent"
+        exploit      = "利用链 agent"
+        traffic      = "抓包 agent"
+        ui           = "界面 agent"
+        test         = "测试 agent"
+        supervisor   = "监督 agent"
+        watchdog     = "看护 agent"
+    }
+}
+
+# 取某个角色的显示名；未登记时原样返回标识，保证不会因为漏登记而丢失信息。
+function Get-RoleDisplayName {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string]$Role)
+
+    $names = Get-RoleDisplayNames
+    if ($names.ContainsKey($Role)) { return $names[$Role] }
+    return $Role
+}
+
 # 返回全部角色名。
 #
 # 调用方必须用 @(…) 包一层：

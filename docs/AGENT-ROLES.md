@@ -24,6 +24,26 @@
 
 功能开发拆成三个而不是一个，依据是写入域零重叠、验证入口互不包含（见 `DESIGN-agents.md` 第三节）。
 
+### 1.1 角色标识与中文显示名
+
+汇报里一律用**中文显示名**，标识只用于分支名、worktree 目录、写入域与 `-Role` 参数：
+
+| 角色标识 | 中文显示名 | 用在哪 |
+| --- | --- | --- |
+| `orchestrator` | 主 agent | `-Role orchestrator`、写入域校验、汇报 |
+| `probe` | 探测 agent | 同上 |
+| `exploit` | 利用链 agent | 同上 |
+| `traffic` | 抓包 agent | 同上 |
+| `ui` | 界面 agent | 同上 |
+| `test` | 测试 agent | 同上 |
+| `supervisor` | 监督 agent | 同上 |
+| `watchdog` | 看护 agent | 同上 |
+
+映射表在 `tools/lib/RoleMatrix.ps1` 的 `Get-RoleDisplayNames` / `Get-RoleDisplayName`。
+未登记的角色原样回退成标识，避免漏登记让汇报丢信息；显示名一律写作
+`主 agent（orchestrator）` 这种「显示名（标识）」形式，两套名字不互相替代——
+把显示名当参数传给 `-Role` 会被参数校验直接拒绝。
+
 ---
 
 ## 二、主 Agent（orchestrator）

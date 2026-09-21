@@ -108,7 +108,10 @@ function Get-RoleBreakdown {
     $byRole = @{}
     foreach ($record in $script:stepRecords) {
         if (-not $byRole.ContainsKey($record.Role)) {
-            $byRole[$record.Role] = @{ Steps = @(); Tasks = @(); Files = @(); Statuses = @() }
+            $byRole[$record.Role] = @{
+                Steps = @(); Tasks = @(); Files = @(); Statuses = @()
+                Display = (Get-RoleDisplayName -Role $record.Role)
+            }
             $order += $record.Role
         }
         $entry = $byRole[$record.Role]
@@ -591,7 +594,7 @@ $report.Add("## 本次调用的角色")
 $report.Add("")
 foreach ($roleName in $breakdown.Order) {
     $entry = $breakdown.ByRole[$roleName]
-    $report.Add("- **$roleName**：$($entry.Steps.Count) 步（第 $($entry.Steps -join '、') 步）")
+    $report.Add("- **$($entry.Display)**（$roleName）：$($entry.Steps.Count) 步（第 $($entry.Steps -join '、') 步）")
 }
 $report.Add("")
 
@@ -599,7 +602,7 @@ $report.Add("## 各角色主要工作")
 $report.Add("")
 foreach ($roleName in $breakdown.Order) {
     $entry = $breakdown.ByRole[$roleName]
-    $report.Add("### $roleName")
+    $report.Add("### $($entry.Display)（$roleName）")
     $report.Add("")
     foreach ($record in ($script:stepRecords | Where-Object { $_.Role -eq $roleName })) {
         $report.Add("- 第 $($record.Step) 步[$($record.Status)]：$($record.Task)")
@@ -613,12 +616,13 @@ $report.Add("")
 $report.Add("| 步 | 角色 | 状态 | 主要工作 | 说明 | 提交 |")
 $report.Add("| --- | --- | --- | --- | --- | --- |")
 foreach ($record in $script:stepRecords) {
-    $report.Add("| $($record.Step) | $($record.Role) | $($record.Status) | $($record.Task) | $($record.Detail) | $($record.Commits) |")
+    $report.Add("| $($record.Step) | $(Get-RoleDisplayName -Role $record.Role) | $($record.Status) | $($record.Task) | $($record.Detail) | $($record.Commits) |")
 }
 $report.Add("")
 $report.Add("## 汇总")
 $report.Add("")
-$report.Add("- 调用角色数：$($breakdown.Order.Count)（$($breakdown.Order -join '、')）")
+$roleDisplayList = @($breakdown.Order | ForEach-Object { Get-RoleDisplayName -Role $_ })
+$report.Add("- 调用角色数：$($breakdown.Order.Count)（$($roleDisplayList -join '、')）")
 $report.Add("- 已合并：$mergedCount")
 $report.Add("- 无需改动：$skipCount")
 $report.Add("- 需人工处理：$manualCount")

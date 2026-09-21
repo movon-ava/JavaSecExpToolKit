@@ -119,9 +119,9 @@ if (-not $Role) {
         throw "任务同时命中多个角色（$($hits -join '、')），写入域不同，不猜测。`n请显式指定 -Role 之一。"
     }
     $Role = $hits[0]
-    Write-Host "角色    : $Role（按任务内容推断）"
+    Write-Host "角色    : $(Get-RoleDisplayName -Role $Role)（$Role，按任务内容推断）"
 } else {
-    Write-Host "角色    : $Role（显式指定）"
+    Write-Host "角色    : $(Get-RoleDisplayName -Role $Role)（$Role，显式指定）"
 }
 
 if (-not $Slug) {
@@ -241,7 +241,7 @@ $summary = ($Task -replace '\s+', ' ').Trim()
 
 Write-Host ""
 Write-Host "== 完成 =="
-Write-Host "  主 agent 本次调用角色：$Role"
+Write-Host "  主 agent 本次调用角色：$(Get-RoleDisplayName -Role $Role)（$Role）"
 Write-Host "  该角色主要工作       ：$summary"
 Write-Host "  产出文件（$($changedFiles.Count) 个）："
 if ($changedFiles.Count -eq 0) {

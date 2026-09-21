@@ -385,6 +385,44 @@ Assert-That -Name "派发命令的收尾汇报也写明角色与产出" `
                 ((Read-Text -Path $dispatchPath) -match '该角色主要工作')) `
     -Detail "单条派发是更常用的入口，同样要能回答「调了谁、做了什么」"
 
+# 汇报里的角色名必须是中文：直接打印 probe / traffic 这种标识，
+# 读的人还要对照文档才知道是谁。但角色标识仍然是分支名、写入域与 -Role
+# 参数的取值，因此两者不能互相替换。
+$displayCode = @((Read-Text -Path $roleMatrixPath) -split "`n" | Where-Object { $_ -notmatch '^\s*#' }) -join "`n"
+Assert-That -Name "角色矩阵提供中文显示名" `
+    -Condition ($displayCode -match 'function\s+Get-RoleDisplayName' ) `
+    -Detail "缺少显示名映射时，汇报只能打印角色标识"
+. $roleMatrixPath
+$displayNames = Get-RoleDisplayNames
+$allRoles = @(Get-AllRoles)
+$unmapped = @($allRoles | Where-Object { -not $displayNames.ContainsKey($_) })
+Assert-That -Name "全部角色都有中文显示名（$($allRoles.Count) 个）" `
+    -Condition ($unmapped.Count -eq 0) `
+    -Detail "未登记的角色会在汇报里回退成标识：$($unmapped -join '、')"
+# 显示名必须含中文：全 ASCII（如 "test" / "traffic agent"）就是没翻过去。
+$notChinese = @($allRoles | Where-Object { $displayNames[$_] -notmatch '[\u4e00-\u9fa5]' })
+Assert-That -Name "显示名均含中文" `
+    -Condition ($notChinese.Count -eq 0) `
+    -Detail "这些显示名里没有中文：$($notChinese -join '、')"
+# 显示名不得直接等于角色标识，否则等于没改。
+$identityNames = @($allRoles | Where-Object { $displayNames[$_] -eq $_ })
+Assert-That -Name "显示名不等于角色标识" `
+    -Condition ($identityNames.Count -eq 0) `
+    -Detail "这些名字还是原样的标识：$($identityNames -join '、')"
+Assert-That -Name "未登记角色回退为标识而不是空" `
+    -Condition ((Get-RoleDisplayName -Role "nosuchrole") -eq "nosuchrole") `
+    -Detail "回退成空串会让汇报里那一行变成空白"
+# 直接读文件而不用 $dispatchCode / $orchCode：后两者在本节之后才赋值，
+# 在这里引用会拿到 $null，断言恒为假（实测踩过）。
+$dispatchRaw = @((Read-Text -Path $dispatchPath) -split "`n" | Where-Object { $_ -notmatch '^\s*#' }) -join "`n"
+$orchestrateRaw = @((Read-Text -Path $orchestratePath) -split "`n" | Where-Object { $_ -notmatch '^\s*#' }) -join "`n"
+Assert-That -Name "派发汇报用显示名" `
+    -Condition (([regex]::Matches($dispatchRaw, 'Get-RoleDisplayName')).Count -ge 2) `
+    -Detail "开头的角色行与收尾汇报都要用显示名"
+Assert-That -Name "编排汇报用显示名" `
+    -Condition (([regex]::Matches($orchestrateRaw, 'Get-RoleDisplayName')).Count -ge 1) `
+    -Detail "编排汇报的角色列与标题都要用显示名"
+
 Write-Host ""
 Write-Host "[10] 角色矩阵完整性"
 
