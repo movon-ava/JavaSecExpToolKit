@@ -19,6 +19,9 @@
 | 多个 agent 能同时跑测试吗 | **能** | 全部自检用 `InetSocketAddress(host, 0)` 动态端口，并把 `user.home` 指向临时目录，实测无端口冲突、无配置互相污染 |
 | 监督 agent 会不会改坏东西 | **不会** | 监督角色强制 `-s read-only`，实测写入被拒（连系统临时目录也拒） |
 | agent 会自己提交吗 | **不会，由脚本代提交** | agent 退出后由 `tools/agent.ps1` 在沙箱外提交，并校验写入域 |
+| 需要多开终端吗 | **不需要** | 一个终端用 `Start-Process ... -WindowStyle Hidden` 后台并发多个角色，前台终端仍可用；实测杀掉一个不影响另一个 |
+| 主 agent 能自动派发子 agent 吗 | **不能** | 实测：agent 沙箱无法写 `.git/refs/heads/**`，`git worktree add` 报 `cannot lock ref`；派发权在沙箱外的 `tools/agent.ps1` |
+| 监督 agent 需要另开终端实时监督吗 | **不需要** | 它是阶段末的一次只读审计，不是实时监控；各角色已提交的分支它能直接读到 |
 | 怎么分辨“在干活”与“卡住” | 看护 agent 读日志判三态 | 实测：静默 771 秒的正常等待判为 `WAITING` 不终止，反复重试同一命令判为 `STUCK` 并终止 |
 | 哪些必须串行 | UI agent、收尾三项（后者由脚本代理） | `src/Main.java` 是全部页面的唯一汇合点；`.backups/`、`AI_REPORT.md`、构建产物是共享资源 |
 
@@ -57,7 +60,8 @@ codex -C G:\java\jset-agents\exploit-a
 建分支 `agent/<role>/<slug>`、把角色卡与本次任务拼成提示词、按角色选沙箱、
 把 agent 的最终回复写到临时目录，最后启动 `codex exec`。
 
-脚本会**阻塞到 agent 结束**，所以「并发」= 同时开多个终端各跑一条命令。
+脚本会**阻塞到 agent 结束**，但并发不需要多开终端：
+用 `Start-Process ... -WindowStyle Hidden` 后台启动即可（见 2.4 节）。
 
 **提交由脚本完成，agent 不自己提交**。原因见第四节：沙箱对共享的
 `.git/objects` 只有部分写权限，agent 自行 `git commit` 会失败，
@@ -88,7 +92,47 @@ codex -C G:\java\jset-agents\exploit-a
 
 ---
 
-### 2.4 超时上限（防止任务跑飞）
+### 2.4 多终端还是单终端（实测）
+
+**结论：不需要多开终端。** 方式二的脚本会阻塞到 agent 结束，
+但只要用 `Start-Process` 后台启动，一个终端就能同时跑多个角色，
+前台终端仍可继续下令：
+
+```powershell
+# 后台并发两个执行角色（写入域不重叠）
+Start-Process powershell -ArgumentList @(
+  '-NoProfile','-ExecutionPolicy','Bypass','-File','tools\agent.ps1',
+  '-Role','probe','-Slug','version-blindspot','-Task','补齐版本识别盲区'
+) -WindowStyle Hidden
+
+Start-Process powershell -ArgumentList @(
+  '-NoProfile','-ExecutionPolicy','Bypass','-File','tools\agent.ps1',
+  '-Role','traffic','-Slug','header-tolerance','-Task','补强请求头容错'
+) -WindowStyle Hidden
+
+# 终端立即可用；看进度直接读日志
+Get-Content "$env:TEMP\jset-agent-log-probe-version-blindspot.err.txt" -Tail 20
+```
+
+实测证据：
+
+| 项 | 结果 |
+| --- | --- |
+| 一个终端同时后台跑两个角色 | 成功，前台终端未被占用，中途仍可执行其它命令 |
+| 两个 worktree 目录 | 各自独立生成，互不可见 |
+| 主仓库污染 | 无（`git status` 不受影响） |
+| A 分支提交后，B 能否看到 | 看不到，B 的同名文件未变，主仓库也未变 |
+| 杀掉 A，B 是否受影响 | 不受影响，B 继续跑到自然结束（退出码 0） |
+| 两个 agent 同时提交 | 各自提交到自己分支，未出现 `index.lock` 冲突 |
+
+**什么时候才值得多开终端**：只有当你想中途看到实时输出并手动插话时。
+但脚本用的是 `codex exec`（非交互式）且 stdin 被重定向到提示词文件，
+**会中途无法输入**；人能做的只有等、看日志、或终止（终止后以 `-ReuseWorktree` 接着上）。
+真要人工实时接管，用方式一的交互式会话，代价是角色约束靠自觉。
+
+---
+
+### 2.5 超时上限（防止任务跑飞）
 
 没有超时的会话会无限期占用终端，而且**拿不到任何产出**——本仓库实际发生过一次：
 监督审计跑了约 15 分钟仍无结论，进程最终被回收，只留下提示词文件。
@@ -124,7 +168,7 @@ codex -C G:\java\jset-agents\exploit-a
 
 ---
 
-### 2.5 看护 agent：区分「推进中」「长等待」与「卡死」
+### 2.6 看护 agent：区分「推进中」「长等待」与「卡死」
 
 超时上限只能回答「进程有没有退出」，回答不了「它是在干活还是卡住了」。
 实测证据：执行 `ping -n 400` 时日志会静默数分钟且毫无新增，但这是**正常等待**；
@@ -189,6 +233,54 @@ codex -C G:\java\jset-agents\exploit-a
 
 判定历史会打印在卡死提示里（例如 `WAITING -> WAITING -> STUCK`），
 便于事后回溯为什么做了这个决定。
+
+---
+
+## 二之二、监督 agent 的接入点（实测）
+
+**结论：监督 agent 不是实时监督程序，而是阶段末的一次只读审计。**
+
+原因有三层：
+
+1. **它没有实时信源**。它的只读沙箱只能读文件，无法流式读取另一个会话的输出；
+   执行中的会话在自己的 worktree 里，尚未提交的内容它看不到。
+2. **它的判定依据是整体状态，不是时序**。十项清单里的断言数量对比、JAR 时间校验、
+   空实现检测，都需要待产出落定后才成立。
+3. **真正做实时入供断定的是看护 agent**（见 2.6 节）：它读会话日志，
+   在会话出现静默时判断「推进中 / 长等待 / 卡死」。两者职责不同，不要混用。
+
+### 它能看到什么（实测）
+
+监督 agent 直接在**主仓库**以 `read-only` 运行，不建 worktree。
+实测：其提示词写的是「审计对象就是当前工作区的未提交改动」，
+但仓库对象库是共享的，因此它**同时能读到各执行角色已提交的分支**：
+
+```powershell
+# 监督 agent 在主仓库里实际可用的命令
+git log --oneline main..agent/probe/<slug>
+git diff --stat main..agent/probe/<slug>
+git show agent/probe/<slug>:python/fj_probe.py
+```
+
+所以审计建议在**执行角色已提交但尚未合并**时进行：此时分支与主线的差异就是完整的待审内容。
+若已合并，审计对象变成主干的新提交，需明确告诉它对比哪两个点。
+
+### 推荐的步骤
+
+```powershell
+# 1) 执行角色先在自己分支提交（脚本代提交）
+.\tools\agent.ps1 -Role exploit -Slug payload-core -Task "按 tasks.md 实现通用载荷包"
+
+# 2) 只读审计（不新开终端，可后台）
+.\tools\agent.ps1 -Role supervisor -Slug audit-payload \`
+  -Task "审计 agent/exploit/payload-core 是否越界"
+
+# 3) 审计结论为「可归档」后再合并
+git merge --no-ff agent/exploit/payload-core
+```
+
+**不要用监督 agent 取代回归测试**：它只读且不跑构建，
+事实性结论靠它独立复算，而「能不能跑」靠你在主干跑自检。
 
 ---
 
@@ -390,3 +482,12 @@ git branch -d agent/probe/version-blindspot
    这也是「它不会改坏仓库」的技术保证，而不只是纪律要求。
 4. 并发上限仍是**两个执行角色**（写入域不重叠为前提），
    这不是脚本限制，而是为了让冲突面保持在可人工审阅的范围内。
+5. **主 agent 不能自行派发子 agent**（已实测，见下）。沙箱给了本次 worktree、
+   `.git\worktrees\<name>` 与 `.git\lfs`，但 `.git\refs`、`.git\logs`、`.git\objects` 不在内，
+   因此 `git worktree add`（需新建分支引用）会报
+   `fatal: cannot lock ref 'refs/heads/agent/...': unable to create directory`。
+   同时 `G:\java\jset-agents\` 对 agent 只读，连子 worktree 目录也建不出来。
+   **这是设计上的隔离而非缺陷**：写入域与并发度由脚本集中掌控，
+   避免 agent 自行无限分裂出不受控的工作区；代价是派发动作必须由人（或主 agent）在终端发起。
+   若要改成能自行派发，需额外放行 `.git\refs\heads\agent\**`、`.git\logs\**`
+   与 `G:\java\jset-agents\`，代价是隔离性下降。

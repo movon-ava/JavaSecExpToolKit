@@ -319,6 +319,31 @@ Assert-That -Name "提示词声明判定方只读且不执行命令" -Condition 
     -Detail "判定方越权会破坏「判定与终止分离」"
 
 Write-Host ""
+Write-Host "[8] 派发权与隔离边界"
+
+# agent 沙箱只能拿到本次 worktree、.git\worktrees\<name> 与 .git\lfs。
+# 若把整个 .git 放行，agent 就能自行 git worktree add 无限分裂工作区，
+# 写入域与并发度就不再由脚本掌控。这里把它固化为断言。
+$grantBlock = [regex]::Match($agentText, '\$grantDirs\s*=\s*@\((?<body>.*?)\n\s*\)', 'Singleline')
+Assert-That -Name "能解析出授权目录清单" -Condition $grantBlock.Success `
+    -Detail "未找到 \$grantDirs 定义"
+$grantText = $grantBlock.Groups['body'].Value
+Assert-That -Name "授权包含本次 worktree 的 Git 元数据目录" `
+    -Condition ($grantText -match 'worktrees') `
+    -Detail "缺它时 git add / commit 会因 index.lock 被拒"
+Assert-That -Name "授权包含 .git\lfs" -Condition ($grantText -match 'lfs') `
+    -Detail "缺它时 git-lfs filter-process 会失败"
+Assert-That -Name "授权未放行整个 .git 目录" `
+    -Condition (-not ($grantText -match '\$gitDir\s*\)\s*$|Join-Path\s+\$gitDir\s+"\"\s*\)')) `
+    -Detail "放行整个 .git 会让 agent 自行建分支与 worktree，破坏派发权集中在脚本"
+
+# 监督角色必须在主仓库以只读运行，否则看不到待审的未提交改动。
+Assert-That -Name "监督角色在主仓库运行且为只读" `
+    -Condition (($agentText -match '\$readOnlyAudit\s*=\s*\$Role\s*-eq\s*"supervisor"') -and `
+                ($agentText -match '\$worktree\s*=\s*if\s*\(\$readOnlyAudit\)\s*\{\s*\$root\s*\}')) `
+    -Detail "监督必须直接审主仓库当前工作区（worktree 是从 HEAD 建的，看不到未提交改动）"
+
+Write-Host ""
 if ($script:failures.Count -eq 0) {
     Write-Host "agent 工具链自检通过（$($script:checks) 项）"
     exit 0

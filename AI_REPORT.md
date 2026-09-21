@@ -1589,3 +1589,103 @@ worktree 只隔离工作区文件，以下仍是全仓库共享的真冲突点�
    回归入口是独立的 `tools/check_agent_tools.ps1`，需要单独执行。
 6. 本轮只改 `tools/`、`docs/`、`README*`、`openspec/`，**未触碰 `src/`、`python/`、`tests/`**，
    运行时行为零变化；JAR 内容不变，但仍按要求重新构建并校验时间。
+
+## 2026-09-21（多 Agent 落地：单终端并发、派发权边界、监督接入点）
+
+回答三个关于「怎么用起来」的问题，结论全部来自本机实测；
+过程中修正了 2 处与实测不符的既有文档描述。
+
+### 一、需要开多个终端吗？——不需要
+
+方式二的脚本会阻塞到 agent 结束，但这不等于必须多开终端：
+
+```powershell
+Start-Process powershell -ArgumentList @(
+  '-NoProfile','-ExecutionPolicy','Bypass','-File','tools\agent.ps1',
+  '-Role','probe','-Slug','a','-Task','...'
+) -WindowStyle Hidden
+```
+
+| 实测项 | 结果 |
+| --- | --- |
+| 一个终端后台跑两个角色 | 成功，前台终端未被占用，中途仍可执行其它命令（34 秒完成） |
+| 两个 worktree 目录 | 各自独立生成 |
+| 主仓库污染 | 无 |
+| A 分支提交后 B 能否看到 | 看不到；B 的同名文件未变，主仓库也未变 |
+| 杀掉 A，B 是否受影响 | 不受影响，B 继续跑到自然结束（退出码 0） |
+| 两个 agent 同时提交 | 各自提交到自己的分支，未出现 `index.lock` 冲突 |
+
+**附带发现**：`tools/agent.ps1` 用的是 `codex exec`（非交互式），stdin 被重定向到提示词文件，
+因此**中途无法输入**。人能做的只有「等」「读日志」「终止」（终止后可用 `-ReuseWorktree` 接着跑）。
+若确实需要人工实时接管，只能用方式一的交互式会话，代价是角色约束靠自觉。
+
+### 二、主 agent 会自动分发任务给各个 agent 吗？——不会，机制上做不到
+
+这是本轮最重要的一条结论，已用真实 orchestrator 会话实测（不是推测）：
+
+它在自己的沙箱内执行 `git worktree add G:/java/jset-agents/spawn-child -b agent/test/spawn-child`，得到：
+
+```
+fatal: cannot lock ref 'refs/heads/agent/test/spawn-child':
+unable to create directory for .../.git/refs/heads/agent/test/spawn-child
+```
+
+退出码 255。另一次探针显示 `New-Item G:\java\jset-agents\sandbox-probe-tmp` 也被拒
+（`UnauthorizedAccessException`）。
+
+根因：agent 沙箱只放行三处——本次 worktree、`.git\worktrees\<name>`、`.git\lfs`。
+`.git\refs`、`.git\logs` 不在内，而 `git worktree add -b` 必须在 `.git/refs/heads/...` 建引用并加锁；
+`G:\java\jset-agents\` 对 agent 也是只读，子 worktree 目录同样建不出来。
+
+**所以真实形态是**：派发权在**沙箱外**的 `tools/agent.ps1` 手里，由人在终端发起；
+主 agent 负责的是**规划、判定是否跨域、集成与收尾**，它不是调度器。
+这是设计上的隔离而非缺陷：若给 agent 放行整个 `.git`，它就能无限分裂出不受控的工作区，
+写入域与并发度将不再由脚本集中掌控。已把这条写进 `docs/AGENT-ROLES.md` 的「能力边界」段。
+
+### 三、监督 agent 需要另开终端做实时监督吗？——不需要
+
+它不是实时监控程序，而是**阶段末的一次只读审计**，原因有三：
+
+1. 没有实时信源：只读沙箱只能读文件，读不到另一个会话的流式输出；执行中未提交的内容它看不到。
+2. 判据是整体状态而非时序：断言数量对比、JAR 时间校验、空实现检测，都要等产出落定后才成立。
+3. 做实时判定的是**看护 agent**（读会话日志判三态），两者职责不同，不应混用。
+
+**它的接入点与可见范围（实测）**：监督角色直接在**主仓库**以 `read-only` 运行，不建 worktree。
+提示词写的是「审计对象就是当前工作区的未提交改动」，但仓库对象库是共享的，
+因此它**同时能读到各执行角色已提交的分支**：
+
+```powershell
+git log  --oneline main..agent/probe/<slug>
+git diff --stat      main..agent/probe/<slug>
+git show agent/probe/<slug>:python/fj_probe.py
+```
+
+建议在**执行角色已提交、尚未合并**时审计——此时分支与主线的差异就是完整的待审内容。
+
+### 四、修正了两处与实测不符的文档描述
+
+| 位置 | 原文 | 实测事实 |
+| --- | --- | --- |
+| 运行手册 2.2 节 | 「并发 = 同时开多个终端各跑一条命令」 | 后台启动即可，单终端可并发 |
+| 运行手册结论速览 | 无「是否要开终端」「谁负责派发」两项 | 已补两行，并新增 2.4 节与「二之二」节 |
+
+### 五、验证结果
+
+| 项 | 结果 |
+| --- | --- |
+| 工具链自检 | **39 项**全通过（新增 5 项：授权目录边界、监督运行位置） |
+| 自检有效性 | 注入变异（把 `.git/lfs` 授权换成 `.git/objects`）能被报失败，基线通过 |
+| Python 测试 | `Ran 99 tests ... OK` |
+| `openspec validate --all --strict` | 3 passed, 0 failed |
+| 测试现场清理 | `git worktree list` 仅剩主仓库；`agent/*` 分支为空；无 `PING` 残留；`G:\java\jset-agents` 为空 |
+
+### 六、如实说明的局限
+
+1. 本轮全部是**工具链与文档**结论，不改变任何运行时行为（`src/`、`python/`、`tests/` 未触碰）。
+2. 后台并发的实测用的是模拟 codex 的假会话（真实 codex 会话每次数分钟，
+   做并发对照成本过高）。隔离性结论来自 Git 机制本身，与用哪种 codex 无关；
+   但「两个真实 codex 会话同时跑」的端到端时长未测。
+3. 「主 agent 不能自行派发」是在**当前沙箱配置**下的结论。若日后放行
+   `.git\refs\heads\agent\**`、`.git\logs\**` 与 `G:\java\jset-agents\`，该结论会失效——
+   已把所需权限与代价一并记录在运行手册「已知限制」第 5 条。
+4. 单终端并发仍然受「最多两个执行角色」的人工约束限制，这是纪律而非机械强制。

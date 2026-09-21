@@ -217,6 +217,11 @@ CEYE 确认作为附属阶段时仍依赖 DNS 阶段。未填 Token 就执行 `C
 并发期间不碰共享资源：`.backups/`、`AI_REPORT.md`、`PROGRESS.md` 与构建产物的收尾
 统一由主 agent 合并后执行。
 
+并发不需要多开终端：用 `Start-Process ... -WindowStyle Hidden` 后台启动即可，
+前台终端仍可继续下令（实测杀掉一个会话不影响另一个）。
+主 agent 不能自己派发子 agent：agent 沙箱无法写 `.git/refs/heads/**`，
+`git worktree add` 会报 `cannot lock ref`；派发由沙箱外的 `tools/agent.ps1` 完成。
+
 工具链自身的回归用 `tools\check_agent_tools.ps1`（34 项机械断言），
 覆盖参数与变量同名、开关写错导致死代码、缺 BOM、`.gitignore` 未锚定等已实际发生过的缺陷：
 

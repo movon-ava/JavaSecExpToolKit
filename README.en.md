@@ -248,6 +248,12 @@ unanchored `.gitignore` rule.
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\check_agent_tools.ps1
 ```
 
+Concurrency does not require extra terminal windows: launch roles in the background with
+`Start-Process ... -WindowStyle Hidden` and keep using the current terminal (killing one
+session was verified not to affect another). The main agent cannot spawn sub-agents by
+itself: an agent sandbox cannot write `.git/refs/heads/**`, so `git worktree add` fails with
+`cannot lock ref`; dispatching is done by `tools/agent.ps1` outside the sandbox.
+
 Isolation comes from per-agent worktrees and branches. Agents only edit files; the
 script commits outside the sandbox and mechanically checks the write scope. Shared
 resources (`.backups/`, `AI_REPORT.md`, `PROGRESS.md`, build output) are never touched

@@ -46,6 +46,17 @@
 
 **关键约束**：`propose` 只产出规划件，不写代码；实施必须由新的一次请求触发 `apply`。
 
+**能力边界：主 agent 不能自己派发子 agent（已实测）。**
+它的沙箱只放行本次 worktree、`.git\worktrees\<name>` 与 `.git\lfs`，
+`.git\refs`、`.git\logs` 不在内，因此 `git worktree add`（需新建分支引用）
+会报 `fatal: cannot lock ref 'refs/heads/agent/...': unable to create directory`；
+`G:\java\jset-agents\` 对它也是只读，子 worktree 目录建不出来。
+
+**因此派发动作的真实形态是**：人在终端调用 `tools/agent.ps1`，
+由脚本（在沙箱外）分配 worktree 与分支并启动对应角色；
+主 agent 负责的是**规划、判定是否跨域、集成与收尾**，不是当调度器。
+详见 `docs/AGENT-RUNBOOK.md` 第二之二节与第七节。
+
 ---
 
 ## 三、功能开发 Agent（probe / exploit / traffic）
