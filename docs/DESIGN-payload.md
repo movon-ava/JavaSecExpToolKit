@@ -237,9 +237,29 @@ if (data instanceof byte[]) {
 
 1. ~~**change A**：`base64` 下沉 + `ChainsEngine` 解耦~~ —— **已完成**
    （2026-09-21，`a149f2b`，change `decouple-chain-engine`）。
-2. **change B-1**：`src/payload/` 引擎层 + `tests/PayloadCheck.java`（exploit agent，可先于界面完成）。
-3. **change B-2**：`src/ui/PayloadPage.java` + 导航 + 配置分组 + `tests/UiPayloadCheck.java`（UI agent）。
-4. **change C**：语法糖 —— 「填入抓包页」「填入 Shiro 页」的联动（UI agent，依赖 B-2）。
+2. ~~**change B-1**：`src/payload/` 引擎层 + `tests/PayloadCheck.java`~~ —— **已完成**
+   （2026-09-21）：`PayloadEngine` / `PayloadCatalog` / `PayloadResult` 三个类，
+   `ChainsEngine` 通用实现全部委派、公开签名不变；`PayloadCheck` 61 条断言。
+3. ~~**change B-2**：`src/ui/PayloadPage.java` + 导航 + 配置分组~~ —— **已完成**
+   （2026-09-21）：页面与控制器分离，配置键 `payload_export_dir` 落进独立分组
+   `Payload 生成配置`；界面断言并入既有的 `tests/UiNavigationCheck.java`
+   （未另建 `UiPayloadCheck`：本仓库的 UI 自检统一入口是导航自检，另开一个文件会让
+   「五套 Java 自检」变成六套，收益不足以抵消入口分裂）。
+4. ~~**change C**：语法糖 —— 「填入抓包页」联动~~ —— **已完成**（2026-09-21）：
+   `PayloadPage.CaptureSink` 由 `Main` 注入，写 `captureBody` 后跳到 `抓包转换` 页。
+   「填入 Shiro 页」未做：Shiro 页的载荷输入框是只读回显区，填入需要另改该页语义，
+   超出本次范围。
 
 每个 change 独立走备份、自检、报告、构建校验流程。
-第 1 步完成前不得开始第 2 步，否则会在反向依赖上返工。
+
+## 九、实现期间的实测发现（与原设计的差异）
+
+| 项 | 原设计 | 实测 | 处理 |
+| --- | --- | --- | --- |
+| 载体下拉项数 | 28 | 28 | 一致 |
+| 首节点查询 | 用 `nextNodes(载体)` | 载体自身无后继，`nextNodes` 返回**空集** | 改为逐个候选做 `validateChainTags` 校验 |
+| 非法链 | 预期抛异常 | 返回带原因的失败结论 | 断言改为「带原因的失败且不产出载荷」 |
+| 逐个载体创建 | 预期 28 个全部成功 | 不带参数时 1 个成功、27 个被必填参数拒绝 | 断言改为「结论确定」而非「全部成功」 |
+| 参数键 | 未明确 | 完整键（`Exec.cmd` / `ShiroPayload.shiroKey`） | 参数表单直接渲染完整键 |
+| 输出区高度 | > 100px | 首版实测 62px | `outputPanel` 补最小高度（根因：分栏缺最小高度） |
+| 分组一致性 | 未明确 | `PayloadCatalog.diff(runtime)` = `[]` | 加断言固化为零偏差 |

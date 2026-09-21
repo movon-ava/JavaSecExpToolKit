@@ -1948,3 +1948,178 @@ git show agent/probe/<slug>:python/fj_probe.py
 2. 「各角色主要工作」引用的是计划里的任务描述，即**交给角色做什么**；
    角色实际完成到什么程度仍以状态、提交与产出文件为准，不宣称任务描述等于实际结果。
 3. 产出文件清单最多列 6 个，超出显示为「等 N 个」，避免单步产出过多时刷屏。
+
+
+## 2026-09-21（本轮：汇报角色中文化 + JavaChains 可视化落地）
+
+### 一、需求
+
+1. 汇报里的 agent 角色名改成中文（主 agent、测试 agent 这种），而不是 `probe` / `traffic` 标识；
+2. 把 JavaChains（java-chains 利用链）集成为可视化功能，用于生成各类 Java 漏洞的利用链 payload。
+
+### 二、角色名中文化
+
+- `tools/lib/RoleMatrix.ps1`：新增 `Get-RoleDisplayNames` / `Get-RoleDisplayName`，映射
+  `orchestrator=主 agent`、`probe=探测 agent`、`exploit=利用链 agent`、`traffic=抓包 agent`、
+  `ui=界面 agent`、`test=测试 agent`、`supervisor=监督 agent`、`watchdog=看护 agent`；
+  未登记的角色原样返回标识，避免漏登记导致汇报丢信息。
+- `tools/orchestrate.ps1`：聚合时记下显示名，「本次调用的角色」「各角色主要工作」两节的标题、
+  逐步表格的角色列、汇总行改为 `显示名（标识）`。
+- `tools/dispatch.ps1`：开头的「角色」行与收尾汇报改用显示名。
+
+设计取舍：**角色标识仍用于分支名、写入域与 `-Role` 参数**，显示名只用于面向人的输出。
+两者混用会让 `-Role "探测 agent"` 这类参数被校验直接拒绝，因此显示名一律写成 `显示名（标识）`。
+
+实测：`tools\dispatch.ps1 -Task "补齐 fastjson 版本识别盲区" -DryRun` 打印
+`角色    : 探测 agent（probe，按任务内容推断）`。
+
+### 三、JavaChains 可视化
+
+新增 `Payload` 一级导航（二级项 `Payload 生成`），把 java-chains 的「载体 + gadget 节点」
+能力做成可视化界面。核心设计决定如下。
+
+#### 3.1 通用引擎下沉到独立包（解耦）
+
+新建 `src/payload/` 三个类，与漏洞类型无关：
+
+| 类 | 职责 |
+| --- | --- |
+| `PayloadEngine` | 初始化与就绪状态、节点目录、载体目录、参数查询、后继节点、参数归一化、构建 |
+| `PayloadCatalog` | 7 组载体分组常量表，并给出与运行时目录的偏差清单 |
+| `PayloadResult` | 结果模型：成功标志、失败原因、Base64、原始字节、不含正文的摘要 |
+
+`src/shiro/ChainsEngine.java` 的通用实现全部委派给 `PayloadEngine`，**公开方法签名与
+`Generated` 嵌套类型保持不变**，因此 `ShiroExploit` / `Main` / `ShiroCheck` 零改动。
+这样拆的理由：载体枚举、节点导航与载荷构建与漏洞类型无关；留在 Shiro 模块里，
+其它功能无法复用，也会让「通用组件依赖具体功能模块」的反向耦合长期存在。
+
+#### 3.2 首节点判据用引擎自己的规则
+
+实测发现 `nextNodes(载体)` 返回**空集**——载体自身没有后继，后继是从 gadget 才开始。
+因此 `firstNodes(payloadId)` 的实现是：把 `[载体, 候选节点]` 逐个交给
+`ExecutionEngine.validateChainTags` 校验，通过的才算可选首节点。
+这是引擎自己的判据，不是本地另写一套链规则（后者只能证明「自检和实现一致」）。
+
+#### 3.3 界面层
+
+- `src/ui/PayloadPage.java`：页面结构（分组 → 载体 → 链 → 参数 → 输出三段式）；
+- `src/ui/PayloadController.java`：链状态机 + 引擎调用 + 复制 / 导出 / 填入抓包页；
+  参数行随链重建时会先把已填的值取回来再写回去，避免追加第二个节点把前一个的命令清空；
+- `src/Main.java`：只做接线（导航项、分页调度、控件持有、配置注入）。
+  控制器懒创建：它持有当前链与已生成载荷，每次进页都重建会把使用者刚配好的链清空。
+
+#### 3.4 配置落进配置页
+
+新增独立分组 `Payload 生成配置` → `默认导出目录`（配置键 `payload_export_dir`），
+读写接入既有的 `applyConfigToForms` / `resetConfigForm` / `saveConfigFromForm` 三处。
+（首版误将该行插进了「Shiro 配置」组内且缩进错乱，已修正为独立分组。）
+
+### 四、实测数据（java-chains 2.0.0-beta4）
+
+| 项 | 实测值 |
+| --- | --- |
+| 节点总数 | 429 |
+| 载体总数 | 28 |
+| `javanativepayload` 可选首节点 | 104 |
+| `fastjsonpayload` 可选首节点 | 46 |
+| `shiropayload` 可选首节点 | 102 |
+| `PayloadCatalog.diff(runtime)` | `[]`（分组与运行时零偏差） |
+| 全量 `firstNodes` 遍历耗时 | 71 ms |
+| 完整链 `javanativepayload + clojure` | 成功，952 字节 |
+| 四节点链 `shiropayload + clojure+templatesimpl+bytecodeconvert+tomcatecho` | 成功，976 字节 |
+| 空链 | 失败，`请至少追加一个 gadget 节点：载体自身不是完整利用链。` |
+| 非法载体 | 失败，带原因且不带载荷 |
+| 参数键形态 | `Exec.cmd` / `Clojure.cmd` / `ShiroPayload.shiroKey`（完整键） |
+| 有参数的节点 | 235 个，参数合计 421 条 |
+
+### 五、修掉的两个真实缺陷（先给根因）
+
+1. **Payload 页输出区被压成 62px**
+   - 现象：`UiNavigationCheck` 断言「输出区有可用高度」失败，实测 viewport 仅 62px。
+   - 根因：`JSplitPane` 首次布局按首选尺寸 + `resizeWeight` 分配；`ShiroPage` 的
+     `outputPanel` 设了 `setMinimumSize(new Dimension(0, 170))`，`PayloadPage` 的漏了，
+     表单（`FORM_HEIGHT=340` + 按钮行）把输出区挤成一条细线。
+   - 修法：给 `PayloadPage.outputPanel` 也设最小高度，并按实际可读性给到 `240`
+     （170px 只够三行等宽文本，Base64 完全看不全）。实测修后 164px。
+2. **`tools/audit_boundary.py` 与 `tests/test_decoupling.py` 的规则不同步**
+   - 现象：Python 单测改配置后全过，但 `audit_boundary.py` 仍报「存在违规」。
+   - 根因：两份规则表是各自硬编码的副本，新增 `payload` 包时只改了一份；
+     审计工具是监督角色独立复核用的，一旦与测试文件口径不一致，复核结论就会失真。
+   - 修法：同步 `ALLOWED_EDGES` / `UP_LAYERS` / `GENERIC_MODULES`，
+     并把「具体功能模块类名」抽成一份 `FEATURE_MODULE_CLASSES` 供三个通用组件共用。
+
+### 六、新增与扩展的断言
+
+**工具链自检新增 7 项（84 → 91）**，针对角色名中文化：矩阵提供显示名、
+全部角色都有显示名、显示名均含中文、显示名不等于标识、未登记角色回退为标识、
+派发汇报用显示名、编排汇报用显示名。
+
+其中两项做了**变体验证**（故意破坏实现后必须报失败）：
+
+| 变体 | 预期报失败的断言 | 实测 |
+| --- | --- | --- |
+| `test = "\u6d4b\u8bd5 agent"` 改成 `test = "test"` | 显示名均含中文、显示名不等于标识 | 2/91 失败✓ |
+| 删掉 `dispatch.ps1` 中的 `Get-RoleDisplayName` | 派发汇报用显示名 | 1/91 失败✓ |
+
+首版写成 `-notmatch '[A-Za-z]'` 对中文名恒为真（假通过）；另有一版在
+`$dispatchCode` / `$orchCode` 赋值之前引用它们，拿到 `$null` 导致断言恒假。
+两处都是靠变体验证才发现的，已修正为拟合中文范围与直接读文件。
+
+- **新增 `tests/PayloadCheck.java`，61 条断言**，分七类：目录（载体 28 / 节点 >400 / 去重）、
+  分组（并集 = 目录、无重复登记、反查稳定）、导航（后继稳定、`templatesimpl → bytecodeconvert`、
+  首节点逐个通过链校验）、逐个载体创建（**要求「结论确定」而不是「全部成功」**：需要回连地址的
+  载体在没给参数时应当带原因地失败）、失败路径、双形态往返（Base64 解码长度与首尾 4 字节一致）、
+  安全（摘要不含正文任意连续 16 字符、不写回上游参数声明、连续构建后工作区无新增文件）。
+- **扩展 `tests/UiNavigationCheck.java`**：导航项数断言随新增一级分类调整
+  （6 / 7 / 10 / 11），新增配置页 `Payload 生成配置` 分组断言，以及 Payload 页的
+  17 条控件断言 + 端到端断言（追加 `clojure` → 生成成功 → 输出含 Base64/链序/摘要 →
+  清空链后填入抓包页 → 跳转到抓包转换）。
+- **`tests/test_decoupling.py` 与 `tools/audit_boundary.py`**：允许边新增 `payload`（只允许依赖 `util`）、
+  `shiro` 增加允许依赖 `payload`、`ui` 增加允许依赖 `payload`、`<default>` 增加 `payload`。
+
+### 七、回归结果
+
+| 项目 | 结果 |
+| --- | --- |
+| 工具链自检 | **91 项全过**（本轮由 84 扩展到 91） |
+| Python 单测 | Ran 99 tests，OK |
+| 依赖边界审计 | 全部通过（含三个通用组件各自无功能模块引用） |
+| `openspec validate --all --strict` | 4 passed, 0 failed |
+| 构建 | JAR 16:46:43，无源文件晚于它（37 个源文件逐个校验） |
+| `PayloadCheck` | 61 条断言，失败 0，exit 0 |
+| `ShiroCheck` | exit 0 |
+| `UiNavigationCheck` | 全部界面自检通过，exit 0 |
+| `UiShiroCheck` | exit 0 |
+| `UiSwitchEndToEndCheck` | exit 0 |
+| `ProxyServerCheck` | exit 0 |
+
+`UiShiroCheck` 首次运行为退出码 1，原因是漏带 `--add-opens`：报
+`IllegalAccessError: ... BytecodeConvert ... cannot access ... TemplatesImpl`。
+按 `run.ps1` 的两个 `--add-opens` 重跑后 exit 0 —— 这是运行方式问题，不是代码缺陷。
+README 中已把「`ShiroCheck` / `PayloadCheck` 需要这两个参数」写进测试章节。
+
+### 八、文档同步
+
+- `README.md` / `README.en.md`：导航新增 `Payload` 一级分类、配置页新增
+  `Payload 生成配置` 分组、项目结构新增 `src/payload/`、新增「Payload 生成」章节、
+  测试章节补 `PayloadCheck` 与 `--add-opens` 说明 —— 中英同步。
+- `PROGRESS.md`：新增三行状态与一条已完成阶段。
+- `docs/AGENT-ROLES.md`：新增「1.1 角色标识与中文显示名」对照表与两套名字的用途边界。
+- `docs/AGENT-RUNBOOK.md`：汇报段落说明补上显示名形式与两套名字的用途对照表。
+- `docs/DESIGN-payload.md`：实施顺序逐步标记完成，新增九节「实现期间的实测发现与原设计的差异」。
+- `tools/check_agent_tools.ps1`：新增 7 项角色名断言（84 → 91）。
+
+### 九、如实说明的局限
+
+1. 逐个载体「不带参数直接构建」时只有 1 个成功、27 个被拒绝，**这是上游的必填参数约束**，
+   不是实现缺陷。自检因此断言「结论确定」而非「全部成功」；界面会在追加节点后把必填参数
+   渲染出来，由使用者填写后再生成。
+2. 上游对 JNDI / SSRF 一类节点自带了示例地址（`ldap://127.0.0.1:1389/x`、
+   `xxx.dnslog.cn`）。本工具**不替使用者改写或补全**这些值，也不在构建时自动填入；
+   需要什么回连地址由使用者自己决定。
+3. 链的**可用性**取决于目标依赖版本，本工具只保证「引擎认可这条链并能构建出载荷」，
+   不保证目标一定触发。
+4. `firstNodes` 是逐个候选做链校验，104 个候选约 0.3 ms/候选（全量 28 个载体 71 ms）。
+   当前规模下可接受；若上游节点数大幅增长，需要缓存。
+5. `Main.java` 仍为 1500 行量级 —— 本轮按「最小改动」只做接线，模块化仍按
+   `docs/DESIGN-modularization.md` 的方案留待专门一轮实施。

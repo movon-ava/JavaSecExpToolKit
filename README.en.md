@@ -138,6 +138,7 @@ The sidebar is grouped by feature:
   inspect the raw response, convert formats) items
 - `FastJson` — first-level category; click it to expand / collapse the second-level `Fastjson 探测` item
 - `Shiro` — first-level category; click it to expand / collapse the second-level `Shiro 漏洞利用` item
+- `Payload` — first-level category; click it to expand / collapse the second-level `Payload 生成` item
 
 First-level categories show a `▾` / `▸` marker pinned to the right edge of the row; clicking one toggles its children without leaving the current page. `打开探测` on the home card expands the group and jumps straight to the probe page.
 
@@ -152,8 +153,9 @@ The `配置` page stores fixed parameters in
 - `代理配置` — default listen address, default listen port, whether the proxy starts with interception on
 - `抓包转换配置` — default request method, default Content-Type, default convert target
 - `Shiro 配置` — default target URL, cookie name, key, AES-GCM, echo header, gadget chain, command, default request body
+- `Payload 生成配置` — default export directory for generated payloads (blank writes to the user home)
 
-Saved values pre-fill **every feature page** (probe, proxy, capture, Shiro). After the proxy
+Saved values pre-fill **every feature page** (probe, proxy, capture, Shiro, Payload). After the proxy
 starts, the address and port actually used are written back into the settings, so the port shown
 on the settings page reflects real usage. The Python engine reads the same file, and explicit
 CLI arguments always win over stored values.
@@ -193,7 +195,8 @@ readable hint instead of an engine error — set CEYE Token on the settings page
 | Path | Purpose |
 | --- | --- |
 | `src/` | Java Swing UI (`Main.java`), `pom.xml`, the local proxy (`proxy/ProxyServer.java`), and the Shiro module (`shiro/`) |
-| `src/ui/` | Per-feature page views (`HomePage` / `ProbePage` / `CapturePage` / `ProxyPage` / `ShiroPage` / `ConfigPage`) and styling (`UiKit`) |
+| `src/ui/` | Per-feature page views (`HomePage` / `ProbePage` / `CapturePage` / `ProxyPage` / `ShiroPage` / `PayloadPage` / `ConfigPage`) and styling (`UiKit`) |
+| `src/payload/` | Generic payload generation (`PayloadEngine` / `PayloadCatalog` / `PayloadResult`), decoupled from concrete features such as Shiro |
 | `src/probe/` | Engine invocation and command-line assembly (`ProbeEngine` / `ProbeCommand` / `CaptureBridge`) |
 | `src/config/` `src/util/` | `config.properties` read/write; message parsing and platform differences |
 | `python/` | probe engine (`fj_probe.py`), packaged into the JAR |
@@ -376,6 +379,38 @@ The Shiro page keeps **one output pane per action** (`指纹检测` / `密钥爆
 `执行命令`) so a long key-cracking log or a long command output never overwrites the detection
 conclusion or the generated payload.
 
+## Payload generation
+
+`主页 → Payload → Payload 生成` turns java-chains' "carrier + gadget node" model into a
+visual page for generating exploit-chain payloads for Java vulnerabilities. It builds payloads
+**in local memory only**: no network requests, no files written.
+
+Three steps:
+
+1. Pick a **carrier group** (serialization / JSON parsers / JNDI / framework-specific / special
+   protocols / MySQL masquerade / other), then a concrete carrier such as `javanativepayload`,
+   `fastjsonpayload` or `shiropayload`
+2. Append nodes one level at a time with `追加节点`; the candidate list uses the **engine's own**
+   criterion (each `carrier + candidate` pair is handed to the engine for chain validation), not a
+   second set of rules written locally. The current chain and the number of available successors
+   update live
+3. Node parameters become a form automatically (including dropdown choices and required markers);
+   `生成载荷` produces the Base64 payload
+
+The result shows the chain order, byte length, a body-free digest and the Base64 text. `复制`
+copies it, `导出文件` writes it to the default export directory from the settings page (the
+filename carries the carrier and a timestamp), and `填入抓包页` drops it into the request body
+of `抓包转换` so it can be sent from there.
+
+The page **never fills in a callback address for you**: the upstream sample values for JNDI / SSRF
+nodes are kept as-is, and choosing an address stays the operator's decision. The consistency of the
+carrier group table with the runtime catalog is asserted by `PayloadCheck`, so a missing or extra
+registration fails outright.
+
+The generic part lives in `src/payload/` (independent of any vulnerability type — the Shiro
+module is just one consumer), and the UI wiring is in `src/ui/PayloadPage.java` and
+`src/ui/PayloadController.java`. See [docs/DESIGN-payload.md](docs/DESIGN-payload.md).
+
 ## CLI smoke test
 
 ```powershell
@@ -433,6 +468,8 @@ screenshots to `target/ui-check/`; `UiSwitchEndToEndCheck` drives the UI switche
 through the real Python engine against a local stub endpoint (including starting the proxy
 from the UI and reading the recorded flow); `ProxyServerCheck` covers the proxy itself —
 plain-HTTP capture, 404 handling, `CONNECT` tunneling with byte pass-through, callbacks,
-`find` / `clear`. `ShiroCheck` (Shiro engine) and `UiShiroCheck` (Shiro page) can be run too.
+`find` / `clear`. `ShiroCheck` (Shiro engine), `UiShiroCheck` (Shiro page) and `PayloadCheck`
+(payload generation engine) can be run too. `ShiroCheck` / `PayloadCheck` need the two
+`--add-opens` flags from `run.ps1` (bytecode gadgets reach into the JDK-internal xalan classes).
 
 Only run this against systems where testing is explicitly authorized.

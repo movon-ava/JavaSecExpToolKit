@@ -120,6 +120,7 @@ Maven 的 POM 位于 Java 工作区（`src/pom.xml`，与源码同级），产�
   与 `抓包转换`（单次抓包、格式转换）
 - `FastJson` — 一级分类；点击可展开 / 收起二级项 `Fastjson 探测`
 - `Shiro` — 一级分类；点击可展开 / 收起二级项 `Shiro 漏洞利用`
+- `Payload` — 一级分类；点击可展开 / 收起二级项 `Payload 生成`
 
 一级分类行右侧固定显示 `▾` / `▸` 标记；点击它只展开 / 收起子项，不会离开当前页面。
 主页卡片上的 `打开探测` 会展开分组并直接跳到探测页。
@@ -135,8 +136,9 @@ Maven 的 POM 位于 Java 工作区（`src/pom.xml`，与源码同级），产�
 - `代理配置` — 默认监听地址、默认监听端口、启动后是否默认拦截请求
 - `抓包转换配置` — 默认请求方法、默认 Content-Type、默认转换目标
 - `Shiro 配置` — 默认目标 URL、Cookie 名、密钥、AES-GCM、回显请求头、利用链、命令、默认请求体
+- `Payload 生成配置` — Payload 生成页的默认导出目录（留空则写入用户目录）
 
-保存后的值会预填到**全部功能页**（探测页 + 代理页 + 抓包页 + Shiro 页）。代理启动后会
+保存后的值会预填到**全部功能页**（探测页 + 代理页 + 抓包页 + Shiro 页 + Payload 页）。代理启动后会
 把**实际使用的**地址与端口写回配置，所以配置页里的代理端口反映真实使用情况。
 Python 引擎读取同一份文件；**显式命令行参数始终优先于**存储值。
 
@@ -169,7 +171,8 @@ CEYE 确认作为附属阶段时仍依赖 DNS 阶段。未填 Token 就执行 `C
 | 路径 | 用途 |
 | --- | --- |
 | `src/` | Java Swing 界面（`Main.java`）、`pom.xml`、本地代理（`proxy/ProxyServer.java`）与 Shiro 模块（`shiro/`） |
-| `src/ui/` | 各功能页视图（`HomePage` / `ProbePage` / `CapturePage` / `ProxyPage` / `ShiroPage` / `ConfigPage`）与样式（`UiKit`） |
+| `src/ui/` | 各功能页视图（`HomePage` / `ProbePage` / `CapturePage` / `ProxyPage` / `ShiroPage` / `PayloadPage` / `ConfigPage`）与样式（`UiKit`） |
+| `src/payload/` | 通用载荷生成（`PayloadEngine` / `PayloadCatalog` / `PayloadResult`），与 Shiro 等具体功能解耦 |
 | `src/probe/` | 引擎调用与命令行拼装（`ProbeEngine` / `ProbeCommand` / `CaptureBridge`） |
 | `src/config/` `src/util/` | `config.properties` 读写；报文解析与平台差异 |
 | `python/` | 探测引擎（`fj_probe.py`），打进 JAR |
@@ -330,6 +333,30 @@ rememberMe 解密分支，不带只会拿到校验错误；`GET` / `HEAD` 等方
 Shiro 页为**每个动作保留独立回显框**（`指纹检测` / `密钥爆破` / `生成 Payload` / `执行命令`），
 因此冗长的爆破日志或命令输出不会覆盖检测结论或已生成的 payload。
 
+## Payload 生成
+
+`主页 → Payload → Payload 生成` 把 java-chains 的「载体 + gadget 节点」能力做成了可视化界面，
+用来为各类 Java 漏洞生成利用链载荷。它**只在本地内存里构建载荷**：不发起网络请求，也不写文件。
+
+用法是三步：
+
+1. 选**载体分组**（序列化 / JSON 解析器 / JNDI / 框架专用 / 特殊协议 / MySQL 伪装 / 其他），
+   再选具体载体，例如 `javanativepayload`、`fastjsonpayload`、`shiropayload`
+2. 用 `追加节点` 逐级拼链；候选节点是**引擎自己的**判据（把「载体 + 候选节点」交给引擎做链校验，
+   通过的才列出来），不是本地另写的一套规则。当前链与「可选后继 N 个」实时显示在界面上
+3. 节点参数按链自动生成表单（含下拉框选项与必填标记），点 `生成载荷` 得到 Base64
+
+生成结果给出链序、字节长度、不含正文的摘要与 Base64。`复制` 写入剪贴板，`导出文件` 按
+配置页的默认导出目录落盘（文件名带载体与时间戳），`填入抓包页` 把载荷送进 `抓包转换` 的请求体，
+可以直接在那里发送。
+
+本页**不替使用者填任何回连地址**：上游对 JNDI / SSRF 一类节点的示例值原样保留，需要什么地址由使用者自己决定。
+载体分组表与运行时目录的一致性由 `PayloadCheck` 断言，出现漏登记或多登记会直接失败。
+
+实现上，通用部分在 `src/payload/`（与漏洞类型无关，Shiro 模块只是它的一个使用者），
+界面装配在 `src/ui/PayloadPage.java` 与 `src/ui/PayloadController.java`，设计见
+[docs/DESIGN-payload.md](docs/DESIGN-payload.md)。
+
 ## 命令行速查
 
 ```powershell
@@ -385,6 +412,8 @@ E:\java\jdk17\bin\java.exe -Dfile.encoding=UTF-8 -cp target\classes ProxyServerC
 `UiNavigationCheck` 校验侧边栏展开 / 收起行为，并把页面截图写入 `target/ui-check/`；
 `UiSwitchEndToEndCheck` 通过真实 Python 引擎驱动界面开关（含从界面启动代理并读取记录）；
 `ProxyServerCheck` 覆盖代理本身——明文抓包、404、`CONNECT` 隧道字节透传、回调与
-`find` / `clear`。另有 `ShiroCheck`（Shiro 引擎）与 `UiShiroCheck`（Shiro 页）可一并运行。
+`find` / `clear`。另有 `ShiroCheck`（Shiro 引擎）、`UiShiroCheck`（Shiro 页）与
+`PayloadCheck`（载荷生成引擎）可一并运行。`ShiroCheck` / `PayloadCheck` 需要
+`run.ps1` 里的两个 `--add-opens`（字节码类 gadget 要访问 JDK 内部 xalan 实现）。
 
 **请仅在获得明确测试授权的系统上运行。**
