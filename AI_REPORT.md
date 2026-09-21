@@ -1092,3 +1092,108 @@
 
 见上表。本轮未新增任何第三方依赖；中间脉生成的临时脚本已全部删除，
 `tools/` 仅保留 `apply_patch.py`。
+
+
+## 2026-09-21（OpenSpec 引入 + 多 Agent 协同框架 + 模块化与 Payload 方案设计）
+
+本轮为**纯设计工作**，不修改任何功能代码、不改变任何运行时行为。
+产物是四份可执行的约束文档，用于让后续开发（尤其是多 Agent 并行）不再互相踩踏。
+
+### 一、背景：三个已经实际发生的问题
+
+1. **写入冲突**：`Main.java` 单文件 1533 行、70 个方法、100 个 `private final` 字段，
+   承载 5 个功能页的全部状态。任何改动都绕不开它，多执行体并行必然互相覆盖。
+2. **验收漂移**：功能改动后缺少统一回归入口，依赖人工记忆挑自检。
+3. **越界修改**：`AGENTS.md` 已禁止修改未要求的功能，但缺少可机械判定的边界定义。
+
+### 二、事实测量（本轮全部结论的数据基础）
+
+| 项 | 实测值 | 取法 |
+| --- | ---: | --- |
+| `Main.java` 行数 | 1533 | 字节流统计 `\n` |
+| `Main.java` 方法数 | 70 | 正则匹配方法声明 |
+| `Main.java` `private final` 字段 | 100 | 正则匹配字段声明 |
+| `Main.java` 职责行数 | 代理 278 / 配置 264 / 抓包 240 / Shiro 236 / 导航 213 / 探测 61 | 按方法归属累加行跨度 |
+| 测试反射访问 `Main` 成员 | 80 | 扫描 `tests/*.java` 的 `fieldQuiet`/`getDeclaredField`/`getDeclaredMethod` |
+| Java 源码总量 | 5630 行 / 22 文件 | 递归统计 `src/` |
+| `python/fj_probe.py` | 2811 行 | 字节流统计 |
+| java-chains 可用节点 | 429 | 运行时调 `ChainsEngine.nodeIds()` |
+| java-chains payload 载体 | 28 | 运行时调 `ChainsEngine.payloadIds()` |
+
+### 三、关键发现（改变了原方案的两处判断）
+
+**发现 1：`src/ui/*Page.java` 已经是静态视图构建器，拆分方向早已确定。**
+`ShiroPage`、`CapturePage`、`ConfigPage`、`ProbePage`、`ProxyPage` 共 1463 行，
+通过 `Widgets` 结构体接收控件、经 `build(widgets, fonts)` 返回面板，自身不持有状态
+（`ShiroPage` 注释原文：「只负责界面结构……本页不持有任何执行状态」）。
+**结论：本次模块化的性质是「完成既有方向」，不是另起炉灶。**
+原计划的「先抽视图」步骤因此不需要，直接从抽状态与行为开始。
+
+**发现 2：测试反射耦合是拆分的前置阻塞项，而非附带问题。**
+`tests/UiNavigationCheck.java:255` 等处的辅助方法用
+`target.getClass().getDeclaredField(name)` 取控件——**只搜索本类，不含父类**。
+一旦字段搬走，80 个断言点会立刻抛 `IllegalStateException`。
+**结论：`Main.java` 拆分必须先在测试侧解除这个约束**，否则拆一步挂一步。
+
+**发现 3：payload 功能可以零成本复用，但存在一处反向依赖。**
+实测 java-chains 已注册 429 节点 / 28 载体，`ChainsEngine` 已封装好
+`nodeIds` / `payloadIds` / `paramsOf` / `nextNodes` / `build`，
+新功能不需要新增任何第三方依赖。
+但 `src/shiro/ChainsEngine.java:195` 调用了 `ShiroEngine.base64(...)`，
+若直接把该类搬进 `src/payload/` 会形成 `payload → shiro` 反向依赖。
+**结论：必须先做一次共享内核下沉（`base64` 移入 `src/util/`），
+且该重构要单独作为一个 change，不能混在 payload 功能里。**
+
+### 四、产出物
+
+| 文件 | 行数 | 内容 |
+| --- | ---: | --- |
+| `docs/DESIGN-agents.md` | 295 | 多 Agent 协同框架：角色划分、写入域矩阵、OpenSpec 映射、交接协议、监督清单 |
+| `docs/DESIGN-modularization.md` | 253 | `Main.java` 模块化：现状测量、目标结构、三阶段拆分、验收标准 |
+| `docs/DESIGN-payload.md` | 244 | Payload 生成功能：能力范围、载体分组、文件与写入域、界面、验证、安全约束 |
+| `openspec/config.yaml` | 75 | 项目上下文（2418 字节）+ 四类规划件规则 + apply/archive 操作指引 |
+| `openspec/specs/traffic/capture-bridge/spec.md` | — | 首个能力规格，回填上一轮「抓包格式直接可探测」 |
+| `AGENTS.md` | +22 | 新增「规格驱动开发（OpenSpec）」小节，指向上述文档 |
+| `README.md` / `README.en.md` | +2 / +2 | 项目结构表补充 `openspec/` 与 `.agents/`，docs 清单补全 |
+
+### 五、Agent 划分结论
+
+细分了功能开发 agent，最终为 **7 个角色**：
+主 agent、功能开发 ×3（probe / exploit / traffic）、UI agent、测试 agent、监督 agent。
+
+判断依据是「写入集合是否重叠」与「验证入口是否相同」，而非代码量：
+
+| 细分角色 | 主语言 | 验证入口 | 与谁冲突 |
+| --- | --- | --- | --- |
+| probe | Python（2811 行） | `test_probe.py` | 无 |
+| exploit | Java（1176 行） | `ShiroCheck` | 无 |
+| traffic | Java（768 + 125 行） | `ProxyServerCheck` | 无 |
+
+三者写入路径零重叠、验证入口互不包含。反证：若合并 probe 与 exploit，
+单个角色需同时精通 Python 探测逻辑与 Java 反序列化链，单次任务上下文 3987 行。
+
+监督 agent 定位为**只读审计者**，不写任何文件。它的 10 条审计清单中，
+最关键的是「独立复算」——例如核对 JAR 时间时必须自己重新枚举源文件比较，
+而不是引用执行者贴出的结论。这是该角色存在的唯一理由。
+
+### 六、验证结果
+
+| 项 | 结果 |
+| --- | --- |
+| OpenSpec 根识别 | `openspec doctor` 输出 `OpenSpec root: ok` |
+| 配置解析 | `config.yaml` 可被解析，顶层键 `context` / `rules` / `operations` / `schema` 齐全 |
+| 规格校验 | `openspec validate --specs --strict --json` 返回 `valid: true`，`passed: 1, failed: 0` |
+| 编码检查 | 全部新增/修改文件无 BOM、无 `\r`，与仓库既有行尾一致 |
+| 代码改动 | **无**。本轮未触碰任何 `.java` / `.py` 功能代码 |
+
+### 七、如实说明的局限
+
+1. 多 Agent 框架与模块化方案**均未实施**，目前只是文档约束。
+   `Main.java` 仍是 1533 行，payload 功能尚未存在。
+2. 监督 agent 的审计清单是人工可执行的标准，**不是自动化工具**。
+   本轮未实现任何脚本来自动执行这些核查。
+3. `.agents/` 与 `.pi/` 同时存在且 SKILL.md 哈希不一致（实测两套内容不同），
+   属于 OpenSpec 为不同宿主工具生成的产物。本轮未做取舍，保持现状。
+4. `openspec/specs/` 下目前只有 1 个能力规格（`traffic/capture-bridge`），
+   其余 capability（probe、shiro、proxy、config、build）尚未建立规格，
+   需在后续 change 中逐步补齐。

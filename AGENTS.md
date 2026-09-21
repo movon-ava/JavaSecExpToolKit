@@ -59,6 +59,22 @@ Java代码应该按功能进行分配，不能堆叠在一个文件中，要符�
   - 约束 AI：*“为新写的功能或修复的 Bug 补充对应的单元测试（Unit Test），并且在修改完成后，必须确保项目能够通过编译和现有测试。”*
 
 
+## 规格驱动开发（OpenSpec）
+
+本仓库已引入 OpenSpec，规格与变更记录在 `openspec/` 下：
+
+- `openspec/specs/`：能力的现行规格，是需求的事实源。
+- `openspec/changes/`：待实施的变更规划件；`changes/archive/` 为已归档变更。
+- `openspec/config.yaml`：项目上下文与每类规划件的强制规则，跨角色约束写在这里，
+  避免在多处重复维护。
+
+多 Agent 协同的角色划分与写入域矩阵见 `docs/DESIGN-agents.md`；
+Java 模块化的分阶段方案见 `docs/DESIGN-modularization.md`；
+payload 生成功能的方案见 `docs/DESIGN-payload.md`。
+
+改动跨文件时先有 change 规划件再动手；验证入口与收尾三项要求已写入
+`openspec/config.yaml` 的 `rules` 与 `operations`。
+
 
 ### 功能
 

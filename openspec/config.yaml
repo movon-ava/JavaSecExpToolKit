@@ -1,0 +1,75 @@
+schema: spec-driven
+
+# 项目上下文：每次生成规划件（proposal / specs / design / tasks）时都会读到这里，
+# 因此只写「跨 capability 恒定成立」的约束，不写具体功能设计。
+context: |
+  ## 项目
+  JavaSecExpToolKit：Java + Python 桌面安全测试工具，面向已授权目标。
+  三块能力：Fastjson 探测、代理抓包与格式转换、Shiro 漏洞利用。
+  多 Agent 协同框架见 docs/DESIGN-agents.md，Java 模块化见 docs/DESIGN-modularization.md，
+  payload 生成见 docs/DESIGN-payload.md。
+
+  ## 技术栈（锁死，不得变更）
+  - Java 源码编译目标 release 8：禁用 List.of / var / record / switch 表达式等 9+ 语法。
+  - 界面为 Swing；探测引擎为 python/fj_probe.py，只用 Python 标准库。
+  - 第三方依赖只有 java-chains 2.0.0-beta4（libs-repo/ 本地仓库）。
+  - 严禁在 src/pom.xml 或 Python 侧引入任何新第三方依赖，必须用现有库实现。
+  - 构建：build.ps1（内部调用 Maven），产物为根目录 JavaSecExpToolKit.jar。
+
+  ## 架构约定
+  - Java 代码按功能分包：src/config、probe、proxy、shiro、ui、util，新功能按此新建包。
+  - 禁止把逻辑堆进单个文件；除根目录规定文件外，新文件必须落在对应功能目录内。
+  - 界面视图与状态/行为分离：视图沿用 src/ui/*Page.java 的静态构建器 + Widgets 三段式。
+  - 可持久化配置必须同时落到 src/config/AppConfig.java 的键与 src/ui/ConfigPage.java 的分组。
+  - src/config/** 与 src/util/** 是共享内核，任何角色不得直接改，需主 agent 单独开 change。
+
+  ## 质量约定
+  - 禁止 TODO / FIXME / pass / 「此处省略实现」/ 空方法体 / 返回常量桩，产出必须可直接运行。
+  - Bug 修复必须先给出根因（Root Cause）分析再动手，严禁试错式修改。
+  - 禁止修改本次任务之外的功能与配置项；需要牵连其他文件时先说明方案再动手。
+
+  ## 验证入口
+  - Python：python -m unittest discover -s tests（当前 84 项）
+  - Java：ShiroCheck、ProxyServerCheck、UiNavigationCheck、UiShiroCheck、UiSwitchEndToEndCheck
+  - 运行 Java 自检需 JDK17 并加 --add-opens java.xml/...xalan...=ALL-UNNAMED
+  - 构建后必须校验 JAR 构建时间晚于 src/、python/、tests/ 下全部源文件
+
+  ## 文档约定
+  - README.md（中文）与 README.en.md（英文）必须同步更新，内容一一对应。
+  - 设计文档放 docs/，命名为 DESIGN-*.md。
+  - AI_REPORT.md 记录每次改动的工作内容与结论；PROGRESS.md 记录阶段状态。
+  - Git 提交信息使用 fix: / feat: / docs: / refactor: 前缀。
+
+rules:
+  proposal:
+    - 必须包含 Non-goals 段，明确列出本次不碰的既有功能与配置
+    - 必须写明 Impact：受影响的文件路径，以及这些路径属于哪个 Agent 的写入域
+    - 涉及界面行为的变更，必须给出实测复现步骤，不接受纯推测描述
+    - 跨两个以上写入域的改动必须拆成多个 change，禁止在单个 change 内跨域提交
+  specs:
+    - 每条 Requirement 至少一个 Scenario，Scenario 写成可执行、可判定的 WHEN/THEN
+    - 安全探测与利用类需求必须写明失败时的可观测结论，不能只写成功路径
+    - 需求文本中不得出现文件名、类名、方法名，这些属于 design 层
+  design:
+    - 必须含 Root Cause 段：先写清问题成因，再写改法
+    - 必须说明与既有模块的边界，明确本设计不改变哪些既有行为
+    - 涉及共享内核（src/config、src/util）的改动，必须列出全部调用方
+  tasks:
+    - 每个任务组需标注写入域（允许改动的路径清单）与验证命令
+    - 任务描述必须可独立验证，禁止「完善相关代码」「优化一下」这类不可判定表述
+    - 任务组最后必须包含三项收尾：备份到 .backups/（仅保留最近三次）、追加 AI_REPORT.md 并更新 PROGRESS.md、重新构建并校验 JAR 构建时间晚于全部源文件
+    - 新增可持久化配置项的任务，必须同时包含写配置键与加入配置页两步
+
+operations:
+  apply:
+    guidance:
+      - 动手前先跑 openspec validate --all --strict，确认规划件自身合法
+      - 只改 tasks.md 写入域内的文件；发现需要牵连其他文件，先停下来向用户说明方案并取得同意
+      - 修复 Bug 前先写出根因分析，禁止在未定位成因时反复试改
+      - 收尾以 openspec validate --all --strict 通过、且全部自检全绿为完成标志
+      - 完成后必须实测构建：build.ps1 成功且 JAR 时间晚于全部源文件，不得只声明未验证
+  archive:
+    guidance:
+      - 归档前在 AI_REPORT.md 写清结论，并如实记录未解决项与已知局限，禁止只写成功项
+      - 归档后用中文提交并推送 origin main
+      - 归档前确认 .backups/ 仅保留最近三次快照，超出部分轮转删除
