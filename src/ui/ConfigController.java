@@ -240,6 +240,11 @@ public final class ConfigController {
         form.oobjarDefaultUrl.setText(config.getProperty("oobjar_default_url", ""));
         form.oobjarDefaultPath.setText(config.getProperty("oobjar_default_path", "/tmp/payload.bin"));
         form.oobjarDefaultCommand.setText(config.getProperty("oobjar_default_command", ""));
+        form.analyzeScanTarget.setText(config.getProperty("analyze_scan_target", ""));
+        form.analyzeEngineJar.setText(config.getProperty("analyze_engine_jar", ""));
+        form.analyzeWorkDir.setText(config.getProperty("analyze_work_dir", ""));
+        form.analyzeTimeout.setText(config.getProperty("analyze_timeout", "300"));
+        form.analyzeDecompileDir.setText(config.getProperty("analyze_decompile_dir", ""));
         form.uploadUrl.setText(config.getProperty("upload_url", ""));
         form.uploadField.setText(config.getProperty("upload_field", "file"));
         form.uploadTimeout.setText(config.getProperty("upload_timeout", "30"));
@@ -309,6 +314,11 @@ public final class ConfigController {
         config.setProperty("oobjar_default_path",
                 Platform.valueOr(form.oobjarDefaultPath.getText(), "/tmp/payload.bin"));
         config.setProperty("oobjar_default_command", form.oobjarDefaultCommand.getText().trim());
+        config.setProperty("analyze_scan_target", form.analyzeScanTarget.getText().trim());
+        config.setProperty("analyze_engine_jar", form.analyzeEngineJar.getText().trim());
+        config.setProperty("analyze_work_dir", form.analyzeWorkDir.getText().trim());
+        config.setProperty("analyze_timeout", Platform.valueOr(form.analyzeTimeout.getText(), "300"));
+        config.setProperty("analyze_decompile_dir", form.analyzeDecompileDir.getText().trim());
         Object presetCategory = form.presetCategory.getSelectedItem();
         config.setProperty("preset_category", presetCategory == null ? "全部分类"
                 : String.valueOf(presetCategory));

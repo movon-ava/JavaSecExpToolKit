@@ -121,6 +121,8 @@ Maven 的 POM 位于 Java 工作区（`src/pom.xml`，与源码同级），产�
 - `代理` — 一级分类；点击可展开 / 收起二级项 `代理抓包`（本地 HTTP 代理）
   与 `抓包转换`（单次抓包、格式转换）
 - `FastJson` — 一级分类；点击可展开 / 收起二级项 `Fastjson 探测`
+- `漏洞分析` — 一级分类；点击可展开 / 收起二级项 `组件与漏洞`（本地读依赖坐标并判定已知漏洞）
+  与 `调用链查询`（外部引擎建库后按 Sink / 入口点 / 字符串查询）
 - `小工具` — 一级分类；点击可展开 / 收起二级项 `文件上传`（选择本地文件按 multipart
   上传到指定接口，并记录原始响应）
 - `配置` — 设置项，分为 `通用配置` 与各功能分组
@@ -161,9 +163,12 @@ Maven 的 POM 位于 Java 工作区（`src/pom.xml`，与源码同级），产�
   HTTP 服务端口、JRMP 端口、FakeMySQL 端口、TCP 端口（留空或填 0 表示沿用默认值）
 - `预设链配置` — 预设链页的默认分类筛选（候选值来自内置预设文件本身）
 - `小工具配置` — 文件上传页的默认上传 URL、默认表单字段名（默认 `file`）、上传超时（默认 30 秒）
+- `漏洞分析配置` — 默认扫描目标（jar / 依赖目录）、外部引擎 JAR（`jar-analyzer-engine`，
+  留空则只跑本地分析）、引擎工作目录（引擎固定把 `jar-analyzer.db` 写到工作目录）、
+  分析超时（默认 300 秒）、反编译输出目录（留空则输出到工作目录下的 `decompiled`）
 
 保存后的值会预填到**全部功能页**（探测页 + 代理页 + 抓包页 + Shiro 页 + Payload 页 +
-预设链页 + 恶意服务器页 + toString 链页 + 带外 Jar 页），保存后即刻下发到已经打开的页面，不需要重开程序。代理启动后会
+预设链页 + 恶意服务器页 + toString 链页 + 带外 Jar 页 + 漏洞分析页），保存后即刻下发到已经打开的页面，不需要重开程序。代理启动后会
 把**实际使用的**地址与端口写回配置，所以配置页里的代理端口反映真实使用情况。
 Python 引擎读取同一份文件；**显式命令行参数始终优先于**存储值。
 
@@ -195,17 +200,19 @@ CEYE 确认作为附属阶段时仍依赖 DNS 阶段。未填 Token 就执行 `C
 
 | 路径 | 用途 |
 | --- | --- |
-| `src/` | 组合根 `Main.java`（301 行，只做装配与切页）、`pom.xml`、本地代理（`proxy/ProxyServer.java`）与 Shiro 模块（`shiro/`） |
+| `src/` | 组合根 `Main.java`（352 行，只做装配与切页）、`pom.xml`、本地代理（`proxy/ProxyServer.java`）与 Shiro 模块（`shiro/`） |
 | `src/ui/` | 各功能页的**视图**与**行为**分开放：视图 `*Page` / `*Form`（`HomePage` / `ProbePage` / `CapturePage` / `ProxyPage` / `ShiroPage` / `PayloadPage` / `PresetPage` / `ServicePage` / `ConfigPage` / `ConfigForm` / `ToolsUploadPage` / `PayloadToStringPage` / `OobJarPage`），行为 `*Controller`（`NavController` / `ProbeController` / `CaptureController` / `ProxyController` / `ShiroController` / `ConfigController` / `PayloadController` / `PresetController` / `ServiceController` / `ToolsUploadController` / `PayloadToStringController` / `OobJarController` / `WorkbenchPages`），另有样式 `UiKit`、共用链编辑 `ChainEditor`、启动预热 `StartupWarmup` / 启动画面 `StartupSplash`、列式链选择器 `PayloadChainSelector`（载荷生成页的选链主体，不持有链状态）及其协作类 `ChainSelectorSizing`（几何换算）/ `ChainColumn` / `ChainColumnState` / `ChainColumnPanel`（每列的面板与筛选状态）/ `ChainResizeHandle`（竖向拖拽条）/ `ChainColumnFilter`（过滤判定）/ `ChainNodeRenderer`（条目渲染）/ `ChainTagMenu`（标签菜单）、载荷页拆分出的 `PayloadPanels`（面板构建）/ `PayloadColumns`（列换算）/ `PayloadOutputText`（输出文本）/ `PayloadExporter`（导出落盘）、自检门面 `UiHandle` + `WidgetRegistry` |
 | `src/payload/` | 通用载荷生成（`PayloadEngine` / `PayloadCatalog` / `PayloadResult`），与 Shiro 等具体功能解耦；功能模板 `JarPreset`（带外 Jar 的包装 × 末端动作）、`ToStringPreset`（toString 链模板）与节点归属规则 `ChainScope` |
 | `src/service/` | 恶意服务器（`ServiceManager` / `ServiceSpec` / `ServiceEndpoint` / `ServiceDefaults`）与带外 Jar 托管 `OobJarService`：唯一直接调用 java-chains 服务端适配器的包 |
 | `src/preset/` | 内置预设链读取（`PresetCatalogService` / `PresetItem`）：唯一引用上游预设模型的包，纯数据出参 |
 | `src/probe/` | 引擎调用与命令行拼装（`ProbeEngine` / `ProbeCommand` / `CaptureBridge`） |
+| `src/analyzer/` | 漏洞分析内核（叶子层，不依赖任何项目包）：依赖坐标读取 `Dependency` / `DependencyScanner` / `PomScanner`、版本比较 `Version`、规则表 `VulnerabilityRules`、结论 `Finding` / `VulnerabilityAnalyzer`、外部引擎调用 `EngineRunner`、查询枚举 `ReportReader`、脚本执行 `ScriptRunner`、反编译 `Decompiler` |
+| `src/analyze/` | 漏洞分析编排层（只依赖 `analyzer`）：`AnalyzeEngine`（本地分析 / 调引擎 / 查询 / 反编译）、`AnalyzeReport`、`AnalyzeCommand`（命令行是唯一契约，集中一处便于比对） |
 | `src/config/` `src/util/` | `config.properties` 读写；报文解析与平台差异 |
-| `python/` | 探测引擎（`fj_probe.py`），打进 JAR |
+| `python/` | 探测引擎（`fj_probe.py`）与调用链数据库查询脚本（`jar_report.py`），打进 JAR |
 | `tests/` | Python 单元测试与 Java 界面自检；`TestProcessGuard.java` 在自检退出时清理构建期弹出的计算器进程 |
 | `tools/` | 维护辅助脚本：`agent.ps1`（启动角色化 agent）、`dispatch.ps1`（单条派发并自动合并）、`orchestrate.ps1`（一句话目标自动拆解编排）、`watchdog.ps1`（会话停滞看护）、`lib/`（角色矩阵与执行原语）、`audit_boundary.py`（依赖边界审计）、`apply_patch.py` |
-| `docs/` | 设计文档（`DESIGN.md`、`DESIGN-shiro.md`、`DESIGN-probe-accuracy.md`、`DESIGN-agents.md`、`DESIGN-modularization.md`、`DESIGN-payload.md`、`DESIGN-services.md`）与多 Agent 职责说明（`AGENT-ROLES.md`）与运行手册（`AGENT-RUNBOOK.md`） |
+| `docs/` | 设计文档（`DESIGN.md`、`DESIGN-shiro.md`、`DESIGN-probe-accuracy.md`、`DESIGN-agents.md`、`DESIGN-modularization.md`、`DESIGN-payload.md`、`DESIGN-services.md`、`DESIGN-analyze.md`）与多 Agent 职责说明（`AGENT-ROLES.md`）与运行手册（`AGENT-RUNBOOK.md`） |
 | `openspec/` | 规格驱动开发：`specs/` 存能力规格，`changes/` 存待办与归档的变更，`config.yaml` 约束 AI 生成规划件 |
 | `.agents/` | OpenSpec 生成的 AI 工具指令（本仓库目标工具为 codex） |
 | `target/` | Maven 构建输出（经 `src/pom.xml` 写入） |
@@ -544,6 +551,74 @@ LDAPS 需要同时提供 JKS 证书路径，未显式填写端口时**不下发*
 设计见 [docs/DESIGN-services.md](docs/DESIGN-services.md)。
 **不需要 Spring 或任何 Web 容器**：上游适配器是纯 JDK 实现，实测在 Java 17 下可直接驱动。
 
+## 漏洞分析
+
+`主页 → 漏洞分析` 回答两个不同层级的问题，因此分成两页、三种代价：
+
+| 二级项 | 做什么 | 代价 |
+| --- | --- | --- |
+| `组件与漏洞` | 读 jar 内的 Maven 坐标，按 25 条内置规则判定已知漏洞，给出证据与跳转建议 | 秒级，不需要任何外部程序 |
+| `调用链查询` | 用外部引擎把 jar 解析成调用图数据库，再按 Sink 命中 / 入口点 / 字符串常量查询 | 分钟级，需要自备引擎 |
+
+### 组件与漏洞（本地分析）
+
+分析目标可以是**单个 jar**，也可以是**依赖目录**（递归取其中全部 jar）；
+另外可以给一个源码工程的 `pom.xml`，把「工程声明的依赖」与「产物里的依赖」对照看。
+
+坐标按来源分层采信，并把这个来源一路带到结论里（决定可信度）：
+
+1. `META-INF/maven/**/pom.properties` — 打包时由 Maven 写进去的事实
+2. `META-INF/maven/**/pom.xml` — 同样是打包产物，但可能被 shade 改写
+3. `META-INF/MANIFEST.MF` — 由打包插件写入，粒度粗
+4. 文件名推断 — 只是推测，可信度最低
+
+读取全部走 `JarFile` 的条目枚举：**不解压、不落盘、不加载任何类**。目标 jar 可能是任意来源的
+产物，解析期间不得让它获得执行机会。
+
+规则表 25 条，覆盖 fastjson（6 条按 autoType 绕过方式分段）、fastjson2、Shiro（4 条，
+含 rememberMe 默认密钥与两处鉴权绕过）、gadget 依赖（CommonsCollections 3 / 4、Groovy、
+ROME、CommonsBeanutils、c3p0、Hutool）与组件 RCE（Log4Shell 两段、Spring4Shell、
+XStream、SnakeYAML、Jackson-databind、FakeMySQL 场景）。
+
+规则是**本项目自己写的**：上游 `jar-analyzer` 的规则文件是 GPLv3，搬进本仓库有许可问题；
+规则内容取自各组件的公开公告，且只收录「判定出来之后本工具能接上后续动作」的那些。
+结论按可信度排序，报告末尾固定带一句「没命中不代表没有漏洞」。
+
+结论里的跳转建议是按钮，点一下直接去对应功能页（探测页 / Shiro 页 / Payload 生成 /
+toString 链 / 恶意服务器 / 抓包转换），不需要自己去侧边栏找。
+
+### 调用链查询（外部引擎）
+
+调用链分析需要在配置页填 `外部引擎 JAR`（`jar-analyzer-engine`，MIT，CLI 形态）。
+它产出的数据库文件固定叫 `jar-analyzer.db` 且**只能落在工作目录**（没有输出路径参数），
+所以配置页还有一个 `引擎工作目录`。不填引擎时该页不报错，只是提示去配置页补。
+
+构建大 jar 是分钟级任务，因此有 `调用链超时`（默认 300 秒，低于 30 秒会被提前拦下），
+超时会**终止进程树**并清掉临时目录。构建完成后可以反复查询五类内容：
+
+| 查询 | 用途 |
+| --- | --- |
+| 总览 | 类 / 方法 / 调用边数量，先确认库构建成功 |
+| 入口点 | Spring Controller / Servlet / Filter / Listener |
+| Sink 命中 | 按内置 sink 清单匹配危险调用（命令执行 / JNDI / 反序列化 / SQL / 文件 / SSRF 等 26 项） |
+| 字符串常量 | 检索 SQL、URL、密钥等敏感信息（唯一使用关键字的一类） |
+| 组件清单 | 引擎侧口径的组件与版本，可与本地分析结果对照 |
+
+sink 清单同样是本项目自己写的（上游的 sink 与 SCA 数据都在 GPLv3 的 GUI 侧，不在 engine 里）。
+查询走 Python 标准库 `sqlite3`，连接一律 `mode=ro` **只读**，不写库。
+
+### 反编译
+
+需要看源码确认「这条规则到底成不成立」时，在分析页填 `指定类名`（留空则整包）后点
+`反编译`，产物输出到 `反编译输出目录`。
+
+用的是**运行期依赖里已经带有的 CFR**，因此**零新增依赖、零额外进程、不需要 Node**
+（实测 84 个类的整包反编译 3.5 秒）。产物**只写不读**：本工具不会去解析这些源码，
+只供使用者用编辑器打开。CFR 是同步 API、无法中途打断，因此超时在这里是
+「完成后判定」而不是「中断」——超出预算时结果被标注，产物仍保留。
+
+设计见 [docs/DESIGN-analyze.md](docs/DESIGN-analyze.md)。
+
 ## 命令行速查
 
 ```powershell
@@ -598,30 +673,37 @@ Java 界面自检针对已编译的 class 运行，并自行打印断言：
 .\build.ps1
 E:\java\jdk17\bin\javac.exe -encoding UTF-8 -cp "target\classes;lib\java-chains-cli-2.0.0-beta4.jar" -d target\tmp2 tests\*.java
 
-# 六套自检（--add-opens 用于字节码类 gadget 访问 JDK 内部 xalan 实现，run.ps1 已内置）
+# 七套自检（--add-opens 用于字节码类 gadget 访问 JDK 内部 xalan 实现，run.ps1 已内置）
 $opens = @('--add-opens', 'java.xml/com.sun.org.apache.xalan.internal.xsltc.trax=ALL-UNNAMED',
            '--add-opens', 'java.xml/com.sun.org.apache.xalan.internal.xsltc.runtime=ALL-UNNAMED')
 E:\java\jdk17\bin\java.exe @opens -cp "target\tmp2;target\classes;lib\java-chains-cli-2.0.0-beta4.jar" UiNavigationCheck
 E:\java\jdk17\bin\java.exe @opens -cp "target\tmp2;target\classes;lib\java-chains-cli-2.0.0-beta4.jar" UiSwitchEndToEndCheck
 E:\java\jdk17\bin\java.exe @opens -cp "target\tmp2;target\classes;lib\java-chains-cli-2.0.0-beta4.jar" ProxyServerCheck
+E:\java\jdk17\bin\java.exe @opens -cp "target\tmp2;target\classes;lib\java-chains-cli-2.0.0-beta4.jar" AnalyzeCheck
 ```
 
 | 自检 | 覆盖范围 | 是否需要 `--add-opens` |
 | --- | --- | --- |
-| `UiNavigationCheck` | 侧边栏展开 / 收起、各页面控件与端到端流程（含 toString 链页、带外 Jar 页与新增配置分组），截图写入 `target/ui-check/` | 需要（预设链端到端生成） |
+| `UiNavigationCheck` | 侧边栏展开 / 收起、各页面控件与端到端流程（含 toString 链页、带外 Jar 页、漏洞分析页与新增配置分组），并真实造 jar 跑一次本地依赖分析，截图写入 `target/ui-check/` | 需要（预设链端到端生成） |
 | `UiSwitchEndToEndCheck` | 抓包头经真实 Python 引擎送入探测页；带外 Jar 页真实托管 → HTTP 取回合法 Zip → 停止后端口可再次绑定 | 需要 |
 | `UiShiroCheck` | Shiro 页全流程 | 需要 |
 | `ShiroCheck` | Shiro 引擎（检测 / 爆破 / 链生成 / 回显） | 需要 |
 | `PayloadCheck` | 载荷生成引擎（目录、分组、导航、节点显示名、双形态、失败路径、安全），外加带外 Jar 25 种组合与 toString 触发节点归属（共 100 条断言） | 需要 |
 | `ProxyServerCheck` | 代理本身：明文抓包、404、`CONNECT` 隧道字节透传、回调与 `find` / `clear` | 不需要 |
+| `AnalyzeCheck` | 漏洞分析内核（61 条断言）：版本比较语义（含 `1.2.80 > 1.2.9`、预发布小于正式发布）、四类坐标来源与优先级、规则命中与不命中、group 不符时不误报、端到端分析与跳转建议、外部引擎与数据库的失败路径 | 不需要 |
 
-依赖边界自检与工具链自检：
+依赖边界自检、源码级别门禁与工具链自检：
 
 ```powershell
 python -X utf8 tools\audit_boundary.py        # 包级依赖边界（无环 / 分层 / 通用组件 / 共享内核）
+python -X utf8 -m unittest tests.test_java8_source_level  # src/ 不得出现 Java 9+ API 与语法
 powershell -File tools\check_agent_tools.ps1  # 多 Agent 工具链 91 项机械断言
 ```
 
-自检会在构建期执行 gadget 参数里的命令（上游 `Clojure` / `Exec` 节点的默认参数值是 `calc`），因此六套入口都会在启动时由 `tests/TestProcessGuard.java` 给现存 `CalculatorApp` 进程拍快照并注册退出钩子，退出时只强制结束快照之后新起的计算器进程，日志里会打印 `[calc-guard]` 一行。若自检结束后仍有残留，说明该入口没有接入守卫。
+源码级别门禁这条不是多余的：`src/pom.xml` 把源码级别锁在 release 8，而上面那几条手写的
+`javac` 命令**不带 `--release 8`**，所以 `src/` 里混进 Java 9+ 的 API 时自检照样全绿，
+只有 `build.ps1` 才会报「找不到符号」。这道断言把该约束变成可秒级跑完的检查。
+
+自检会在构建期执行 gadget 参数里的命令（上游 `Clojure` / `Exec` 节点的默认参数值是 `calc`），因此七套入口都会在启动时由 `tests/TestProcessGuard.java` 给现存 `CalculatorApp` 进程拍快照并注册退出钩子，退出时只强制结束快照之后新起的计算器进程，日志里会打印 `[calc-guard]` 一行。若自检结束后仍有残留，说明该入口没有接入守卫。
 
 **请仅在获得明确测试授权的系统上运行。**

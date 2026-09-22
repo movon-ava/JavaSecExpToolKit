@@ -167,6 +167,8 @@ public final class Main implements UiHandle.Source {
         else if ("payload.tostring".equals(key)) setContent(workbench.tostring());
         else if ("payload.oobjar".equals(key)) setContent(workbench.oobJar());
         else if ("service.servers".equals(key)) setContent(workbench.servers());
+        else if ("analyze.scan".equals(key)) setContent(workbench.analyzeScan());
+        else if ("analyze.chain".equals(key)) setContent(workbench.analyzeChain());
         else if ("tools.upload".equals(key)) showToolsUpload();
         else showHome();
     }
@@ -288,6 +290,7 @@ public final class Main implements UiHandle.Source {
         registry.proxy = proxyWidgets;
         registry.shiro = shiroWidgets;
         registry.toolsUpload = toolsUploadWidgets;
+        registry.analyze = workbench.analyzeWidgets;
         registry.configForm = configForm;
         registry.payload = workbench.payloadWidgets;
         registry.payloadSelector = workbench.payloadSelector;

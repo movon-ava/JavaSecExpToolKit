@@ -26,8 +26,15 @@ SRC = os.path.join(ROOT, "src")
 # "<default>" 是组合根（Main），职责就是装配全部模块，允许依赖任何包；
 # "ui" 是界面层，可以依赖它要展示的功能模块。
 ALLOWED_EDGES = {
-    "<default>": {"probe", "proxy", "shiro", "payload", "config", "util", "ui", "service", "preset"},
-    "ui": {"probe", "proxy", "shiro", "payload", "config", "util", "service", "preset"},
+    "<default>": {"probe", "proxy", "shiro", "payload", "config", "util", "ui", "service", "preset",
+                  "analyzer", "analyze"},
+    "ui": {"probe", "proxy", "shiro", "payload", "config", "util", "service", "preset",
+           "analyzer", "analyze"},
+    # analyzer 是分析内核：只做「读文件 / 跑规则 / 调外部程序」，不依赖任何项目包，
+    # 因此能被单测直接驱动，也能被界面之外的入口复用。
+    "analyzer": set(),
+    # analyze 是编排层：把内核能力按使用场景串起来，因此允许依赖内核。
+    "analyze": {"analyzer"},
     "probe": {"util"},
     "shiro": {"payload", "util"},
     "payload": {"util"},
@@ -42,7 +49,7 @@ ALLOWED_EDGES = {
 }
 
 # 层内不允许反向依赖的包：它们必须是叶子，只能被依赖
-LEAF_PACKAGES = ("config", "proxy", "util", "preset")
+LEAF_PACKAGES = ("config", "proxy", "util", "preset", "analyzer")
 
 # 共享内核：被依赖方，不得依赖上层
 KERNEL_PACKAGES = ("util", "config")

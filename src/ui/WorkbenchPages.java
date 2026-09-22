@@ -36,12 +36,15 @@ public final class WorkbenchPages implements ConfigController.View {
     /** toString 链页与带外 Jar 页的控件：同样由装配方持有，反复进出不累积状态。 */
     public final PayloadToStringPage.Widgets tostringWidgets = PayloadToStringPage.defaults();
     public final OobJarPage.Widgets oobJarWidgets = OobJarPage.defaults();
+    /** 漏洞分析页控件：本页没有需要跨次保留的重状态，但控件仍只建一次。 */
+    public final AnalyzePage.Widgets analyzeWidgets = AnalyzePage.defaults();
 
     private PayloadController payloadController;
     private PresetController presetController;
     private ServiceController serviceController;
     private PayloadToStringController tostringController;
     private OobJarController oobJarController;
+    private AnalyzeController analyzeController;
 
     public WorkbenchPages(UiKit.FontSink fonts, ConfigController config, CapturePage.Widgets capture,
                           Consumer<String> navigator) {
@@ -137,6 +140,74 @@ public final class WorkbenchPages implements ConfigController.View {
         return OobJarPage.build(oobJarWidgets, fonts);
     }
 
+    /** 漏洞分析 · 组件与漏洞：本地规则分析（秒级）。 */
+    public JPanel analyzeScan() {
+        ensureAnalyze();
+        analyzeController.applyDefaults();
+        return AnalyzePage.build(analyzeWidgets, fonts);
+    }
+
+    /**
+     * 漏洞分析 · 调用链查询：与上一项是**同一个页面**。
+     *
+     * <p>两者共用一页是刻意的：本地结论与调用链结论要对照着看，
+     * 拆成两个页面会让使用者来回切页并重复选择同一个 jar。
+     * 这里只把默认查询切到「Sink 命中」，因为从组件结论跳过来时，
+     * 下一步想看的正是「哪些方法调用了敏感 API」。
+     */
+    public JPanel analyzeChain() {
+        ensureAnalyze();
+        analyzeController.applyDefaults();
+        analyzeWidgets.queryKind.setSelectedIndex(2);
+        return AnalyzePage.build(analyzeWidgets, fonts);
+    }
+
+    /**
+     * 漏洞分析页的控制器：持有已释放的脚本与已构建的数据库路径，
+     * 因此只在首次进页时创建，否则每次切页都要重新释放一次脚本资源。
+     */
+    private void ensureAnalyze() {
+        if (analyzeController != null) return;
+        analyzeWidgets.onCopy = () -> {
+            analyzeWidgets.output.selectAll();
+            analyzeWidgets.output.copy();
+            analyzeWidgets.output.setSelectionStart(0);
+            analyzeWidgets.output.setSelectionEnd(0);
+            analyzeWidgets.status.setText("报告已复制到剪贴板");
+        };
+        analyzeController = new AnalyzeController(analyzeWidgets, fonts, new AnalyzeController.View() {
+            @Override public void setStatus(String text) {
+                analyzeWidgets.status.setText(text);
+            }
+
+            @Override public void setOutput(String text) {
+                analyzeWidgets.output.setText(text);
+                // 报告开头是最重要的部分（结论与建议），显式回到起点
+                analyzeWidgets.output.setCaretPosition(0);
+            }
+
+            @Override public void setBusy(boolean busy) {
+                analyzeWidgets.progress.setVisible(busy);
+                analyzeWidgets.analyzeLocal.setEnabled(!busy);
+                analyzeWidgets.runEngine.setEnabled(!busy);
+                analyzeWidgets.query.setEnabled(!busy);
+                analyzeWidgets.decompile.setEnabled(!busy);
+            }
+
+            @Override public void showJumps(java.util.Map<String, String> jumps,
+                                            java.util.function.Consumer<String> onJump) {
+                java.util.List<String> labels = new java.util.ArrayList<String>(jumps.values());
+                java.util.List<java.awt.event.ActionListener> listeners =
+                        new java.util.ArrayList<java.awt.event.ActionListener>();
+                for (String key : jumps.keySet()) {
+                    listeners.add(event -> onJump.accept(key));
+                }
+                AnalyzePage.fillJumps(analyzeWidgets.jumps, labels, listeners, fonts);
+            }
+        }, navigator, config);
+        analyzeController.bind();
+    }
+
     /**
      * 恶意服务器页：控制器持有 java-chains 的服务生命周期，
      * 重建控制器等于把已经监听端口的服务丢掉，界面上再也停不掉它们。
@@ -175,6 +246,7 @@ public final class WorkbenchPages implements ConfigController.View {
 
     /** 退出前停掉全部服务并释放端口；失败也不阻塞退出，避免关不掉窗口。 */
     public void shutdown() {
+        if (analyzeController != null) analyzeController.shutdown();
         if (oobJarController != null) oobJarController.shutdown();
         if (serviceController == null) return;
         try {

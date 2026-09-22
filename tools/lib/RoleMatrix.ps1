@@ -22,8 +22,9 @@ function Get-RoleWriteScopes {
             # 该规定的主体就是主 agent，因此这里必须给它写入域，否则共享内核改动无处可提交（实测过）。
             "src/config/*", "src/util/*", "src/pom.xml"
         )
-        probe   = @("python/fj_probe.py", "src/probe/Probe*")
-        exploit = @("src/shiro/*", "src/payload/*", "src/service/*", "src/preset/*")
+        probe   = @("python/fj_probe.py", "python/jar_report.py", "src/probe/Probe*")
+        exploit = @("src/shiro/*", "src/payload/*", "src/service/*", "src/preset/*",
+                    "src/analyzer/*", "src/analyze/*")
         traffic = @("src/proxy/*", "src/probe/CaptureBridge.java")
         ui      = @("src/ui/*", "src/Main.java")
         test    = @("tests/*")

@@ -21,8 +21,14 @@ SRC = os.path.join(ROOT, "src")
 
 # 允许的依赖方向，与 tests/test_decoupling.py 的 ALLOWED_EDGES 保持一致
 ALLOWED_EDGES = {
-    "<default>": {"probe", "proxy", "shiro", "payload", "config", "util", "ui", "service", "preset"},
-    "ui": {"probe", "proxy", "shiro", "payload", "config", "util", "service", "preset"},
+    "<default>": {"probe", "proxy", "shiro", "payload", "config", "util", "ui", "service", "preset",
+                  "analyzer", "analyze"},
+    "ui": {"probe", "proxy", "shiro", "payload", "config", "util", "service", "preset",
+           "analyzer", "analyze"},
+    # analyzer 是分析内核（只读文件 + 规则判定 + 外部程序调用），不依赖任何项目包
+    "analyzer": set(),
+    # analyze 是编排层，允许依赖分析内核
+    "analyze": {"analyzer"},
     "probe": {"util"},
     "shiro": {"payload", "util"},
     "payload": {"util"},
@@ -36,7 +42,7 @@ ALLOWED_EDGES = {
     "util": set(),
 }
 
-LEAF_PACKAGES = ("config", "proxy", "util", "preset")
+LEAF_PACKAGES = ("config", "proxy", "util", "preset", "analyzer")
 KERNEL_PACKAGES = ("util", "config")
 UP_LAYERS = ("probe", "proxy", "shiro", "payload", "ui", "config")
 

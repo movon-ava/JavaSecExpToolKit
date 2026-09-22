@@ -80,6 +80,18 @@ public final class ConfigForm {
             new JComboBox<String>(templateNames());
     /** 默认末端命令：留空则用模板自己的默认值。 */
     public final JTextField tostringCommand = new JTextField("", 22);
+    // 漏洞分析
+    /** 默认扫描目标：jar 文件或依赖目录；留空则每次进页自行选择。 */
+    public final JTextField analyzeScanTarget = new JTextField("", 32);
+    /** 外部引擎（jar-analyzer-engine）的 jar 路径；留空表示只用本地分析。 */
+    public final JTextField analyzeEngineJar = new JTextField("", 32);
+    /** 引擎工作目录：引擎固定把 jar-analyzer.db 写到工作目录，这里必须显式指定。 */
+    public final JTextField analyzeWorkDir = new JTextField("", 32);
+    /** 引擎分析超时：大 jar 构建数据库是分钟级，必须给上限。 */
+    public final JTextField analyzeTimeout = new JTextField("300", 8);
+    /** 反编译产物目录；走内置 CFR 时输出到这里。 */
+    public final JTextField analyzeDecompileDir = new JTextField("", 32);
+
     /** 带外 Jar 的托管参数：绑定地址、端口与三个动作默认值。 */
     public final JTextField oobjarBindHost = new JTextField("", 24);
     public final JTextField oobjarPort = new JTextField("50001", 8);
@@ -217,6 +229,19 @@ public final class ConfigForm {
                                         "目标接口读取文件的参数名，默认 file"),
                                 new ConfigPage.Row("上传超时（秒）", uploadTimeout,
                                         "上传大文件时比探测耗时更长，默认 30")}),
+                new ConfigPage.Group("漏洞分析配置",
+                        "「漏洞分析」页的默认参数；引擎路径留空时只跑本地规则分析。",
+                        new ConfigPage.Row[]{
+                                new ConfigPage.Row("默认扫描目标", analyzeScanTarget,
+                                        "jar 文件或依赖目录；留空则进页时再选"),
+                                new ConfigPage.Row("外部引擎 JAR", analyzeEngineJar,
+                                        "jar-analyzer-engine 的 jar；留空只用本地分析"),
+                                new ConfigPage.Row("引擎工作目录", analyzeWorkDir,
+                                        "引擎固定把 jar-analyzer.db 写到工作目录"),
+                                new ConfigPage.Row("分析超时（秒）", analyzeTimeout,
+                                        "大 jar 构建数据库是分钟级，默认 300"),
+                                new ConfigPage.Row("反编译输出目录", analyzeDecompileDir,
+                                        "留空则输出到工作目录下的 decompiled")}),
                 new ConfigPage.Group("toString 链配置",
                         "「Payload → toString 链」的默认参数；链模板与命令改完下次进页生效。",
                         new ConfigPage.Row[]{

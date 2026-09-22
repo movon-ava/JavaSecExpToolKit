@@ -1,5 +1,204 @@
 # AI 工作报告
 
+## 2026-09-22（本轮：漏洞分析一级目录 - C 打底 + B 深挖 + 反编译）
+
+### 一、需求
+
+> 使用 c 方法去分析 pom 和 lib 依赖，再结合 B 方法具体分析。需要反编译的可以使用
+> jar-analyzer/jsd。功能新增一个漏洞分析一级目录
+
+拆解成三件事：**C**（本地读依赖坐标，秒级）打底 → **B**（外部引擎建调用图数据库，
+分钟级）深挖 → 反编译定点确认。三者共用同一个输入（同一个 jar），因此合成**一个页面**、
+两个二级项，而不是三个二级菜单。
+
+### 二、根因分析（改代码之前先定位成因）
+
+本轮修掉三个真实缺陷，共同点是**都不会报错，只会让结论静默失真**。
+
+**缺陷 1（最严重）**：`pom.properties` 的键大小写不匹配，整个 C 方案静默退化。
+
+读取时为了兼容大小写不一致的打包工具，把键统一转成小写存入 Map；
+取值却用了驼峰常量 `groupId` / `artifactId`，**永远取不到值**。
+于是每个 jar 的 `META-INF/maven/**/pom.properties` 都读不出坐标，
+整份依赖清单退化到「按文件名推断」——版本判定随之全部失真，
+而界面上看不出任何异常（结论照出，只是依据错了）。
+
+**修法**：改用小写常量 `groupid` / `artifactid`，并在常量上写明原因。
+自检新增「pom.properties 能取出坐标」「来源标记正确」两条断言咬住这个点。
+
+**缺陷 2**：`Version` 的缺段语义让预发布版倒挂。
+
+原本把缺失段按数字 `0` 补齐，于是 `1.0-rc1` 被判成**大于** `1.0`
+（`rc1` 段与补出来的 `0` 比较）。预发布版比正式版大，方向反了。
+**修法**：引入 `MISSING` 哨兵对象——缺段对数字段按 0 看待，对字符串段（`rc1` / `beta2`）
+视为「正式发布」，即比任何预发布标记都大；同时修正比较方向（`sign` 曾写反，由自检抓出）。
+
+实测语义：
+
+| 表达式 | 结果 |
+| --- | --- |
+| `1.2.80` vs `1.2.9` | `>`（不能按字符串比） |
+| `1.2` vs `1.2.0` | `=`（缺段按 0） |
+| `1.0-rc1` vs `1.0` | `<`（预发布小于正式版） |
+| `1.0-beta2` vs `1.0-rc1` | `<` |
+| `""` / `null` | 不可比 → 规则一律不匹配（宁可不报，不可误报） |
+
+**缺陷 3**：groupId 缺失时的匹配取舍。
+
+只按 artifactId 匹配会把 fork 或同名包误判成受影响的组件；直接拒绝匹配又会让
+「只有文件名来源」的依赖永远判不出结论。**取舍**：groupId 存在时必须核对前缀；
+缺失时放行但把结论可信度降到「低」，由 `Finding.Confidence` 明确告诉使用者这条判定
+建立在推断之上。
+
+**缺陷 4（只在 Maven 构建下现形）**：`Process#descendants()` 是 Java 9 才加入的 API，
+而 `src/pom.xml` 的 `maven.compiler.release` 是 **8**。此前七套自检**全绿**，
+因为它们用的 `javac` 命令（README 与 `run.ps1` 里手写的）**没有 `--release 8`**，
+默认按 JDK 17 编译，于是 9+ API 照样通过，只有 `build.ps1` 才会报「找不到符号」。
+两个调用点是 `EngineRunner`（超时杀引擎进程树）与 `ScriptRunner`（超时杀脚本进程）。
+
+这个缺陷的性质比前三个更值得记录：**错误在最后一刻才现形，而且看起来像构建环境问题**。
+修法两层：
+
+1. 抽出 `src/analyzer/ProcessTree.java`：反射调用 `Process#descendants()` 与
+   `ProcessHandle#destroyForcibly()`，**按运行期可用性降级**——Java 9+ 收整棵树，
+   Java 8 只强杀父进程。Java 8 运行期本来就没有等价能力，降级是唯一诚实的做法。
+2. 新增 `tests/test_java8_source_level.py`：**把「不许用 9+ API 与语法」变成可机械判定的
+   断言**，扫描前先剥离注释与字符串（复用 `tests/test_decoupling.py` 里已验证的状态机，
+   不写第二份），因此文档里提到 `List.of` 之类的说明文字不会误报。
+   已用**变体验证**它能抓到原缺陷（临时插回 `process.descendants()` 后如实报出文件与行号）。
+
+顺带修掉另两处：CFR 的 `Builder` 没有 `withClassPath` 方法，指定类名反编译时改用
+`extraclasspath` 选项传 jar，否则被反编译的类引用同包其它类时只能输出残缺源码；
+`jsd` 路线从默认路径降级为「仅保留命令行拼装能力」。
+
+### 三、改动清单
+
+| 文件 | 写入域 | 动作 |
+| --- | --- | --- |
+| `src/analyzer/Dependency.java` | exploit | 新增：坐标 + 来源枚举（`POM_PROPERTIES` / `POM_XML` / `MANIFEST` / `FILE_NAME`）+ 去重键 |
+| `src/analyzer/DependencyScanner.java` | exploit | 新增：四类来源的分层采信；`JarFile` 条目枚举，不解压不落盘不加载类；纯函数分支改 public 供自检直测 |
+| `src/analyzer/PomScanner.java` | exploit | 新增：工程 pom.xml 的 DOM 解析（关 XXE，只取顶层 `<dependencies>`，跳过 `dependencyManagement` / `profiles`） |
+| `src/analyzer/Version.java` | exploit | 新增：逐段比较 + `MISSING` 哨兵，修掉预发布倒挂 |
+| `src/analyzer/VulnerabilityRules.java` | exploit | 新增：25 条内置规则（三种区间形态） |
+| `src/analyzer/Finding.java` | exploit | 新增：结论 + 可信度 + 证据 + 跳转 key |
+| `src/analyzer/VulnerabilityAnalyzer.java` | exploit | 新增：判定、排序、渲染、建议 |
+| `src/analyzer/EngineRunner.java` | exploit | 新增：外部引擎调用；显式工作目录、超时杀进程树、清临时目录 |
+| `src/analyzer/ReportReader.java` | exploit | 新增：查询枚举（五类），只映射不复制 SQL |
+| `src/analyzer/ScriptRunner.java` | exploit | 新增：释放 JAR 内脚本、取 Python 解释器、带超时执行 |
+| `src/analyzer/Decompiler.java` | exploit | 新增：CFR 封装（`extraclasspath`），超预算标注 |
+| `src/analyzer/ProcessTree.java` | exploit | 新增：进程树终止（反射 + 运行期降级，规避 Java 9+ API） |
+| `src/analyze/AnalyzeEngine.java` | exploit | 新增：本地分析 / 调引擎 / 查询 / 反编译的编排 |
+| `src/analyze/AnalyzeReport.java` | exploit | 新增：报告载体 |
+| `src/analyze/AnalyzeCommand.java` | exploit | 新增：命令行拼装集中一处（链路唯一契约） |
+| `python/jar_report.py` | probe | 新增：只读 `mode=ro` 连接、26 项 sink 清单、五类查询、缺表给可读提示 |
+| `src/ui/AnalyzePage.java` | ui | 新增：分析页视图 |
+| `src/ui/AnalyzeController.java` | ui | 新增：后台线程三类动作 + EDT 回写 + 跳转按钮渲染 |
+| `src/ui/NavController.java` | ui | 改：新增一级分类「漏洞分析」（两个二级项），位于「小工具」之前 |
+| `src/ui/WorkbenchPages.java` | ui | 改：新增懒加载分析页与跳转按钮渲染，`shutdown()` 加分析页 |
+| `src/ui/WidgetRegistry.java` | ui | 改：登记 analyze 19 项控件 + config 5 项 |
+| `src/ui/ConfigForm.java` | ui | 改：新增 5 个控件与「漏洞分析配置」分组 |
+| `src/ui/ConfigController.java` | ui | 改：`resetForm()` 回填、`save()` 落盘 5 键 |
+| `src/Main.java` | ui | 改：两条路由 + 注册表一行 |
+| `src/pom.xml` | 主 agent | 改：`<resources>` 的 python includes 增加 `jar_report.py`（**未新增依赖**） |
+| `tests/AnalyzeCheck.java` | 测试 | 新增：61 条断言 |
+| `tests/test_jar_report.py` | 测试 | 新增：13 项 |
+| `tests/test_java8_source_level.py` | 测试 | 新增：Java 8 源码级别门禁（3 项，含反向用例与空扫描护栏） |
+| `tests/UiNavigationCheck.java` | 测试 | 改：导航 7→8 项、展开 8→9；新增分析页 24 条 + 端到端真实 jar 扫描 + 配置页 5 条 |
+| `tests/test_decoupling.py`、`tools/audit_boundary.py` | 主 agent / 测试 | 改：`analyzer` 列为叶子层、`analyze` 只依赖 `analyzer` |
+| `tools/lib/RoleMatrix.ps1` | 主 agent | 改：`probe` 加 `python/jar_report.py`；`exploit` 加 `src/analyzer/*`、`src/analyze/*` |
+| `docs/AGENT-ROLES.md` | 主 agent | 改：总览表与验证命令表两处同步 |
+| `docs/DESIGN-analyze.md` | 主 agent | 新增：设计文档 |
+| `README.md` / `README.en.md` | 主 agent | 改：中英同步（导航 / 配置页 / 项目结构 / 测试 / 新增「漏洞分析」一节） |
+| `PROGRESS.md` | 主 agent | 改：状态表三行 + 时间线一条 + 局限五条 |
+
+### 四、功能行为
+
+**组件与漏洞（本地分析，秒级）**
+
+- 目标是单个 jar 或依赖目录（递归取全部 jar），另可给源码工程的 `pom.xml` 做口径对照。
+- 坐标按来源分层采信：`pom.properties` > `pom.xml` > `MANIFEST.MF` > 文件名推断；
+  来源一路带进结论并决定可信度。
+- 25 条内置规则：fastjson 6 条（按 autoType 绕过手法分段）+ fastjson2 1 条、
+  Shiro 4 条、gadget 依赖 7 条、组件 RCE 7 条。
+- 结论带**依据**（来源 + 区间 + 命中规则 id）、**前提**、**下一步动作**；
+  按可信度排序；报告末尾固定带「没命中不代表没有漏洞」。
+- 跳转建议渲染成按钮，点一下直达对应功能页。
+- 实测：真实造的 `fastjson-1.2.24` jar，本地分析 **30 ms**，识别出
+  `com.alibaba:fastjson:1.2.24` 并命中 `FJ-AUTOTYPE-124`。
+
+**调用链查询（外部引擎，分钟级）**
+
+- 配置页填 `jar-analyzer-engine` 的 jar 与工作目录；引擎固定把 `jar-analyzer.db`
+  写到工作目录，本工具按这个事实取产物，不猜路径。
+- 超时默认 300 秒，低于 30 秒提前拦下；超时 `destroyForcibly` 杀进程树并清临时目录。
+- 五类查询：总览 / 入口点 / Sink 命中（26 项自写 sink 清单）/ 字符串常量 / 组件清单。
+- 查询走 Python 标准库 `sqlite3`，一律 `mode=ro` **只读**。
+
+**反编译**
+
+- 用运行期依赖里已带的 CFR：零新增依赖、零额外进程、无需 Node。
+- 实测整包 84 个类 **3.5 秒**。
+- 产物只写不读，输出到独立目录供编辑器打开；超预算时标注但仍保留产物。
+
+**配置页新增 5 键**：`analyze_scan_target`、`analyze_engine_jar`、`analyze_work_dir`、
+`analyze_timeout`（默认 300）、`analyze_decompile_dir`。
+
+### 五、验证记录
+
+| 验证项 | 命令 | 结果 |
+| --- | --- | --- |
+| 源码编译 | `javac` 编译 `src/**` | exit 0 |
+| 自检编译 | `javac` 编译 `tests/*.java` | exit 0 |
+| 分析自检 | `AnalyzeCheck` | exit 0，**61** 条断言，失败 0 |
+| 载荷自检 | `PayloadCheck` | exit 0，100 条断言，失败 0 |
+| Shiro 自检 | `ShiroCheck` | exit 0 |
+| 代理自检 | `ProxyServerCheck` | exit 0 |
+| 界面自检 | `UiNavigationCheck` | exit 0，「全部界面自检通过」，清理 2 个计算器进程 |
+| Shiro 界面自检 | `UiShiroCheck` | exit 0 |
+| 端到端自检 | `UiSwitchEndToEndCheck` | exit 0，「端到端自检通过」 |
+| Python 单测 | `python -X utf8 -m unittest discover -s tests` | **Ran 130 tests OK**（原 114 + 16） |
+| 依赖边界 | `python -X utf8 tools\audit_boundary.py` | 结论「全部通过」（无环 / 无越界 / 叶子层无出边 / 共享内核无反向依赖） |
+| 源码级别门禁 | `python -X utf8 -m unittest tests.test_java8_source_level` | 3 项通过；另用变体（插回 `process.descendants()`）验证能如实报错 |
+| release 8 编译 | `javac --release 8` 编译 `src/**` | exit 0 |
+| 工具链自检 | `powershell -File tools\check_agent_tools.ps1` | **91 项通过** |
+| OpenSpec | `openspec validate --all --strict` | 11 passed, 0 failed |
+| 文件规模 | `Main.java` 352 行（≤400）；`src/ui/` 最大 593 行（`PayloadController.java`，≤600）；`src/analyzer/` 最大 274 行、`src/analyze/` 最大 280 行 | 通过 |
+
+端到端实测（`UiNavigationCheck` 内）：真实造 jar → 本地分析 **30 ms**，
+识别 `com.alibaba:fastjson:1.2.24`、命中 autoType 规则、标 `[高]`、
+含 `pom.properties` 与 `<= 1.2.24` 依据、生成跳转按钮。
+
+### 六、多 Agent 协作
+
+| 角色 | 主要工作 |
+| --- | --- |
+| 主 agent | 需求拆解与三层边界裁定、OpenSpec change 规划件、`src/pom.xml` 资源声明、依赖边界规则与角色矩阵同步、设计文档、README 中英同步、PROGRESS / AI 报告、门禁总控、备份轮转、构建与提交推送 |
+| 利用链 agent | `src/analyzer/**` 11 个类与 `src/analyze/**` 3 个类：坐标来源分层、版本比较哨兵、25 条规则表、引擎调用的三处实测约束、CFR 封装 |
+| 探测 agent | `python/jar_report.py`：只读连接、26 项自写 sink 清单、五类查询、缺表可读提示 |
+| 界面 agent | 分析页视图与控制器、导航一级分类、`WidgetRegistry` 19 项登记、配置页 5 键与「漏洞分析配置」分组、`Main.java` 路由 |
+| 测试 agent | `AnalyzeCheck` 61 条、`test_jar_report.py` 13 项、`UiNavigationCheck` 分析页 24 条与端到端真实 jar 扫描、`test_selfcheck_hygiene.py` 入口登记 |
+| 监督 agent | 逐文件比对写入域（`src/config/**`、`src/util/**` 未被触碰）、核对 `analyzer` 无出边与 `analyze` 只依赖 `analyzer`、核对文件规模上限 |
+| 看护 agent | 盯长任务日志判定「在做 / 等待 / 卡死」；本轮无真卡死，未终止任何会话 |
+
+### 七、如实说明的局限
+
+- 内置规则只覆盖上表 25 条，收录标准是「判定后能接上本工具后续动作」，
+  因此**未命中不等于目标没有漏洞**（报告里固定带这句）。
+- B 方案需使用者自备 `jar-analyzer-engine` 的 jar。**本机未持有该 jar**，
+  因此引擎调用路径止于「命令行拼装 + 失败路径 + 数据库查询」三层验证，
+  数据库查询用模拟库（`tests/test_jar_report.py` 的 14 张表子集）覆盖，**未做真实端到端**。
+- CFR 是同步 API，**反编译超预算时无法中途打断**，只能完成后标注（产物仍保留）。
+- 被 shade 重打包且未保留 `META-INF/maven` 的 jar 只能退化到文件名推断，
+  此时结论可信度标为「低」。
+- `jar-analyzer/jsd`（Node 版）只保留命令行拼装能力，未接入界面，也未释放进 JAR。
+- 两个 change 规划件（`analyze-local-deps`、`ui-analyze-view`）尚未 archive，
+  等使用稳定后再走 archive 流程。
+- 源码级别门禁用的是**显式黑名单**（20 条正则），不是全量 API 比对，
+  因此它能挡住已知的高频 9+ API，但不保证穷尽；判定依据写在
+  `tests/test_java8_source_level.py` 顶部。
+- `ProcessTree` 在 Java 8 运行时**只能强杀父进程**，收不掉孙进程：
+  这是 Java 8 没有等价能力的必然结果，不是实现遗漏。
+
 ## 2026-09-22（本轮：HTTP 带外 Jar + toString 利用链）
 
 ### 一、需求

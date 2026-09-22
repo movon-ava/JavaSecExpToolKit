@@ -40,6 +40,8 @@ public final class WidgetRegistry {
     public ServicePage.Widgets service;
     public PayloadToStringPage.Widgets tostring;
     public OobJarPage.Widgets oobJar;
+    /** 漏洞分析页：自检直接读它的目标框、按钮与报告区。 */
+    public AnalyzePage.Widgets analyze;
 
     /** 构建登记表：名字与控件一一对应，顺序稳定，便于对照断言排查。 */
     public Map<String, Object> build() {
@@ -105,6 +107,27 @@ public final class WidgetRegistry {
         entries.put("oobJarCopyUrl", oobJar.copyUrl);
         entries.put("oobJarStatus", oobJar.status);
         entries.put("oobJarOutput", oobJar.output);
+        if (analyze != null) {
+            entries.put("analyzeTarget", analyze.target);
+            entries.put("analyzeChooseTarget", analyze.chooseTarget);
+            entries.put("analyzePom", analyze.pomPath);
+            entries.put("analyzeClassName", analyze.className);
+            entries.put("analyzeOutputDir", analyze.outputDir);
+            entries.put("analyzeLocal", analyze.analyzeLocal);
+            entries.put("analyzeRunEngine", analyze.runEngine);
+            entries.put("analyzeQuick", analyze.quickMode);
+            entries.put("analyzeInnerJars", analyze.innerJars);
+            entries.put("analyzeTimeout", analyze.timeoutSeconds);
+            entries.put("analyzeQueryKind", analyze.queryKind);
+            entries.put("analyzeKeyword", analyze.keyword);
+            entries.put("analyzeQuery", analyze.query);
+            entries.put("analyzeDecompile", analyze.decompile);
+            entries.put("analyzeOpenOutput", analyze.openOutput);
+            entries.put("analyzeCopy", analyze.copy);
+            entries.put("analyzeStatus", analyze.status);
+            entries.put("analyzeOutput", analyze.output);
+            entries.put("analyzeJumps", analyze.jumps);
+        }
 
         entries.put("target", probe.target);
         entries.put("timeout", probe.timeout);
@@ -228,6 +251,11 @@ public final class WidgetRegistry {
         entries.put("configOobJarDefaultUrl", configForm.oobjarDefaultUrl);
         entries.put("configOobJarDefaultPath", configForm.oobjarDefaultPath);
         entries.put("configOobJarDefaultCommand", configForm.oobjarDefaultCommand);
+        entries.put("configAnalyzeScanTarget", configForm.analyzeScanTarget);
+        entries.put("configAnalyzeEngineJar", configForm.analyzeEngineJar);
+        entries.put("configAnalyzeWorkDir", configForm.analyzeWorkDir);
+        entries.put("configAnalyzeTimeout", configForm.analyzeTimeout);
+        entries.put("configAnalyzeDecompileDir", configForm.analyzeDecompileDir);
         entries.put("configUploadUrl", configForm.uploadUrl);
         entries.put("configUploadField", configForm.uploadField);
         entries.put("configUploadTimeout", configForm.uploadTimeout);

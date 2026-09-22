@@ -42,20 +42,23 @@ public final class UiNavigationCheck {
         final JList<?> list = (JList<?>) field(main, "navigationList");
         List<?> collapsed = (List<?>) field(main, "navigationItems");
         System.out.println("初始导航项: " + labels(collapsed));
-        // 一级分类顺序对齐网页版 java-chains：主页 / Payload / 服务 / 代理 / FastJson / 小工具 / 配置。
-        check("初始应为 7 项（主页/Payload/服务/代理/FastJson/小工具/配置）", collapsed.size() == 7);
+        // 一级分类顺序对齐网页版 java-chains，并在其后追加本项目自有的「漏洞分析」与「小工具」。
+        check("初始应为 8 项（主页/Payload/服务/代理/FastJson/漏洞分析/小工具/配置）",
+                collapsed.size() == 8);
         check("初始第二项为 Payload 分类", labels(collapsed).get(1).startsWith("Payload"));
         check("初始含服务分类", labels(collapsed).get(2).startsWith("服务"));
         check("初始含代理分类", labels(collapsed).get(3).startsWith("代理"));
         check("初始含 FastJson 分类", labels(collapsed).get(4).startsWith("FastJson"));
-        check("初始含小工具分类", labels(collapsed).get(5).startsWith("小工具"));
-        check("末项为配置", "配置".equals(labels(collapsed).get(6)));
+        check("初始含漏洞分析分类", labels(collapsed).get(5).startsWith("漏洞分析"));
+        check("初始含小工具分类", labels(collapsed).get(6).startsWith("小工具"));
+        check("末项为配置", "配置".equals(labels(collapsed).get(7)));
         check("初始各分类都显示收起箭头",
                 labels(collapsed).get(1).endsWith("\u25b8")
                         && labels(collapsed).get(2).endsWith("\u25b8")
                         && labels(collapsed).get(3).endsWith("\u25b8")
                         && labels(collapsed).get(4).endsWith("\u25b8")
-                        && labels(collapsed).get(5).endsWith("\u25b8"));
+                        && labels(collapsed).get(5).endsWith("\u25b8")
+                        && labels(collapsed).get(6).endsWith("\u25b8"));
         check("展开箭头位于文字右侧",
                 labels(collapsed).get(4).indexOf("\u25b8") > labels(collapsed).get(4).indexOf("FastJson"));
 
@@ -63,7 +66,7 @@ public final class UiNavigationCheck {
         toggle(main);
         List<?> expanded = (List<?>) field(main, "navigationItems");
         System.out.println("展开后导航项: " + labels(expanded));
-        check("展开后应为 8 项（含 Fastjson 探测）", expanded.size() == 8);
+        check("展开后应为 9 项（含 Fastjson 探测）", expanded.size() == 9);
         check("展开后 FastJson 应显示展开箭头", labels(expanded).get(4).endsWith("\u25be"));
         check("展开后子项紧跟其分类", "Fastjson 探测".equals(labels(expanded).get(5)));
         System.out.println("展开后选中项: " + displayFor(list.getSelectedValue()));
@@ -72,13 +75,13 @@ public final class UiNavigationCheck {
         toggle(main);
         List<?> recollapsed = (List<?>) field(main, "navigationItems");
         System.out.println("收起后导航项: " + labels(recollapsed));
-        check("再次点击应收起回 7 项", recollapsed.size() == 7);
+        check("再次点击应收起回 8 项", recollapsed.size() == 8);
         check("收起后 FastJson 应显示收起箭头", labels(recollapsed).get(4).endsWith("\u25b8"));
 
         select(main, "fastjson.detect");
         List<?> afterJump = (List<?>) field(main, "navigationItems");
         System.out.println("跳转探测页后: " + labels(afterJump));
-        check("跳转二级功能应自动展开分类", afterJump.size() == 8);
+        check("跳转二级功能应自动展开分类", afterJump.size() == 9);
         check("跳转后选中二级功能", "Fastjson 探测".equals(plain(list.getSelectedValue())));
 
         check("识别默认勾选", ((AbstractButton) field(main, "modeDetect")).isSelected());
@@ -744,6 +747,100 @@ public final class UiNavigationCheck {
                 ((JTextArea) fieldQuiet(main, "toolsUploadResult")).getText().contains("请先选择"));
         snapshot(frame, "target/ui-check/10-tools-upload.png");
 
+        // 漏洞分析 · 组件与漏洞：导航 + 控件 + 端到端本地分析
+        select(main, "analyze.scan");
+        List<String> analyzeTexts = contentLabels(main);
+        System.out.println("漏洞分析页标题: " + analyzeTexts);
+        check("跳转漏洞分析二级项打开分析页", analyzeTexts.contains("漏洞分析"));
+        check("跳转分析页不回落到主页", !analyzeTexts.contains("安全测试工具箱"));
+        check("漏洞分析分类自动展开且含两个二级项",
+                labels(navItems(main)).contains("组件与漏洞") && labels(navItems(main)).contains("调用链查询")
+                        && labels(navItems(main)).size() == expectedNavSize());
+        check("组件与漏洞为选中项", "组件与漏洞".equals(plain(list.getSelectedValue())));
+        check("分析页含目标输入框", fieldQuiet(main, "analyzeTarget") instanceof JTextField);
+        check("分析页含选择目标按钮", fieldQuiet(main, "analyzeChooseTarget") instanceof JButton);
+        check("分析页含 pom.xml 输入框", fieldQuiet(main, "analyzePom") instanceof JTextField);
+        check("分析页含特殊类名输入框", fieldQuiet(main, "analyzeClassName") instanceof JTextField);
+        check("分析页含反编译输出目录输入框", fieldQuiet(main, "analyzeOutputDir") instanceof JTextField);
+        check("分析页含调用链超时输入框", fieldQuiet(main, "analyzeTimeout") instanceof JTextField);
+        check("分析页含本地依赖分析按钮", fieldQuiet(main, "analyzeLocal") instanceof JButton);
+        check("分析页含调用链分析按钮", fieldQuiet(main, "analyzeRunEngine") instanceof JButton);
+        check("分析页含快速模式与解析嵌套 jar 开关",
+                fieldQuiet(main, "analyzeQuick") instanceof AbstractButton
+                        && fieldQuiet(main, "analyzeInnerJars") instanceof AbstractButton);
+        check("分析页默认勾选解析嵌套 jar", ((AbstractButton) fieldQuiet(main, "analyzeInnerJars")).isSelected());
+        check("分析页含数据库查询下拉框", fieldQuiet(main, "analyzeQueryKind") instanceof JComboBox);
+        check("分析页查询候选与引擎查询一一对应",
+                comboOptions(main, "analyzeQueryKind").size() == analyzer.ReportReader.Query.values().length);
+        check("分析页含关键字输入框与查询按钮",
+                fieldQuiet(main, "analyzeKeyword") instanceof JTextField
+                        && fieldQuiet(main, "analyzeQuery") instanceof JButton);
+        check("分析页含反编译与打开输出目录按钮",
+                fieldQuiet(main, "analyzeDecompile") instanceof JButton
+                        && fieldQuiet(main, "analyzeOpenOutput") instanceof JButton);
+        check("分析页含报告文本域且只读",
+                fieldQuiet(main, "analyzeOutput") instanceof JTextArea
+                        && !((JTextArea) fieldQuiet(main, "analyzeOutput")).isEditable());
+        check("分析页含跳转建议容器与状态标签",
+                fieldQuiet(main, "analyzeJumps") instanceof javax.swing.JPanel
+                        && fieldQuiet(main, "analyzeStatus") instanceof javax.swing.JLabel);
+
+        // 失败路径：没选目标时给出可读提示而不是静默失败
+        setText(main, "analyzeTarget", "");
+        setText(main, "analyzePom", "");
+        clickButton(main, "analyzeLocal");
+        Thread.sleep(200);
+        check("未选目标时提示而不是静默失败",
+                ((javax.swing.JLabel) fieldQuiet(main, "analyzeStatus")).getText().contains("请先选择"));
+
+        // 端到端：造一个带 Maven 元数据的 jar，真实跑一次本地分析
+        java.nio.file.Path jarDir = java.nio.file.Files.createTempDirectory("javasec-analyze");
+        java.nio.file.Path jar = jarDir.resolve("fastjson-1.2.24.jar");
+        java.util.zip.ZipOutputStream zip =
+                new java.util.zip.ZipOutputStream(java.nio.file.Files.newOutputStream(jar));
+        zip.putNextEntry(new java.util.zip.ZipEntry("META-INF/maven/com.alibaba/fastjson/pom.properties"));
+        zip.write("version=1.2.24\ngroupId=com.alibaba\nartifactId=fastjson\n"
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        zip.closeEntry();
+        zip.putNextEntry(new java.util.zip.ZipEntry("com/alibaba/fastjson/JSON.class"));
+        zip.write(new byte[]{(byte) 0xCA, (byte) 0xFE, (byte) 0xBA, (byte) 0xBE});
+        zip.closeEntry();
+        zip.close();
+
+        setText(main, "analyzeTarget", jar.toAbsolutePath().toString());
+        clickButton(main, "analyzeLocal");
+        // 状态在点击处理内同步置位，因此这里等到它变化时，报告已经写完
+        String analyzeDone = awaitStatus(main, "analyzeStatus", "本地依赖分析 执行中…", 15000);
+        System.out.println("本地分析状态: " + analyzeDone);
+        String analyzeReport = ((JTextArea) fieldQuiet(main, "analyzeOutput")).getText();
+        System.out.println("本地分析报告(截断): "
+                + analyzeReport.substring(0, Math.min(420, analyzeReport.length())));
+        check("端到端本地分析给出报告", analyzeReport.contains("组件与漏洞分析报告"));
+        check("报告识别出 fastjson 组件", analyzeReport.contains("com.alibaba:fastjson:1.2.24"));
+        check("报告命中 autoType 规则", analyzeReport.contains("Fastjson 反序列化"));
+        check("报告标注可信度为高（来自 pom.properties）", analyzeReport.contains("[高]"));
+        check("报告给出判定依据（来源与命中区间）",
+                analyzeReport.contains("pom.properties") && analyzeReport.contains("<= 1.2.24"));
+        check("报告给出建议动作", analyzeReport.contains("建议:"));
+        // 建议按钮与状态在同一个 EDT 任务里写入，这里轮询等待，避免读到中间状态
+        long jumpDeadline = System.currentTimeMillis() + 5000;
+        int jumpCount = 0;
+        while (System.currentTimeMillis() < jumpDeadline) {
+            jumpCount = ((javax.swing.JPanel) fieldQuiet(main, "analyzeJumps")).getComponentCount();
+            if (jumpCount > 0) break;
+            Thread.sleep(100);
+        }
+        check("命中后生成可跳转的建议按钮", jumpCount > 0);
+
+        // 调用链查询：未构建数据库时必须给出可读提示
+        select(main, "analyze.chain");
+        clickButton(main, "analyzeQuery");
+        Thread.sleep(300);
+        String chainStatus = ((javax.swing.JLabel) fieldQuiet(main, "analyzeStatus")).getText();
+        check("未构建数据库时查询给出可读提示",
+                chainStatus.contains("还没有可查询的数据库") || chainStatus.contains("找不到"));
+        snapshot(frame, "target/ui-check/11-analyze.png");
+
         // 配置页新增「小工具配置」分组
         select(main, "config");
         check("配置页含小工具配置分组", contentLabels(main).contains("小工具配置"));
@@ -769,6 +866,18 @@ public final class UiNavigationCheck {
                 fieldQuiet(main, "configOobJarDefaultUrl") instanceof JTextField
                         && fieldQuiet(main, "configOobJarDefaultPath") instanceof JTextField
                         && fieldQuiet(main, "configOobJarDefaultCommand") instanceof JTextField);
+        check("配置页含漏洞分析配置分组", contentLabels(main).contains("漏洞分析配置"));
+        check("配置页含默认扫描目标输入框",
+                fieldQuiet(main, "configAnalyzeScanTarget") instanceof JTextField);
+        check("配置页含外部引擎 JAR 输入框",
+                fieldQuiet(main, "configAnalyzeEngineJar") instanceof JTextField);
+        check("配置页含引擎工作目录输入框",
+                fieldQuiet(main, "configAnalyzeWorkDir") instanceof JTextField);
+        check("配置页含分析超时输入框且默认 300 秒",
+                fieldQuiet(main, "configAnalyzeTimeout") instanceof JTextField
+                        && "300".equals(((JTextField) fieldQuiet(main, "configAnalyzeTimeout")).getText()));
+        check("配置页含反编译输出目录输入框",
+                fieldQuiet(main, "configAnalyzeDecompileDir") instanceof JTextField);
         check("带外 Jar 默认落地路径与上游预设一致",
                 "/tmp/payload.bin".equals(
                         ((JTextField) fieldQuiet(main, "configOobJarDefaultPath")).getText()));

@@ -138,6 +138,9 @@ The sidebar is grouped by feature:
 - `代理` — first-level category; click it to expand / collapse `代理抓包` (local HTTP proxy)
   and `抓包转换` (capture one request, inspect the raw response, convert formats)
 - `FastJson` — first-level category; click it to expand / collapse `Fastjson 探测`
+- `漏洞分析` — first-level category; click it to expand / collapse `组件与漏洞` (read dependency
+  coordinates locally and judge known vulnerabilities) and `调用链查询` (build a call-graph
+  database with an external engine, then query sinks / entry points / string constants)
 - `小工具` — first-level category; click it to expand / collapse `文件上传` (pick a local file,
   upload it as multipart to a target endpoint, and keep the raw response)
 - `配置` — settings, grouped into `通用配置` and per-feature sections
@@ -183,9 +186,13 @@ The `配置` page stores fixed parameters in
 - `预设链配置` — default category filter for the preset page (choices come from the built-in preset file itself)
 - `小工具配置` — the file-upload page defaults: upload URL, form field name (default `file`) and
   upload timeout (default 30 seconds)
+- `漏洞分析配置` — default scan target (jar / dependency directory), external engine JAR
+  (`jar-analyzer-engine`; blank means local analysis only), engine working directory (the engine
+  always writes `jar-analyzer.db` there), analysis timeout (default 300 seconds) and the
+  decompile output directory (blank writes to `decompiled` under the working directory)
 
 Saved values pre-fill **every feature page** (probe, proxy, capture, Shiro, Payload, presets,
-malicious servers, the toString page and the out-of-band Jar page) and are pushed to already-open
+malicious servers, the toString page, the out-of-band Jar page and the analysis page) and are pushed to already-open
 pages right after saving, with no restart needed. After the proxy
 starts, the address and port actually used are written back into the settings, so the port shown
 on the settings page reflects real usage. The Python engine reads the same file, and explicit
@@ -225,17 +232,19 @@ readable hint instead of an engine error — set CEYE Token on the settings page
 
 | Path | Purpose |
 | --- | --- |
-| `src/` | Composition root `Main.java` (301 lines: wiring and page switching only), `pom.xml`, the local proxy (`proxy/ProxyServer.java`), and the Shiro module (`shiro/`) |
+| `src/` | Composition root `Main.java` (352 lines: wiring and page switching only), `pom.xml`, the local proxy (`proxy/ProxyServer.java`), and the Shiro module (`shiro/`) |
 | `src/ui/` | Per-feature **views** and **behaviour** kept apart: views `*Page` / `*Form` (`HomePage` / `ProbePage` / `CapturePage` / `ProxyPage` / `ShiroPage` / `PayloadPage` / `PresetPage` / `ServicePage` / `ConfigPage` / `ConfigForm` / `ToolsUploadPage` / `PayloadToStringPage` / `OobJarPage`), behaviour `*Controller` (`NavController` / `ProbeController` / `CaptureController` / `ProxyController` / `ShiroController` / `ConfigController` / `PayloadController` / `PresetController` / `ServiceController` / `ToolsUploadController` / `PayloadToStringController` / `OobJarController` / `WorkbenchPages`), plus styling `UiKit`, the shared `ChainEditor`, startup warm-up `StartupWarmup` / splash `StartupSplash`, the column selector `PayloadChainSelector` (the payload page's chain picker, holding no chain state) with its collaborators `ChainSelectorSizing` (geometry) / `ChainColumn` / `ChainColumnState` / `ChainColumnPanel` (per-column panel and filter state) / `ChainResizeHandle` (vertical drag bar) / `ChainColumnFilter` (filter predicate) / `ChainNodeRenderer` (row rendering) / `ChainTagMenu` (tag menu), the payload page split-outs `PayloadPanels` (panel building) / `PayloadColumns` (column mapping) / `PayloadOutputText` (output text) / `PayloadExporter` (export to disk), and the self-check facade `UiHandle` + `WidgetRegistry` |
 | `src/payload/` | Generic payload generation (`PayloadEngine` / `PayloadCatalog` / `PayloadResult`), decoupled from concrete features such as Shiro; feature templates `JarPreset` (out-of-band Jar kinds × tail actions), `ToStringPreset` (toString chain templates) and the node-ownership rule `ChainScope` |
 | `src/service/` | Malicious servers (`ServiceManager` / `ServiceSpec` / `ServiceEndpoint` / `ServiceDefaults`) plus out-of-band Jar hosting (`OobJarService`): the only package that talks to the java-chains server-side adapters |
 | `src/preset/` | Built-in preset chains (`PresetCatalogService` / `PresetItem`): the only package that touches the upstream preset model, exposing plain data |
 | `src/probe/` | Engine invocation and command-line assembly (`ProbeEngine` / `ProbeCommand` / `CaptureBridge`) |
+| `src/analyzer/` | Vulnerability-analysis kernel (a leaf package that depends on no project package): dependency coordinates `Dependency` / `DependencyScanner` / `PomScanner`, version comparison `Version`, rule table `VulnerabilityRules`, findings `Finding` / `VulnerabilityAnalyzer`, external engine `EngineRunner`, query enum `ReportReader`, script execution `ScriptRunner`, decompilation `Decompiler` |
+| `src/analyze/` | Vulnerability-analysis orchestration (depends on `analyzer` only): `AnalyzeEngine` (local analysis / engine run / query / decompile), `AnalyzeReport`, `AnalyzeCommand` (the command line is the single contract, kept in one place so it can be diffed against upstream docs) |
 | `src/config/` `src/util/` | `config.properties` read/write; message parsing and platform differences |
-| `python/` | probe engine (`fj_probe.py`), packaged into the JAR |
+| `python/` | probe engine (`fj_probe.py`) and the call-graph database query script (`jar_report.py`), packaged into the JAR |
 | `tests/` | Python unit tests and Java UI self-checks; `TestProcessGuard.java` kills calculator processes spawned during a self-check run |
 | `tools/` | maintenance helpers: `agent.ps1` (launch a role-scoped agent), `dispatch.ps1` (dispatch one role and auto-merge), `orchestrate.ps1` (one-sentence goal, automatic decomposition and orchestration), `watchdog.ps1` (stall watchdog), `lib/` (role matrix and execution primitives), `audit_boundary.py` (dependency audit), `apply_patch.py` |
-| `docs/` | design documentation (`DESIGN.md`, `DESIGN-shiro.md`, `DESIGN-probe-accuracy.md`, `DESIGN-agents.md`, `DESIGN-modularization.md`, `DESIGN-payload.md`, `DESIGN-services.md`) plus the multi-agent role guide (`AGENT-ROLES.md`) and the runbook (`AGENT-RUNBOOK.md`) |
+| `docs/` | design documentation (`DESIGN.md`, `DESIGN-shiro.md`, `DESIGN-probe-accuracy.md`, `DESIGN-agents.md`, `DESIGN-modularization.md`, `DESIGN-payload.md`, `DESIGN-services.md`, `DESIGN-analyze.md`) plus the multi-agent role guide (`AGENT-ROLES.md`) and the runbook (`AGENT-RUNBOOK.md`) |
 | `openspec/` | spec-driven development: `specs/` holds capability specs, `changes/` holds active and archived changes, `config.yaml` constrains AI-generated planning artifacts |
 | `.agents/` | AI tool instructions generated by OpenSpec (target tool for this repo is codex) |
 | `target/` | Maven build output (Maven writes here via `src/pom.xml`) |
@@ -638,6 +647,84 @@ and `src/ui/ServiceController.java`, with the design in
 [docs/DESIGN-services.md](docs/DESIGN-services.md). **No Spring or web container is needed**: the upstream adapters
 are plain-JDK and were measured to run directly on Java 17.
 
+## Vulnerability analysis
+
+`主页 → 漏洞分析` answers two different levels of question, so it is split into two pages with
+three very different costs:
+
+| Sub-item | What it does | Cost |
+| --- | --- | --- |
+| `组件与漏洞` | Reads the Maven coordinates inside a jar and judges known vulnerabilities against 25 built-in rules, with evidence and jump suggestions | Seconds; needs no external program |
+| `调用链查询` | Runs an external engine to turn a jar into a call-graph database, then queries sinks / entry points / string constants | Minutes; needs the engine jar |
+
+### Components and vulnerabilities (local analysis)
+
+The target can be a **single jar** or a **dependency directory** (every jar inside is taken
+recursively); you can additionally point at a source project's `pom.xml` to compare what the project
+declares against what the artifact actually contains.
+
+Coordinates are trusted by source, and that source travels all the way into the finding (it decides
+the confidence):
+
+1. `META-INF/maven/**/pom.properties` — a fact written by Maven at packaging time
+2. `META-INF/maven/**/pom.xml` — also a packaging artifact, but shading may rewrite it
+3. `META-INF/MANIFEST.MF` — written by packaging plugins, coarser
+4. File-name inference — a guess only, lowest confidence
+
+Reading goes entirely through `JarFile` entry enumeration: **nothing is unpacked, nothing is written
+to disk, no class is loaded**. The target jar can come from anywhere, and it must not get a chance
+to execute while being analysed.
+
+The rule table has 25 entries covering fastjson (six of them split by autoType bypass technique),
+fastjson2, Shiro (four: the default rememberMe key plus two authorisation bypasses), gadget
+dependencies (CommonsCollections 3 / 4, Groovy, ROME, CommonsBeanutils, c3p0, Hutool) and component
+RCEs (two Log4Shell ranges, Spring4Shell, XStream, SnakeYAML, Jackson-databind, FakeMySQL scenarios).
+
+The rules are **written in this project**: upstream `jar-analyzer`'s rule files are GPLv3 and cannot
+be copied into this repository. The content comes from each component's public advisories, and only
+entries that lead to a next action inside this toolkit are included. Findings are sorted by
+confidence, and the report always ends with "a miss does not mean there is no vulnerability".
+
+Each suggestion is a button that jumps straight to the right page (probe / Shiro / Payload
+generation / toString chains / malicious servers / capture conversion), so you never have to hunt
+through the sidebar.
+
+### Call-graph query (external engine)
+
+Call-graph analysis needs the `外部引擎 JAR` (`jar-analyzer-engine`, MIT, a CLI) set on the settings
+page. Its database file is fixed at `jar-analyzer.db` and **can only land in the working directory**
+(there is no output-path argument), hence the `引擎工作目录` field. Without an engine the page does
+not error; it just tells you to fill it in.
+
+Building a large jar takes minutes, so there is a `调用链超时` (default 300 seconds; anything below
+30 seconds is rejected up front). On timeout the **process tree is killed** and the temporary
+directory is cleaned. Once the database exists you can query five kinds of content repeatedly:
+
+| Query | Purpose |
+| --- | --- |
+| 总览 (summary) | Class / method / call-edge counts — confirm the database built successfully |
+| 入口点 (entry points) | Spring Controller / Servlet / Filter / Listener |
+| Sink 命中 (sink hits) | Match dangerous calls against the built-in sink list (command execution / JNDI / deserialisation / SQL / file / SSRF — 26 entries) |
+| 字符串常量 (string constants) | Search SQL, URLs, keys and other sensitive strings (the only query that uses the keyword) |
+| 组件清单 (components) | Component versions from the engine's own view, to compare against the local analysis |
+
+The sink list is likewise written in this project (upstream's sink and SCA data live in the GPLv3 GUI,
+not in the engine). Queries go through Python's standard-library `sqlite3`, always opened `mode=ro`
+— **read-only**, never writing to the database.
+
+### Decompilation
+
+When you need the source to confirm whether a rule really holds, fill in `指定类名` (blank
+decompiles the whole jar) and click `反编译`; the output goes to `反编译输出目录`.
+
+It uses the **CFR already bundled with the runtime dependency**, so **no new dependency, no extra
+process and no Node** (measured: 84 classes decompiled in 3.5 seconds). The output is **write-only**:
+this toolkit never parses those sources, it just leaves them for your editor. CFR is a synchronous
+API and cannot be interrupted, so a timeout here means "reported after the fact" rather than "cut
+off" — an over-budget run is flagged but the output is kept.
+
+See [docs/DESIGN-analyze.md](docs/DESIGN-analyze.md) (Chinese).
+
 ## CLI smoke test
 
 ```powershell
@@ -692,29 +779,37 @@ The Java self-checks run against the compiled classes and print their own assert
 .\build.ps1
 E:\java\jdk17\bin\javac.exe -encoding UTF-8 -cp "target\classes;lib\java-chains-cli-2.0.0-beta4.jar" -d target\tmp2 tests\*.java
 
-# all six checks (--add-opens lets bytecode gadgets reach the JDK-internal xalan classes; run.ps1 already adds them)
+# all seven checks (--add-opens lets bytecode gadgets reach the JDK-internal xalan classes; run.ps1 already adds them)
 $opens = @('--add-opens', 'java.xml/com.sun.org.apache.xalan.internal.xsltc.trax=ALL-UNNAMED',
            '--add-opens', 'java.xml/com.sun.org.apache.xalan.internal.xsltc.runtime=ALL-UNNAMED')
 E:\java\jdk17\bin\java.exe @opens -cp "target\tmp2;target\classes;lib\java-chains-cli-2.0.0-beta4.jar" UiNavigationCheck
 E:\java\jdk17\bin\java.exe @opens -cp "target\tmp2;target\classes;lib\java-chains-cli-2.0.0-beta4.jar" UiSwitchEndToEndCheck
 E:\java\jdk17\bin\java.exe @opens -cp "target\tmp2;target\classes;lib\java-chains-cli-2.0.0-beta4.jar" ProxyServerCheck
+E:\java\jdk17\bin\java.exe @opens -cp "target\tmp2;target\classes;lib\java-chains-cli-2.0.0-beta4.jar" AnalyzeCheck
 ```
 
 | Self-check | Coverage | Needs `--add-opens` |
 | --- | --- | --- |
-| `UiNavigationCheck` | Sidebar expand / collapse, per-page widgets and end-to-end flows (including the toString page, the out-of-band Jar page and the new settings groups); screenshots go to `target/ui-check/` | Yes (preset end-to-end build) |
+| `UiNavigationCheck` | Sidebar expand / collapse, per-page widgets and end-to-end flows (including the toString page, the out-of-band Jar page, the analysis page and the new settings groups), plus one real jar scanned end to end by the local analysis; screenshots go to `target/ui-check/` | Yes (preset end-to-end build) |
 | `UiSwitchEndToEndCheck` | Captured headers fed to the probe page through the real Python engine; the out-of-band Jar page really hosts a Jar, fetches it back over HTTP as a valid Zip, and the port can be bound again after stopping | Yes |
 | `UiShiroCheck` | Full Shiro page flow | Yes |
 | `ShiroCheck` | Shiro engine (detect / crack / chain build / echo) | Yes |
 | `PayloadCheck` | Payload engine (catalog, groups, navigation, node display names, dual form, failure paths, safety) plus the 25 out-of-band Jar combinations and toString trigger ownership (100 assertions in total) | Yes |
 | `ProxyServerCheck` | The proxy itself: plain-HTTP capture, 404 handling, `CONNECT` tunneling with byte pass-through, callbacks, `find` / `clear` | No |
+| `AnalyzeCheck` | The analysis kernel (61 assertions): version-comparison semantics (including `1.2.80 > 1.2.9` and pre-releases sorting below releases), the four coordinate sources and their priority, rule hits and misses, no false positives when the group differs, end-to-end analysis with jump suggestions, and the failure paths of the external engine and the database | No |
 
-Dependency-boundary and toolchain checks:
+Dependency-boundary, source-level and toolchain checks:
 
 ```powershell
 python -X utf8 tools\audit_boundary.py        # package dependency boundaries (acyclic / layering / generic components / shared kernel)
+python -X utf8 -m unittest tests.test_java8_source_level  # no Java 9+ APIs or syntax under src/
 powershell -File tools\check_agent_tools.ps1  # 91 mechanical assertions for the multi-agent toolchain
 ```
+
+The source-level check is not redundant: `src/pom.xml` pins the source level to release 8, while the
+hand-written `javac` commands above **do not pass `--release 8`**. A Java 9+ API slipped into `src/`
+therefore passes every self-check and only fails inside `build.ps1` with "cannot find symbol".
+This assertion turns that constraint into a check that runs in seconds.
 
 Self-checks execute the command embedded in gadget parameters while building chains (the upstream `Clojure` / `Exec` nodes default to `calc`), so all six entry points call `tests/TestProcessGuard.java` on startup: it snapshots the existing `CalculatorApp` processes and installs a JVM shutdown hook that force-kills only the ones started after the snapshot, logging a `[calc-guard]` line. A leftover calculator after a run means that entry point is missing the guard.
 

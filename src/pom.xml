@@ -45,6 +45,7 @@
                 <targetPath>python</targetPath>
                 <includes>
                     <include>fj_probe.py</include>
+                    <include>jar_report.py</include>
                 </includes>
             </resource>
             <resource>
