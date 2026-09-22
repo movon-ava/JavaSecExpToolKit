@@ -247,8 +247,8 @@ if (data instanceof byte[]) {
 
 ### 6.3 回归
 
-- 五套既有 Java 自检全绿，输出无行为漂移。
-- `python -m unittest discover -s tests` 全绿（84 项）。
+- 既有 Java 自检全绿，输出无行为漂移（截至 2026-09-22 为六套）。
+- `python -m unittest discover -s tests` 全绿（截至 2026-09-22 为 106 项）。
 - 构建后校验 JAR 时间晚于全部源文件。
 
 ---
@@ -316,3 +316,80 @@ if (data instanceof byte[]) {
 | 单列首节点候选规模 | 未知 | `javanativepayload` 实测 104 项、`objectpayload` 达 118 项；28 个载体合计 1748 项，全量校验 49 ms | 列式列表 + 列内过滤；不需要缓存 |
 | 表单区高度 | 竖排 592px 够放 | 默认最大化下被裁掉约 40px，出滚动条 | 选择器与参数区改为**并排**，表单 424px |
 | 列内横向滚动条 | 无 | 显示名较长时列内出现横向滚动条 | 固定单元格宽度（`setFixedCellWidth`）+ 行高，长名截断成省略号，靠工具提示补全 |
+
+---
+
+## 十、界面层拆分与自检副作用清理（2026-09-22）
+
+### 10.1 为什么必须拆
+
+列式改造把交互逻辑堆进了三个文件，越过了
+`openspec/specs/codebase/dependency-boundary/spec.md` 的「单个界面文件 ≤ 600 行」：
+`PayloadPage` 787 行、`PayloadController` 739 行、`PayloadChainSelector` 729 行。
+契约要求拆分而不是放宽上限（放宽会让「一个文件承担全部页面职责」的退化重新变得合法）。
+
+拆分按「职责」而非「行数」切：
+
+| 原文件 | 拆分前 | 拆分后 | 新增协作类 | 协作类的职责 |
+| --- | ---: | ---: | --- | --- |
+| `src/ui/PayloadPage.java` | 787 | 252 | `PayloadPanels`（520）、`PayloadColumns`（72） | 面板构建；列宽 / 列索引换算 |
+| `src/ui/PayloadController.java` | 739 | 546 | `PayloadOutputText`（95）、`PayloadExporter`（56） | 输出区文本渲染；导出落盘 |
+| `src/ui/PayloadChainSelector.java` | 729 | 549 | `ChainColumnFilter`（89）、`ChainNodeRenderer`（59）、`ChainTagMenu`（78） | 过滤判定；条目渲染；标签菜单 |
+
+交付形状上的两条约束：
+
+1. **不引入状态复制**。`PayloadChainSelector` 仍是链状态的唯一持有者，`ChainTagMenu`
+   通过 `Handler` 接口（`chosen` / `isIntersect` / `apply` / `refresh`）回调，自己一份状态都不存。
+2. **不改引擎语义**。`src/payload/` 本轮只新增只读类型（`NodeInfo` / `PayloadBuild` /
+   `PayloadCodec` / `PayloadContextEntry`），`PayloadEngine` 既有公开方法签名与返回语义不变，
+   `PayloadCheck` 的 68 条断言逐条保留（只新增显示名相关断言）。
+
+`PayloadPanels` 的 `console` / `chainArea` / `splitPane` 是**包级可见**而非私有：
+页面类需要把这三个控件挂进分栏，隐藏它们就只能再加一层转发方法。
+
+### 10.2 自检会弹出计算器进程
+
+**现象**：跑 `UiNavigationCheck` 时机器上弹出计算器窗口。
+
+**根因**（实测，不是猜测）：上游 java-chains 的 `Clojure` / `Exec` 节点把命令写在**参数值**里，
+且登记表给的默认值就是 `calc`：
+
+```
+== clojure
+   key=Clojure.cmd value=calc required=true
+== exec
+   key=Exec.cmd value=calc required=true
+```
+
+自检为了验证「生成 / 调试生成 / 预设链生成」三条路径，必须在构建期把参数交给引擎，
+引擎随即执行 → 弹出计算器。也就是说这不是自检写错了，而是自检**如实覆盖了真实链路**，
+副作用来自被测能力本身。
+
+**处置**：新增 `tests/TestProcessGuard.java`，六个自检入口在 `main` 第一行调用
+`TestProcessGuard.install("<入口名>")`：
+
+1. 启动时枚举 `CalculatorApp` 进程并记录 **pid + 启动时刻**（快照）；
+2. **先快照、再注册 JVM 退出钩子**（顺序反了守卫会静默失效）；
+3. 退出时只 `destroyForcibly()` 启动时刻晚于快照的进程，最多扫 5 轮 × 300 ms，
+   覆盖「刚被拉起、进程还没出现在枚举里」的窗口。
+
+用**退出钩子**而不是 `try/finally`，因为自检收尾走 `System.exit`，`finally` 不保证执行。
+只用 JDK 8 可用的 `ProcessHandle`；`allProcesses()` 返回 `Stream`，必须用 `.forEach()`
+（for-each 在 `Stream` 上编译不过）。
+
+**不清理策略**：用户自己开的计算器（快照里已存在）一律不动；
+把 `calc` 换成别的命令时守卫不生效——这是刻意的，守卫只解决「自检把计算器留在机器上」，
+不做通用进程清理。
+
+实测结果：`UiNavigationCheck` 一轮弹出 2 个计算器并被全部回收
+（日志 `[calc-guard] UiNavigationCheck：已关闭自检期间弹出的 2 个计算器进程 [...]`），
+其余五个入口日志为「本轮未弹出计算器进程」，六轮跑完 `CalculatorApp` 零残留。
+
+### 10.3 配置页补漏
+
+列式改造引入的两个开关本轮才落页，属于「新增功能的持久化配置必须进配置页」的补欠：
+
+| 配置键 | 界面文案 | 默认 |
+| --- | --- | --- |
+| `payload_auto_expand` | 生成后默认展开完整载荷 | 开 |
+| `payload_hover_select` | 默认开启悬停选链 | 开 |

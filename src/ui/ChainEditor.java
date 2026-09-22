@@ -127,6 +127,31 @@ public final class ChainEditor {
         return fields;
     }
 
+    /**
+     * 当前可追加的候选节点，按标签收敛。
+     *
+     * <p>标签筛选放在编辑器而不是界面：载荷生成页与恶意服务器页都从候选里挑节点，
+     * 两边各写一套筛选会让「同一个链在两个页面里候选不一致」。
+     *
+     * @param tags 选中的标签；为空表示不过滤
+     */
+    public List<String> candidates(List<String> tags) {
+        if (tags == null || tags.isEmpty()) return candidates();
+        List<String> filtered = new ArrayList<String>();
+        for (String node : candidates()) {
+            if (payload.PayloadEngine.filterByTags(java.util.Collections.singletonList(node), tags)
+                    .contains(node)) {
+                filtered.add(node);
+            }
+        }
+        return filtered;
+    }
+
+    /** 当前末节点是否为末端节点：是的话不再有可追加的候选。 */
+    public boolean atEnd() {
+        return !chain.isEmpty() && payload.PayloadEngine.isEndNode(tail());
+    }
+
     /** 从已渲染出的控件读回参数值，键为引擎认识的完整形式。 */
     public static Map<String, String> readValues(List<PayloadPage.ParamField> fields) {
         Map<String, String> values = new LinkedHashMap<String, String>();

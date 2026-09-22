@@ -87,7 +87,7 @@
 
 #### Scenario: 组合根规模
 - **WHEN** 统计 `src/Main.java` 行数
-- **THEN** 不超过 400 行（实测 311 行）
+- **THEN** 不超过 400 行（实测 301 行）
 
 #### Scenario: 界面文件规模
 - **WHEN** 统计 `src/ui/` 下每个 `.java` 文件行数

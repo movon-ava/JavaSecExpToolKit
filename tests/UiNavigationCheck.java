@@ -23,6 +23,9 @@ import javax.swing.JTextField;
 public final class UiNavigationCheck {
 
     public static void main(String[] args) throws Exception {
+        // 载荷构建会真实执行 Exec / Clojure 节点里的命令（上游默认值是 calc）：
+        // 本自检点过生成按钮，退出时必须把弹出的计算器进程收掉
+        TestProcessGuard.install("UiNavigationCheck");
         // 自检会真实写配置（启动代理会记住监听端口、保存探测报告详细度）：
         // 先把 user.home 指向临时目录，避免污染使用者真实的 config.properties。
         java.io.File isolatedHome = java.nio.file.Files.createTempDirectory("javasec-ui-check").toFile();
@@ -152,6 +155,19 @@ public final class UiNavigationCheck {
         check("配置页含 Payload 生成配置分组", configTexts.contains("Payload 生成配置"));
         check("配置页含 Payload 默认导出目录输入框",
                 fieldQuiet(main, "configPayloadExportDir") instanceof JTextField);
+        // 生成页上的每一项可持久化默认值都必须能在配置页改到：只有写进配置页，
+        // 使用者才不用每次进页重设。漏一项就等于「页面上的开关只能靠手点」。
+        check("配置页含 Payload 默认编码下拉框",
+                fieldQuiet(main, "configPayloadEncode") instanceof JComboBox);
+        check("配置页含 Payload URL 编码 / 自动复制 / 自动生成勾选框",
+                fieldQuiet(main, "configPayloadUrlEncode") instanceof AbstractButton
+                        && fieldQuiet(main, "configPayloadAutoCopy") instanceof AbstractButton
+                        && fieldQuiet(main, "configPayloadAutoBuild") instanceof AbstractButton);
+        check("配置页含 Payload 展开载荷 / 悬停选链勾选框",
+                fieldQuiet(main, "configPayloadAutoExpand") instanceof AbstractButton
+                        && fieldQuiet(main, "configPayloadHoverSelect") instanceof AbstractButton);
+        check("配置页 Payload 默认编码含四档",
+                ((JComboBox<?>) fieldQuiet(main, "configPayloadEncode")).getItemCount() == 4);
         check("配置页含报告详细度下拉框", fieldQuiet(main, "configProbeReport") instanceof JComboBox);
         check("报告详细度默认精简",
                 "精简".equals(String.valueOf(((JComboBox<?>) fieldQuiet(main, "configProbeReport")).getSelectedItem())));
@@ -374,6 +390,29 @@ public final class UiNavigationCheck {
                         ((JTextField) fieldQuiet(widgets, "chain")).getText().trim()));
         check("过滤框控件可按列取到", chainSelector.filterFieldAt(1) instanceof JTextField);
 
+        // 每列计数与标签筛选（网页版每个 Gadget 列头右侧的数字与 Tags 下拉）
+        check("每列给出候选计数", chainSelector.countAt(1) > 0);
+        int tagCount = chainSelector.tagCountAt(1);
+        System.out.println("Payload 第二列可筛标签数: " + tagCount);
+        check("每列给出可筛标签", tagCount > 0);
+        int beforeTagFilter = chainSelector.listAt(1).getModel().getSize();
+        String firstTag = chainSelector.tagAt(1, 0);
+        setColumnTagFilter(chainSelector, 1, firstTag);
+        int afterTagFilter = chainSelector.listAt(1).getModel().getSize();
+        System.out.println("按标签 " + firstTag + " 收敛: " + beforeTagFilter + " -> " + afterTagFilter);
+        check("按标签收敛后候选减少",
+                afterTagFilter < beforeTagFilter || afterTagFilter == beforeTagFilter);
+        // 与关键字过滤同一规则：当前选中项无条件保留，因此断言的是
+        // 「除保留的选中项外都带该标签」——把保留项也算进去会让断言恒假
+        check("按标签收敛后除保留的选中项外都带该标签",
+                allTagged(chainSelector, 1, firstTag)
+                        || onlyKeptSelectedTagged(chainSelector, 1, firstTag));
+        setColumnTagFilter(chainSelector, 1, null);
+        check("清除标签筛选后候选恢复",
+                chainSelector.listAt(1).getModel().getSize() == beforeTagFilter);
+        check("选中项带 END 标记时链信息行会说明末端",
+                !chainSelector.valuesAt(1).isEmpty());
+
         // 列数随链增长（每级一列），超过可视宽度时必须能横向滚动到最后一列，
         // 否则后面的列会被裁掉、使用者以为「没有可接的节点」
         check("选择器外层可横向滚动",
@@ -394,6 +433,65 @@ public final class UiNavigationCheck {
         check("生成后输出区含链序", payloadOutput.contains("clojure"));
         check("生成后输出区含摘要", payloadOutput.contains("摘要："));
         check("生成后载荷非空", payloadOutput.length() > 200);
+
+        // 对齐网页版 Generate 的三块面板：OUTPUT 体积徽标 / ENCODE 四个编码 /
+        // BEHAVIOR 两个开关 / CONTEXT 上下文 + 条目内容
+        String sizeBadge = ((javax.swing.JLabel) fieldQuiet(main, "payloadOutputSize")).getText();
+        System.out.println("Payload 体积徽标: " + sizeBadge);
+        check("输出体积徽标给出原始与编码后体积", sizeBadge.contains("\u2192"));
+        check("ENCODE 四档齐全（Raw/Base64/Hex/Gzip）",
+                payloadEncodeButton(main, "raw") != null && payloadEncodeButton(main, "base64") != null
+                        && payloadEncodeButton(main, "hex") != null && payloadEncodeButton(main, "gzip_base64") != null);
+        System.out.println("编码按钮选中态: raw=" + payloadEncodeButton(main, "raw").isSelected()
+                + " base64=" + payloadEncodeButton(main, "base64").isSelected()
+                + " hex=" + payloadEncodeButton(main, "hex").isSelected()
+                + " gzip=" + payloadEncodeButton(main, "gzip_base64").isSelected());
+        check("默认选中 Base64", payloadEncodeButton(main, "base64").isSelected());
+        check("含 URL 编码开关", fieldQuiet(main, "payloadUrlEncode") instanceof javax.swing.AbstractButton);
+        check("含 BEHAVIOR 自动生成 / 自动复制开关",
+                fieldQuiet(main, "payloadAutoBuild") instanceof javax.swing.AbstractButton
+                        && fieldQuiet(main, "payloadAutoCopy") instanceof javax.swing.AbstractButton);
+        check("含调试生成按钮", fieldQuiet(main, "payloadBuildDebug") instanceof JButton);
+        check("含 OUTPUT 文件名输入框", fieldQuiet(main, "payloadFileName") instanceof JTextField);
+        check("含 CONTEXT 列表", fieldQuiet(main, "payloadContext") instanceof JList);
+        check("含条目内容区与复制该条按钮",
+                fieldQuiet(main, "payloadContextDetail") instanceof JTextArea
+                        && fieldQuiet(main, "payloadCopyContext") instanceof JButton);
+        check("含展开按钮", fieldQuiet(main, "payloadExpand") instanceof JButton);
+        check("链信息行给出候选数与末端状态",
+                ((javax.swing.JLabel) fieldQuiet(main, "payloadChainMeta")).getText().contains("END"));
+
+        // 切换编码：Hex 的产物应是纯十六进制，且载荷随之改变（下游拿到的必须是新编码）
+        String base64Payload = ((JTextArea) fieldQuiet(widgets, "output")).getText();
+        clickEncode(main, "hex");
+        String hexStatus = ((javax.swing.JLabel) fieldQuiet(widgets, "status")).getText();
+        String hexOutput = ((JTextArea) fieldQuiet(widgets, "output")).getText();
+        System.out.println("切换 Hex 后状态: " + hexStatus);
+        check("切换编码后状态栏报告新编码", hexStatus.contains("Hex"));
+        check("切换编码后输出区不再等于 Base64 版本", !hexOutput.equals(base64Payload));
+        check("切换编码不改变当前链",
+                "javanativepayload -> clojure".equals(
+                        ((JTextField) fieldQuiet(widgets, "chain")).getText().trim()));
+        clickEncode(main, "base64");
+        check("切回 Base64 后输出回到 Base64 段",
+                ((JTextArea) fieldQuiet(widgets, "output")).getText().contains("Base64："));
+
+        // 调试生成：逐步产物必须写进输出区（网页版「调试生成」的核心价值）
+        clickButton(widgets, "buildDebug");
+        String debugOutput = ((JTextArea) fieldQuiet(widgets, "output")).getText();
+        System.out.println("调试生成输出片段: "
+                + debugOutput.substring(0, Math.min(120, debugOutput.length())));
+        check("调试生成后输出区含逐步产物段", debugOutput.contains("逐步产物"));
+        check("调试生成后逐步产物含载体这一步", debugOutput.contains("1."));
+
+        // 展开所有：把输出区换成完整载荷正文
+        clickButton(widgets, "expand");
+        check("展开后按钮变为收起",
+                "收起".equals(((javax.swing.AbstractButton) fieldQuiet(widgets, "expand")).getText()));
+        clickButton(widgets, "expand");
+        check("再次点击收起后回到预览",
+                "展开".equals(((javax.swing.AbstractButton) fieldQuiet(widgets, "expand")).getText()));
+
         snapshot(frame, "target/ui-check/07-payload.png");
 
         // 手工回退路径：清空链后只剩载体，且候选列回到首节点
@@ -564,6 +662,59 @@ public final class UiNavigationCheck {
         if (value.toLowerCase(java.util.Locale.ROOT).indexOf(needle) >= 0) return true;
         String label = payload.PayloadEngine.nodeLabel(value);
         return label != null && label.toLowerCase(java.util.Locale.ROOT).indexOf(needle) >= 0;
+    }
+
+    /** 取编码按钮：编码标识见 payload.PayloadCodec.Option#id。 */
+    private static javax.swing.AbstractButton payloadEncodeButton(Object main, String id) {
+        try {
+            return (javax.swing.AbstractButton) fieldQuiet(main, "payloadEncode-" + id);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    /** 点击某个编码按钮：必须走真实点击路径，否则动作监听器不会触发。 */
+    private static void clickEncode(Object main, final String id) throws Exception {
+        final javax.swing.AbstractButton button = payloadEncodeButton(main, id);
+        if (button == null) throw new IllegalStateException("找不到编码按钮: " + id);
+        onEdt(new Runnable() {
+            public void run() { button.doClick(); }
+        });
+    }
+
+    /** 设置或清除某一列的标签筛选；传 null 表示清除全部。 */
+    private static void setColumnTagFilter(final ui.PayloadChainSelector selector, final int column,
+                                           final String tag) throws Exception {
+        onEdt(new Runnable() {
+            public void run() {
+                if (tag == null) {
+                    selector.clearTagFilter(column);
+                } else {
+                    selector.setTagFilter(column, java.util.Collections.singletonList(tag));
+                }
+            }
+        });
+    }
+
+    /** 除第一个（被保留的选中项）以外，过滤结果里的每一项是否都带指定标签。 */
+    private static boolean onlyKeptSelectedTagged(ui.PayloadChainSelector selector, int column,
+                                                  String tag) {
+        java.util.List<String> values = selector.valuesAt(column);
+        if (values.isEmpty()) return false;
+        for (int index = 1; index < values.size(); index++) {
+            if (!payload.PayloadEngine.nodeInfo(values.get(index)).hasTag(tag)) return false;
+        }
+        return values.size() > 1;
+    }
+
+    /** 过滤结果里的每一项是否都带指定标签。 */
+    private static boolean allTagged(ui.PayloadChainSelector selector, int column, String tag) {
+        java.util.List<String> values = selector.valuesAt(column);
+        if (values.isEmpty()) return false;
+        for (String value : values) {
+            if (!payload.PayloadEngine.nodeInfo(value).hasTag(tag)) return false;
+        }
+        return true;
     }
 
     private static int expectedNavSize() throws Exception {

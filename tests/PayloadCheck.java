@@ -41,6 +41,9 @@ public final class PayloadCheck {
     private static int failed;
 
     public static void main(String[] args) throws Exception {
+        // 逐载体创建会真实执行 Exec / Clojure 节点里的命令（上游默认值是 calc）：
+        // 自检退出时把弹出的计算器进程收掉
+        TestProcessGuard.install("PayloadCheck");
         PayloadEngine.init();
         System.out.println("引擎状态: " + PayloadEngine.statusMessage());
         check("引擎初始化完成", PayloadEngine.isReady());

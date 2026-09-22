@@ -177,15 +177,15 @@ CEYE 确认作为附属阶段时仍依赖 DNS 阶段。未填 Token 就执行 `C
 
 | 路径 | 用途 |
 | --- | --- |
-| `src/` | 组合根 `Main.java`（311 行，只做装配与切页）、`pom.xml`、本地代理（`proxy/ProxyServer.java`）与 Shiro 模块（`shiro/`） |
-| `src/ui/` | 各功能页的**视图**与**行为**分开放：视图 `*Page` / `*Form`（`HomePage` / `ProbePage` / `CapturePage` / `ProxyPage` / `ShiroPage` / `PayloadPage` / `PresetPage` / `ServicePage` / `ConfigPage` / `ConfigForm`），行为 `*Controller`（`NavController` / `ProbeController` / `CaptureController` / `ProxyController` / `ShiroController` / `ConfigController` / `PayloadController` / `PresetController` / `ServiceController` / `WorkbenchPages`），另有样式 `UiKit`、共用链编辑 `ChainEditor`、列式链选择器 `PayloadChainSelector`（载荷生成页的选链主体，不持有链状态）、自检门面 `UiHandle` + `WidgetRegistry` |
+| `src/` | 组合根 `Main.java`（301 行，只做装配与切页）、`pom.xml`、本地代理（`proxy/ProxyServer.java`）与 Shiro 模块（`shiro/`） |
+| `src/ui/` | 各功能页的**视图**与**行为**分开放：视图 `*Page` / `*Form`（`HomePage` / `ProbePage` / `CapturePage` / `ProxyPage` / `ShiroPage` / `PayloadPage` / `PresetPage` / `ServicePage` / `ConfigPage` / `ConfigForm`），行为 `*Controller`（`NavController` / `ProbeController` / `CaptureController` / `ProxyController` / `ShiroController` / `ConfigController` / `PayloadController` / `PresetController` / `ServiceController` / `WorkbenchPages`），另有样式 `UiKit`、共用链编辑 `ChainEditor`、列式链选择器 `PayloadChainSelector`（载荷生成页的选链主体，不持有链状态）及其协作类 `ChainColumnFilter`（过滤判定）/ `ChainNodeRenderer`（条目渲染）/ `ChainTagMenu`（标签菜单）、载荷页拆分出的 `PayloadPanels`（面板构建）/ `PayloadColumns`（列换算）/ `PayloadOutputText`（输出文本）/ `PayloadExporter`（导出落盘）、自检门面 `UiHandle` + `WidgetRegistry` |
 | `src/payload/` | 通用载荷生成（`PayloadEngine` / `PayloadCatalog` / `PayloadResult`），与 Shiro 等具体功能解耦 |
 | `src/service/` | 恶意服务器（`ServiceManager` / `ServiceSpec` / `ServiceEndpoint` / `ServiceDefaults`）：唯一直接调用 java-chains 服务端适配器的包 |
 | `src/preset/` | 内置预设链读取（`PresetCatalogService` / `PresetItem`）：唯一引用上游预设模型的包，纯数据出参 |
 | `src/probe/` | 引擎调用与命令行拼装（`ProbeEngine` / `ProbeCommand` / `CaptureBridge`） |
 | `src/config/` `src/util/` | `config.properties` 读写；报文解析与平台差异 |
 | `python/` | 探测引擎（`fj_probe.py`），打进 JAR |
-| `tests/` | Python 单元测试与 Java 界面自检 |
+| `tests/` | Python 单元测试与 Java 界面自检；`TestProcessGuard.java` 在自检退出时清理构建期弹出的计算器进程 |
 | `tools/` | 维护辅助脚本：`agent.ps1`（启动角色化 agent）、`dispatch.ps1`（单条派发并自动合并）、`orchestrate.ps1`（一句话目标自动拆解编排）、`watchdog.ps1`（会话停滞看护）、`lib/`（角色矩阵与执行原语）、`audit_boundary.py`（依赖边界审计）、`apply_patch.py` |
 | `docs/` | 设计文档（`DESIGN.md`、`DESIGN-shiro.md`、`DESIGN-probe-accuracy.md`、`DESIGN-agents.md`、`DESIGN-modularization.md`、`DESIGN-payload.md`、`DESIGN-services.md`）与多 Agent 职责说明（`AGENT-ROLES.md`）与运行手册（`AGENT-RUNBOOK.md`） |
 | `openspec/` | 规格驱动开发：`specs/` 存能力规格，`changes/` 存待办与归档的变更，`config.yaml` 约束 AI 生成规划件 |
@@ -498,5 +498,7 @@ E:\java\jdk17\bin\java.exe @opens -cp "target\tmp2;target\classes;lib\java-chain
 python -X utf8 tools\audit_boundary.py        # 包级依赖边界（无环 / 分层 / 通用组件 / 共享内核）
 powershell -File tools\check_agent_tools.ps1  # 多 Agent 工具链 91 项机械断言
 ```
+
+自检会在构建期执行 gadget 参数里的命令（上游 `Clojure` / `Exec` 节点的默认参数值是 `calc`），因此六套入口都会在启动时由 `tests/TestProcessGuard.java` 给现存 `CalculatorApp` 进程拍快照并注册退出钩子，退出时只强制结束快照之后新起的计算器进程，日志里会打印 `[calc-guard]` 一行。若自检结束后仍有残留，说明该入口没有接入守卫。
 
 **请仅在获得明确测试授权的系统上运行。**

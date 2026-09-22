@@ -32,6 +32,8 @@ public final class ShiroCheck {
     private static final String BAD_KEY = "MTIzNDU2Nzg5MGFiY2RlZg==";
 
     public static void main(String[] args) throws Exception {
+        // 链生成会真实执行 Exec 节点里的命令：自检退出时把弹出的计算器进程收掉
+        TestProcessGuard.install("ShiroCheck");
         cryptoRoundTrip();
         headerParsing();
         detectAndCrack();

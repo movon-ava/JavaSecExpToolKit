@@ -60,11 +60,17 @@ public final class WorkbenchPages implements ConfigController.View {
     /** Payload 生成页：控制器只有第一次进页时创建，否则使用者刚配好的链会被清空。 */
     public JPanel payload() {
         payloadWidgets.exportDirectory = config.property("payload_export_dir", "").trim();
+        applyPayloadDefaults();
         if (payloadController == null) {
             payloadController = new PayloadController(payloadWidgets, fonts, new PayloadController.View() {
                 @Override public void setStatus(String text) { payloadWidgets.status.setText(text); }
 
-                @Override public void setOutput(String text) { payloadWidgets.output.setText(text); }
+                @Override public void setOutput(String text) {
+                    payloadWidgets.output.setText(text);
+                    // setText 会把插入符留在末尾，视口随即滚到载荷尾部；
+                    // 生成后要看的正是开头（载体与编码信息），因此显式回到起点
+                    payloadWidgets.output.setCaretPosition(0);
+                }
             });
         }
         return PayloadPage.build(payloadWidgets, fonts);
@@ -93,6 +99,30 @@ public final class WorkbenchPages implements ConfigController.View {
         // 进页时才消费预设页交来的链：此前控件还没挂上窗口，写进去看不到效果
         serviceController.consumeTask();
         return panel;
+    }
+
+    /**
+     * 把配置页里的生成默认值下发到控件。
+     *
+     * <p>每次进页都下发：使用者在配置页改完默认编码后回到本页应当立刻生效，
+     * 只在创建控制器时下发一次会让改动看起来「没保存成功」。
+     */
+    private void applyPayloadDefaults() {
+        payload.PayloadCodec.Option option =
+                payload.PayloadCodec.Option.of(config.property("payload_encode", "base64"));
+        javax.swing.JToggleButton button = payloadWidgets.encode.get(option);
+        if (button != null) button.setSelected(true);
+        payloadWidgets.urlEncode.setSelected(flag(config.property("payload_url_encode", "false")));
+        payloadWidgets.autoCopy.setSelected(flag(config.property("payload_auto_copy", "false")));
+        payloadWidgets.autoBuild.setSelected(flag(config.property("payload_auto_build", "false")));
+        payloadWidgets.autoExpand.setSelected(flag(config.property("payload_auto_expand", "false")));
+        payloadWidgets.hoverSelect.setSelected(flag(config.property("payload_hover_select", "false")));
+        payloadSelector.setHoverSelect(payloadWidgets.hoverSelect.isSelected());
+    }
+
+    private static boolean flag(String raw) {
+        String value = raw == null ? "" : raw.trim().toLowerCase(java.util.Locale.ROOT);
+        return "true".equals(value) || "1".equals(value) || "yes".equals(value);
     }
 
     /** 退出前停掉全部服务并释放端口；失败也不阻塞退出，避免关不掉窗口。 */

@@ -210,6 +210,12 @@ public final class ConfigController {
         form.shiroCommand.setText(config.getProperty("shiro_command", ""));
         form.shiroBody.setText(config.getProperty("shiro_body", ""));
         form.payloadExportDir.setText(config.getProperty("payload_export_dir", ""));
+        selectOption(form.payloadEncode, config.getProperty("payload_encode", "base64"));
+        form.payloadUrlEncode.setSelected(flagFrom("payload_url_encode", false));
+        form.payloadAutoCopy.setSelected(flagFrom("payload_auto_copy", false));
+        form.payloadAutoBuild.setSelected(flagFrom("payload_auto_build", false));
+        form.payloadAutoExpand.setSelected(flagFrom("payload_auto_expand", false));
+        form.payloadHoverSelect.setSelected(flagFrom("payload_hover_select", false));
         form.serverBindHost.setText(config.getProperty("server_bind_host", ""));
         form.serverAdvertiseHost.setText(config.getProperty("server_advertise_host", ""));
         form.serverJndiLdap.setText(config.getProperty("server_jndi_ldap_port", "50389"));
@@ -259,6 +265,12 @@ public final class ConfigController {
         config.setProperty("shiro_command", form.shiroCommand.getText().trim());
         config.setProperty("shiro_body", form.shiroBody.getText().trim());
         config.setProperty("payload_export_dir", form.payloadExportDir.getText().trim());
+        config.setProperty("payload_encode", encodeId(String.valueOf(form.payloadEncode.getSelectedItem())));
+        config.setProperty("payload_url_encode", String.valueOf(form.payloadUrlEncode.isSelected()));
+        config.setProperty("payload_auto_copy", String.valueOf(form.payloadAutoCopy.isSelected()));
+        config.setProperty("payload_auto_build", String.valueOf(form.payloadAutoBuild.isSelected()));
+        config.setProperty("payload_auto_expand", String.valueOf(form.payloadAutoExpand.isSelected()));
+        config.setProperty("payload_hover_select", String.valueOf(form.payloadHoverSelect.isSelected()));
         config.setProperty("server_bind_host", form.serverBindHost.getText().trim());
         config.setProperty("server_advertise_host", form.serverAdvertiseHost.getText().trim());
         config.setProperty("server_jndi_ldap_port", Platform.valueOr(form.serverJndiLdap.getText(), "50389"));
@@ -385,6 +397,16 @@ public final class ConfigController {
             }
         }
         form.shiroChain.setSelectedIndex(0);
+    }
+
+    /** 编码显示名转成配置值：配置里存英文标识，界面显示的是按钮短名。 */
+    private static String encodeId(String label) {
+        if (label == null) return "base64";
+        String wanted = label.trim();
+        for (payload.PayloadCodec.Option option : payload.PayloadCodec.Option.values()) {
+            if (option.label.equalsIgnoreCase(wanted) || option.id.equalsIgnoreCase(wanted)) return option.id;
+        }
+        return "base64";
     }
 
     /** DNSLog 主机优先取专用配置，未单独填写时回落到 CEYE 域名（两者同为 dnslog 域）。 */

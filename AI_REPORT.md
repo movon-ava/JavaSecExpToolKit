@@ -2568,3 +2568,127 @@ tasks 44 项全部勾选（含收尾三项与监督复核）。
 1. 仓库内仍有大量 dangling commit/blob（属正常历史残留，不影响 fetch / 提交 / 推送），
    如需彻底回收需人工确认后执行 `git gc --prune=now`，本轮未做。
 2. `openspec/changes/` 下 `java-chains-workbench`（36/42）与 `payload-generation`（0/36）两个 change 仍在办，未归档。
+
+## 2026-09-22（本轮：自检计算器进程清理 + 界面层解耦达标 + 配置页补漏）
+
+### 一、任务
+
+用户指令：「测试的时候弹出计算器后要关闭计算器的进程」。
+
+同时收尾上一位 agent 遗留的「UI 与功能同网页版 JavaChains 差别过大」：
+把列式改造越界的三个界面文件按规格拆回 600 行以内、把两个漏页的行为开关补进配置页。
+
+### 二、根因（先实测，不推测）
+
+解包上游 `java-chains-cli-2.0.0-beta4.jar` 逐项核对，确认这不是自检写错了，而是自检**如实覆盖了真实链路**：
+
+```
+== clojure
+   key=Clojure.cmd value=calc required=true
+== exec
+   key=Exec.cmd value=calc required=true
+```
+
+`Clojure` / `Exec` 节点的命令写在**参数值**里，上游登记的默认参数值就是 `calc`；引擎在**构建期**执行该命令。
+`UiNavigationCheck` 为覆盖「生成 / 调试生成 / 预设链生成」三条路径，必须把参数交给引擎，
+于是每次运行弹出 2 个计算器（实测 `CalculatorApp.exe` 三批 pid：26224/1996、56648/23724、14260/9804）。
+
+### 三、修复
+
+新增 `tests/TestProcessGuard.java`（112 行），六个自检入口在 `main` 第一行调用
+`TestProcessGuard.install("<入口名>")`：
+
+1. 启动时枚举 `CalculatorApp` 进程，记录 **pid + 启动时刻**（快照）；
+2. **先快照、再注册 JVM 退出钩子**（顺序反了守卫会静默失效）；
+3. 退出时只 `destroyForcibly()` 启动时刻晚于快照的进程，最多扫 5 轮 × 300 ms，
+   覆盖「刚被拉起、进程还没进枚举」的窗口。
+
+设计取舍：
+
+- 用**退出钩子**而不是 `try/finally`：自检收尾走 `System.exit`，`finally` 不保证执行。
+- 只用 JDK 8 可用的 `ProcessHandle`；`allProcesses()` 返回 `Stream`，必须 `.forEach()`（for-each 编译不过）。
+- **不碰用户自己开的计算器**（快照里已存在的进程一律不动）。
+
+### 四、界面层解耦（规格违背修复）
+
+`openspec/specs/codebase/dependency-boundary/spec.md` 第 85 行规定单个界面文件 ≤ 600 行。
+列式改造后三个文件越界，按**职责**（不是按行数）拆分：
+
+| 原文件 | 拆前 | 拆后 | 新增协作类（行数） |
+| --- | ---: | ---: | --- |
+| `src/ui/PayloadPage.java` | 787 | 252 | `PayloadPanels`(520)、`PayloadColumns`(72) |
+| `src/ui/PayloadController.java` | 739 | 546 | `PayloadOutputText`(95)、`PayloadExporter`(56) |
+| `src/ui/PayloadChainSelector.java` | 729 | 549 | `ChainColumnFilter`(89)、`ChainNodeRenderer`(59)、`ChainTagMenu`(78) |
+
+两条交付约束：
+
+1. **不复制状态**：`PayloadChainSelector` 仍是链状态唯一持有者；`ChainTagMenu` 通过
+   `Handler` 接口（`chosen` / `isIntersect` / `apply` / `refresh`）回调，自己不存状态。
+2. **不改引擎语义**：`PayloadEngine` 既有公开方法签名与语义不变，`PayloadCheck` 68 条断言逐条保留。
+
+### 五、配置页补漏
+
+列式改造引入的两个 BEHAVIOR 开关此前没落页，本轮补齐（配置键 + 界面 + 自检登记三处齐全）：
+
+| 配置键 | 界面文案 | 默认 |
+| --- | --- | --- |
+| `payload_auto_expand` | 生成后默认展开完整载荷 | 开 |
+| `payload_hover_select` | 默认开启悬停选链 | 开 |
+
+### 六、仓库清理
+
+删除根目录 `static/`（51 个文件）。它是早期从上游 JAR 解出的参考前端，
+经全仓库检索确认源码 / 测试 / `pom.xml` **零引用**，且内容可由
+`lib\java-chains-cli-2.0.0-beta4.jar` 内的 `static/` 条目完整复原，删除后不丢信息。
+删除用一次性 Python 脚本（枚举 + 前缀越界校验 + `shutil.rmtree`），未使用 `Remove-Item -Recurse -Force`。
+
+### 七、验证（全部本机实测）
+
+| 验证入口 | 结果 |
+| --- | --- |
+| `javac` 编译 `src/**`（Maven） | BUILD SUCCESS，仅 `PayloadEngine` unchecked 注记 |
+| `javac` 编译 `tests/*.java` | 退出码 0 |
+| `PayloadCheck` | 退出码 0，**68** 条断言，失败 0 |
+| `ShiroCheck` | 退出码 0，45 条断言，失败 0 |
+| `ProxyServerCheck` | 退出码 0，36 条断言，失败 0 |
+| `UiNavigationCheck` | 退出码 0，**225** 条断言，失败 0（原 196 → 本轮 +29） |
+| `UiShiroCheck` | 退出码 0，26 条断言，失败 0 |
+| `UiSwitchEndToEndCheck` | 退出码 0，94 条断言，失败 0 |
+| `python -X utf8 -m unittest discover -s tests` | **Ran 106 tests OK**（原 99 → +5 自检卫生 +2 文件规模） |
+| `python -X utf8 tools\audit_boundary.py` | 无环、无越界、无叶子层出边、无内核反向依赖，结论「全部通过」 |
+| `powershell -File tools\check_agent_tools.ps1` | agent 工具链自检通过（91 项） |
+| `openspec validate --all --strict` | 6 项 passed，0 failed |
+| `.uild.ps1` | 构建成功，JAR 时间 `2026-09-22 08:31:46`，362318 字节，74 个源文件时间校验通过 |
+
+计算器守卫实测：`UiNavigationCheck` 日志出现
+`[calc-guard] UiNavigationCheck：已关闭自检期间弹出的 2 个计算器进程 [...]`；
+其余五个入口为「本轮未弹出计算器进程」；六轮跑完 `Get-Process | ? ProcessName -match 'calc|Calculator'` **为空**。
+
+### 八、监督复核（独立复算，不引用实现者结论）
+
+| 复核项 | 结论 |
+| --- | --- |
+| 越界改动 | 无：改动集中在 `src/ui/`、`src/payload/`、`tests/`、文档与规格；`src/config/AppConfig.java` 与 `src/pom.xml` 未被触碰，未引入新依赖 |
+| 空承诺 | 无 TODO / FIXME / 空方法体；新增七个协作类的方法均有实现 |
+| 断言放宽 | 未放宽：六套自检失败数均为 0，`PayloadCheck` 68 条、`UiNavigationCheck` 225 条均只增不减 |
+| 守卫接入完整性 | 六套入口全部接入，`tests/test_selfcheck_hygiene.py` 5 条断言守住「接入 + 快照先于钩子」；标签与文件名一致 |
+| 文件规模契约 | `src/Main.java` 301 行（≤400），`src/ui/` 下 35 个文件最大 549 行（≤600），由 `tests/test_decoupling.py` 机械校验 |
+| 配置落页 | 两个新键既有 `ConfigForm` 行也有 `ConfigController` 读写，且已登记进 `WidgetRegistry` 供自检断言 |
+| 构建一致性 | `build.ps1` 自身逐文件校验：JAR `08:31:46` 晚于 74 个源文件 |
+
+### 九、备份与 Git
+
+- 改动前快照 `.backups/20260922-082905` 已存在；本轮收尾另建 `.backups/20260922-083827`（146 个文件），
+  并轮转删除最旧的 `20260921-204421`，现存 `20260921-212827` / `20260922-082905` / `20260922-083827` 三份。
+- 提交范围限定在本轮改动：17 个已跟踪文件 + 13 个新增文件 + `static/` 删除；
+  `.backups/`、`target/`、`JavaSecExpToolKit.jar` 由 `.gitignore` 忽略。
+
+### 十、如实说明的局限
+
+1. 计算器守卫按**进程名 + 启动时刻**判定，只覆盖 `CalculatorApp`；
+   若上游把默认参数值从 `calc` 换成别的命令，守卫不会清理该程序的进程，需要同步调整匹配。
+2. 守卫只在**自检入口**生效；用户从界面点「生成」时引擎仍会执行参数里的命令——
+   这是功能的真实行为（可自定义命令），不是缺陷，但界面上没有二次确认提示。
+3. `static/` 已删除；若后续要参考网页版前端，需要重新从 `lib\java-chains-cli-2.0.0-beta4.jar` 解出。
+4. `openspec/changes/` 下 `java-chains-workbench` 与 `payload-generation` 两个 change 仍在办，未归档。
+5. `docs/DESIGN-modularization.md` 第十节记录的断言数与 Python 测试数是当时快照，未回改（已在第十一节标注）。

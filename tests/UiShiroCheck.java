@@ -32,6 +32,8 @@ public final class UiShiroCheck {
     private static final String GOOD_KEY = "kPH+bIxk5D2deZiIxcaaaA==";
 
     public static void main(String[] args) throws Exception {
+        // Shiro 页的执行命令与链生成会真实执行命令：自检退出时把弹出的计算器进程收掉
+        TestProcessGuard.install("UiShiroCheck");
         // 自检会真实写配置（启动代理会记住监听端口、保存探测报告详细度）：
         // 先把 user.home 指向临时目录，避免污染使用者真实的 config.properties。
         java.io.File isolatedHome = java.nio.file.Files.createTempDirectory("javasec-ui-check").toFile();

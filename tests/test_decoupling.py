@@ -266,6 +266,41 @@ class DependencyBoundaryTest(unittest.TestCase):
         self.assertEqual([], offenders, "util 包存在项目内依赖:\n" + "\n".join(offenders))
 
 
+class FileSizeBoundaryTest(unittest.TestCase):
+    """界面文件规模上限：防止再次出现「一个文件承担整个页面职责」的退化。
+
+    规格见 openspec/specs/codebase/dependency-boundary：单个界面源文件不超过 600 行，
+    组合根不超过 400 行。行数只是表象，它咬住的是「职责是否又被堆回一个文件」。
+    """
+
+    UI_MAX_LINES = 600
+    MAIN_MAX_LINES = 400
+
+    def _lines(self, path):
+        with open(path, encoding="utf-8") as handle:
+            return len(handle.read().splitlines())
+
+    def test_main_within_limit(self):
+        """组合根不超过 400 行。"""
+        main = os.path.join(ROOT, "src", "Main.java")
+        count = self._lines(main)
+        self.assertLessEqual(count, self.MAIN_MAX_LINES,
+                             "src/Main.java 现有 %d 行，超出组合根上限 %d 行" % (count, self.MAIN_MAX_LINES))
+
+    def test_ui_files_within_limit(self):
+        """src/ui 下每个文件都不超过 600 行。"""
+        ui = os.path.join(ROOT, "src", "ui")
+        offenders = []
+        for name in sorted(os.listdir(ui)):
+            if not name.endswith(".java"):
+                continue
+            count = self._lines(os.path.join(ui, name))
+            if count > self.UI_MAX_LINES:
+                offenders.append("%s(%d 行)" % (name, count))
+        self.assertEqual([], offenders,
+                         "这些界面文件超出 %d 行上限: %s" % (self.UI_MAX_LINES, offenders))
+
+
 class CycleDetectorSelfTest(unittest.TestCase):
     """反向用例：证明环检测器能真的发现环，而不是恒真通过。"""
 

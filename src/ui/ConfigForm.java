@@ -62,6 +62,16 @@ public final class ConfigForm {
 
     // Payload / 预设链
     public final JTextField payloadExportDir = new JTextField("", 32);
+    /** 默认编码：与生成页 ENCODE 一行的四个按钮取值一致。 */
+    public final JComboBox<String> payloadEncode = new JComboBox<String>(
+            new String[]{"Base64", "Raw", "Hex", "Gzip"});
+    public final JCheckBox payloadUrlEncode = new JCheckBox("生成后默认再做 URL 编码", false);
+    public final JCheckBox payloadAutoCopy = new JCheckBox("生成成功后默认自动复制", false);
+    public final JCheckBox payloadAutoBuild = new JCheckBox("改链后默认自动重新生成", false);
+    /** 生成后是否直接展开完整载荷：对应生成页 BEHAVIOR 的「展开所有」。 */
+    public final JCheckBox payloadAutoExpand = new JCheckBox("生成后默认展开完整载荷", false);
+    /** 是否默认开启悬停选链：对应生成页 BEHAVIOR 的「悬停选链」。 */
+    public final JCheckBox payloadHoverSelect = new JCheckBox("默认开启悬停选链", false);
     public final JComboBox<String> presetCategory = new JComboBox<String>(new String[]{"全部分类"});
 
     // 恶意服务器
@@ -137,7 +147,19 @@ public final class ConfigForm {
                         "生成利用链载荷时的默认参数；导出目录留空则写入用户目录。",
                         new ConfigPage.Row[]{
                                 new ConfigPage.Row("默认导出目录", payloadExportDir,
-                                        "载荷导出文件的落盘目录，留空则用用户目录")}),
+                                        "载荷导出文件的落盘目录，留空则用用户目录"),
+                                new ConfigPage.Row("默认编码", payloadEncode,
+                                        "进入生成页时预选的编码；与页面上的 ENCODE 按钮一一对应"),
+                                new ConfigPage.Row("默认 URL 编码", payloadUrlEncode,
+                                        "在编码结果之上再套一层 URL 编码"),
+                                new ConfigPage.Row("默认自动复制", payloadAutoCopy,
+                                        "生成成功后自动把载荷复制到剪贴板"),
+                                new ConfigPage.Row("默认自动生成", payloadAutoBuild,
+                                        "改链后立即重新生成，便于连续试链"),
+                                new ConfigPage.Row("默认展开载荷", payloadAutoExpand,
+                                        "生成后直接给出完整载荷正文，等价于页面上的「展开所有」"),
+                                new ConfigPage.Row("默认悬停选链", payloadHoverSelect,
+                                        "鼠标滑过候选节点即选中，等价于页面上的「悬停选链」")}),
                 new ConfigPage.Group("恶意服务器配置",
                         "「恶意服务器」的默认监听参数；端口留空或填 0 表示不启用该项。",
                         new ConfigPage.Row[]{

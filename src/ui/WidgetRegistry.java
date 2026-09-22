@@ -47,6 +47,28 @@ public final class WidgetRegistry {
         entries.put("navigationItems", navigationItems);
         entries.put("payloadWidgets", payload);
         entries.put("payloadSelector", payloadSelector);
+        entries.put("payloadOutput", payload.output);
+        entries.put("payloadOutputSize", payload.outputSize);
+        entries.put("payloadChainMeta", payload.chainMeta);
+        entries.put("payloadContext", payload.contextList);
+        entries.put("payloadContextDetail", payload.contextDetail);
+        entries.put("payloadCopyContext", payload.copyContext);
+        entries.put("payloadExpand", payload.expand);
+        entries.put("payloadBuildDebug", payload.buildDebug);
+        entries.put("payloadUrlEncode", payload.urlEncode);
+        entries.put("payloadAutoCopy", payload.autoCopy);
+        entries.put("payloadAutoBuild", payload.autoBuild);
+        entries.put("payloadFileName", payload.fileName);
+        entries.put("payloadEdit", payload.edit);
+        entries.put("payloadContextTitle", payload.contextTitle);
+        entries.put("payloadContextSearch", payload.contextSearch);
+        entries.put("payloadChainChips", payload.chainChips);
+        entries.put("payloadAutoExpand", payload.autoExpand);
+        entries.put("payloadHoverSelect", payload.hoverSelect);
+        for (java.util.Map.Entry<payload.PayloadCodec.Option, javax.swing.JToggleButton> entry
+                : payload.encode.entrySet()) {
+            entries.put("payloadEncode-" + entry.getKey().id, entry.getValue());
+        }
         entries.put("presetWidgets", preset);
         entries.put("serviceWidgets", service);
 
@@ -147,6 +169,12 @@ public final class WidgetRegistry {
         entries.put("configShiroCommand", configForm.shiroCommand);
         entries.put("configShiroBody", configForm.shiroBody);
         entries.put("configPayloadExportDir", configForm.payloadExportDir);
+        entries.put("configPayloadEncode", configForm.payloadEncode);
+        entries.put("configPayloadUrlEncode", configForm.payloadUrlEncode);
+        entries.put("configPayloadAutoCopy", configForm.payloadAutoCopy);
+        entries.put("configPayloadAutoBuild", configForm.payloadAutoBuild);
+        entries.put("configPayloadAutoExpand", configForm.payloadAutoExpand);
+        entries.put("configPayloadHoverSelect", configForm.payloadHoverSelect);
         entries.put("configPresetCategory", configForm.presetCategory);
         entries.put("configServerBindHost", configForm.serverBindHost);
         entries.put("configServerAdvertiseHost", configForm.serverAdvertiseHost);

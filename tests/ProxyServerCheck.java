@@ -21,6 +21,9 @@ import java.util.List;
 public final class ProxyServerCheck {
 
     public static void main(String[] args) throws Exception {
+        // 与其他自检保持同一套下线清理：本自检只发 HTTP，不会构建载荷，
+        // 但统一装上守卫可以让「跑完全部自检」永远不留计算器进程
+        TestProcessGuard.install("ProxyServerCheck");
         HttpServer origin = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         origin.createContext("/echo", new EchoHandler());
         origin.start();
