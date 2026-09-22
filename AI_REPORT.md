@@ -2692,3 +2692,121 @@ tasks 44 项全部勾选（含收尾三项与监督复核）。
 3. `static/` 已删除；若后续要参考网页版前端，需要重新从 `lib\java-chains-cli-2.0.0-beta4.jar` 解出。
 4. `openspec/changes/` 下 `java-chains-workbench` 与 `payload-generation` 两个 change 仍在办，未归档。
 5. `docs/DESIGN-modularization.md` 第十节记录的断言数与 Python 测试数是当时快照，未回改（已在第十一节标注）。
+
+## 2026-09-22（本轮：启动预热 + 选链区比例对齐网页版 + 分割线布局期生效）
+
+### 一、任务
+
+用户指令（逐条）：
+
+1. 「完善 UI，利用链选择框太小，要和 JavaChains 一样的格式」
+2. 「软件启动的时候将需要进行加载初始化的东西都做好，防止中途进行初始化」
+3. 「修改 BUG：恶意服务器，payload 等内容比较多的功能第一次点进去会卡几秒」
+4. 收尾澄清：**「并不是和网页版一样高，而是和网页版中的选链区和整个网页的比例要一样」**
+
+第 4 条是本轮的关键修正：原先按「照搬网页版固定高度」的思路走偏了，要的是**比例**一致。
+
+### 二、根因（先实测，不推测）
+
+**卡顿的根因**：`MetadataRegistry.init()` 实测 **1074 ms**（连插件与 gadget 注册约 1.2 s），
+原先发生在**第一次进 Payload 页**、且**在事件分发线程上同步执行**；恶意服务器页同理，
+首次进页才建服务适配器。
+
+**比例对不上的根因**：网页版选链区是「控制台固定 360px、选链区吃掉剩余」，本工具窗口高矮不同，
+照搬绝对值必然对不上。为避免继续凭估，本轮改用 **CDP 实测**上游 `#/Generate/<payload>` 页，
+拿到权威数值：控制台 `.studio-top-console` **360px**、选链区 `.chain-builder-block` **486px**、
+列面板 `.chain-column` 389px、候选列表 `.option-list` **320px**。
+
+**输出区高度读两个值的根因**：分割线原先靠 `componentResized` / `componentShown` 事件回调去摆，
+组件事件是**异步投递**的，布局结束到事件处理之间存在空窗。同一个构建里因此能读到两个值：
+
+```
+[probe2] round=0 split=817 divider=290 output=101   <- 自检读到的就是这个空窗
+[probe2] round=1 split=817 divider=322 output=133   <- 事件处理完之后
+```
+
+### 三、修复
+
+**1）启动预热** — 新增 `src/ui/StartupWarmup.java`（138 行）与 `src/ui/StartupSplash.java`（96 行）：
+
+| 步骤 | 实测 | 内容 |
+| --- | --- | --- |
+| java-chains 引擎 | 1154 ms | `PayloadEngine.init()`，429 节点 / 28 载体 |
+| 预设链目录 | 46 ms | 52 条预设 |
+| 服务适配器 | 22 ms | 五类恶意服务器 |
+
+`main` 先弹无边框启动画面（headless 自动跳过），**在后台线程**预热，主窗口在事件分发线程上建；
+窗口出现时预热若未结束，剩余步骤在 `show(splash)` 里补齐，结束才关启动画面。
+预热**幂等**：二次调用 **0 ms**，重复进页面不重复初始化。
+
+**2）选链区比例对齐** — `PayloadPanels.CONSOLE_WEIGHT` 由实测常量直接算出：
+
+```java
+static final double CONSOLE_WEIGHT =
+        (double) WEB_CONSOLE_HEIGHT / (WEB_CONSOLE_HEIGHT + WEB_CHAIN_HEIGHT);   // 360 / (360+486)
+```
+
+即选链区占两块之和的 **57.4%**，对齐的是比例而非 360px 绝对值。
+
+**3）分割线在布局期生效** — 新增 `src/ui/RatioSplitPane.java`（87 行），把比例校正放进
+`doLayout()`，布局一结束位置就对，不依赖后续事件；用 `applying` 标志挡住 `setDividerLocation`
+触发的重入；用户拖动过（或 `lock()`）之后比例立即失效。选链区拖拽条改高度时走
+`SplitPaneKit.setDivider(...)`，先 `lock()` 再挪，否则下一次布局会按比例拽回原位（「拖了没反应」）。
+
+**4）其余** — `WrappedLabel` 承接长提示与状态文字（`getText()` 仍返回原始文本，不破坏断言）；
+`ChainResizeHandle` / `ChainColumnPanel` / `ChainColumnState` / `ChainSelectorSizing` 承接选链几何与列面板。
+
+### 四、验证（全部本机实测）
+
+| 验证入口 | 结果 |
+| --- | --- |
+| `javac` 编译 `src/**` | 退出码 0 |
+| `javac` 编译 `tests/*.java` | 退出码 0 |
+| `PayloadCheck` | 退出码 0，**68** 条断言，失败 0 |
+| `ShiroCheck` | 退出码 0，45 条断言，失败 0 |
+| `ProxyServerCheck` | 退出码 0，36 条断言，失败 0 |
+| `UiNavigationCheck` | 退出码 0，**225** 条断言，失败 0（此前卡在输出区 101px，已修） |
+| `UiShiroCheck` | 退出码 0，26 条断言，失败 0 |
+| `UiSwitchEndToEndCheck` | 退出码 0，94 条断言，失败 0 |
+| `python -X utf8 -m unittest discover -s tests` | **Ran 106 tests OK** |
+| `python -X utf8 tools\audit_boundary.py` | 无环、无越界、无叶子层出边、无内核反向依赖，结论「全部通过」 |
+| `powershell -File tools\check_agent_tools.ps1` | agent 工具链自检通过（91 项） |
+| `openspec validate --all --strict` | 6 项 passed，0 failed |
+| `build.ps1` | BUILD SUCCESS，JAR `2026-09-22 12:41:42`，385622 字节，84 个源文件时间校验通过 |
+
+**版面实测对照**（窗口 1721×1033，可用高 817px）：
+
+| | 控制台 | 选链区 | 选链区占比 | 候选列表可视高 |
+| --- | --- | --- | --- | --- |
+| 网页版（CDP 实测设计值） | 360 px | 486 px | 57.4% | 320 px |
+| 本工具（`Ratio` 工具实测） | 343 px | 462 px | 56.5% | 309 px |
+
+其余实测：启动预热首次 1263 ms、二次 0 ms、预设 52 条；
+`LayoutAudit` 八页 `TOTAL: 0`（无遮挡、无错位）；
+`FontLeak` 三轮导航后控件数稳定 257、堆 24 MB（无字体登记表泄漏）。
+
+### 五、监控复核
+
+| 复核项 | 结论 |
+| --- | --- |
+| 越界改动 | 无：改动集中在 `src/ui/`、`docs/`、`README*.md`、`AI_REPORT.md`、`PROGRESS.md`；`src/pom.xml`、`src/config/AppConfig.java` 未被触碰，未引入新依赖 |
+| 空承诺 | 无 TODO / FIXME / 空方法体；新增七个类的方法均有实现 |
+| 断言放宽 | 未放宽：六套自检断言数为 225 / 68 / 45 / 36 / 26 / 94，只增不减 |
+| 文件规模 | `src/Main.java` 327 行（≤400）；`src/ui/` 最大 526 行（`PayloadChainSelector`，≤600），由 `tests/test_decoupling.py` 机械校验 |
+| 配置落页 | 本轮未新增持久化配置项，无需补配置页 |
+| 构建一致性 | `build.ps1` 逐文件校验：JAR 时间晚于 84 个源文件 |
+
+### 六、备份与 Git
+
+- 改动前快照已存在（`.backups/20260922-101154`、`20260922-105212`）；
+  本轮收尾另建 `.backups/20260922-123500`（158 个文件），并轮转删除最旧的 `20260922-083827`，
+  现保留最近三份。
+- `.backups/`、`target/`、`JavaSecExpToolKit.jar`、`.pi/` 由 `.gitignore` 忽略。
+
+### 七、如实说明的局限
+
+1. 网页版比例是**用 CDP 量上游 beta4** 得到的；上游改版后 360 / 486 这两个数需要重新量。
+2. `RatioSplitPane` 的比例在用户拖动后即失效，之后窗口缩放不再回到 57.4%——这是刻意的，
+   优先尊重使用者调好的位置。
+3. 启动预热把首次进页的等待挪到了启动阶段；预热耗时本身（约 1.2 s）没有减少，只是不再卡在进页面那一下。
+4. 量测脚本（`target/webref/`）放在 `target/` 下，`build.ps1` 会清理，需要时按本文档说明重建。

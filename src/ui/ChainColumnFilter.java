@@ -24,7 +24,7 @@ final class ChainColumnFilter {
      * <p>当前选中项无条件保留：它与筛选条件不匹配时若被过滤掉，
      * 使用者会看到「链上有这一项、列表里却没有」，进而以为链坏了。
      */
-    static List<Integer> rows(PayloadChainSelector.Column data, String keyword, List<String> tags,
+    static List<Integer> rows(ChainColumn data, String keyword, List<String> tags,
                               boolean intersect) {
         List<Integer> rows = new ArrayList<Integer>();
         String needle = keyword == null ? "" : keyword.trim().toLowerCase(Locale.ROOT);
@@ -48,7 +48,7 @@ final class ChainColumnFilter {
      * <p>并集只要命中一个即可，交集要求全部命中；标签串为空的项在两种模式下都不算命中
      * （否则「按标签筛选」会把没有标签的项全部放行，筛选等于没做）。
      */
-    static boolean matchesTags(PayloadChainSelector.Column data, int index, List<String> tags,
+    static boolean matchesTags(ChainColumn data, int index, List<String> tags,
                                boolean intersect) {
         String raw = data.tagAt(index);
         if (raw == null || raw.trim().isEmpty()) return false;
@@ -83,14 +83,14 @@ final class ChainColumnFilter {
     }
 
     /** 关键字匹配：值与显示名任一命中即可，便于按中文名或英文标识查找。 */
-    static boolean matches(PayloadChainSelector.Column data, int index, String needle) {
+    static boolean matches(ChainColumn data, int index, String needle) {
         String value = data.values.get(index);
         String label = label(data, index);
         return (value != null && value.toLowerCase(Locale.ROOT).contains(needle))
                 || (label != null && label.toLowerCase(Locale.ROOT).contains(needle));
     }
 
-    static String label(PayloadChainSelector.Column data, int index) {
+    static String label(ChainColumn data, int index) {
         if (index < 0 || index >= data.values.size()) return "";
         String value = data.values.get(index);
         String label = index < data.labels.size() ? data.labels.get(index) : null;

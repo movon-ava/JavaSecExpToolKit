@@ -3,11 +3,9 @@ import java.awt.Dimension;
 import java.awt.Font;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
-import javax.swing.JComponent;
 import javax.swing.JFrame;
 import javax.swing.JList;
 import javax.swing.JPanel;
@@ -27,6 +25,8 @@ import ui.ProxyController;
 import ui.ProxyPage;
 import ui.ShiroController;
 import ui.ShiroPage;
+import ui.StartupSplash;
+import ui.StartupWarmup;
 import ui.UiHandle;
 import ui.UiKit;
 import ui.WidgetRegistry;
@@ -52,7 +52,14 @@ public final class Main implements UiHandle.Source {
 
     private final JFrame frame = new JFrame("JavaSecExpToolKit");
     private final JPanel content = new JPanel(new BorderLayout());
-    private final List<FontBinding> fontBindings = new ArrayList<FontBinding>();
+    /**
+     * 当前缩放系数：新建控件时按它立即定字号。
+     *
+     * <p>字号基准记在每个控件自己身上（见 {@link UiKit#trackFont}），这里只保存「现在的缩放是多少」，
+     * 因此界面层不再持有任何控件引用——重建页面时旧控件可以被回收，
+     * 不会出现「切页越切越慢」（实测原实现三轮导航后登记表从 19 涨到 1007 项）。
+     */
+    private double currentScale = 1.0;
     private final Properties config = new Properties();
     /** 自检门面的登记表：控件清单集中在那里，组合根只负责填引用。 */
     private final WidgetRegistry registry = new WidgetRegistry();
@@ -270,15 +277,13 @@ public final class Main implements UiHandle.Source {
 
     /** 登记需要随窗口缩放的字体；实现 {@link UiKit.FontSink}，供 UiKit 回调。 */
     private final UiKit.FontSink fonts = (component, style, baseSize) ->
-            this.fontBindings.add(new FontBinding(component, style, baseSize));
+            UiKit.trackFont(component, style, baseSize, currentScale);
 
     private void updateScale() {
-        double scale = UiKit.scaleFor(frame.getWidth(), frame.getHeight());
-        for (FontBinding binding : fontBindings) {
-            binding.component.setFont(new Font(binding.family(), binding.style,
-                    Math.max(11, (int) Math.round(binding.baseSize * scale))));
-        }
-        if (navController != null) navController.scale(scale);
+        currentScale = UiKit.scaleFor(frame.getWidth(), frame.getHeight());
+        // 按当前组件树重算字号：旧控件已随页面一起被回收，不在树上也就不会被处理
+        UiKit.scaleFonts(frame.getContentPane(), currentScale);
+        if (navController != null) navController.scale(currentScale);
         frame.revalidate();
     }
 
@@ -290,23 +295,33 @@ public final class Main implements UiHandle.Source {
         updateScale();
     }
 
-    private void show() { frame.setVisible(true); }
-
-    public static void main(String[] args) { SwingUtilities.invokeLater(() -> new Main().show()); }
-
-    private static final class FontBinding {
-        private final JComponent component;
-        private final int style;
-        private final int baseSize;
-
-        private FontBinding(JComponent component, int style, int baseSize) {
-            this.component = component;
-            this.style = style;
-            this.baseSize = baseSize;
-        }
-
-        private String family() {
-            return component.getFont() == null ? Font.SANS_SERIF : component.getFont().getFamily();
-        }
+    /**
+     * 显示主窗口。
+     *
+     * <p>窗口起来之前先把启动画面收掉：预热在后台线程做，窗口先出来时预热可能还没完，
+     * 此时保留启动画面会挡住主窗口；预热若还没做完，剩余步骤会在这里同步补完
+     * （幂等，已完成时立即返回）。
+     */
+    private void show(StartupSplash splash) {
+        frame.setVisible(true);
+        StartupWarmup.warmUp(splash);
+        if (splash != null) splash.close();
     }
+
+    /**
+     * 启动：先弹启动画面，预热放到后台线程，主窗口在事件分发线程上建。
+     *
+     * <p>预热必须离开事件分发线程：java-chains 的 {@code MetadataRegistry.init()} 实测约 1.07s
+     * （连同插件与 gadget 注册合计约 1.2s），放在事件分发线程上会把启动画面一起冻住，
+     * 等于没有启动画面。放到后台线程后，启动画面能边转边报进度，主窗口也能尽早出现。
+     */
+    public static void main(String[] args) {
+        final StartupSplash splash = new StartupSplash();
+        splash.show();
+        Thread warmup = new Thread(() -> StartupWarmup.warmUp(splash), "startup-warmup");
+        warmup.setDaemon(true);
+        warmup.start();
+        SwingUtilities.invokeLater(() -> new Main().show(splash));
+    }
+
 }

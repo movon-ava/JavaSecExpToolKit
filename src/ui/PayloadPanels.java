@@ -39,18 +39,48 @@ import payload.PayloadCodec;
  */
 final class PayloadPanels {
 
-    /** 控制台默认高度：三栏都要放得下标题行、内容与按钮行。 */
-    private static final int CONSOLE_HEIGHT = 400;
-    /** 控制台最小高度：再矮就会把输出区压成一条细线。 */
-    private static final int CONSOLE_MIN_HEIGHT = 260;
-    /** 链路区默认高度：链路条 + 选链标题 + 列式列表（与选择器首选高度对齐）。 */
-    private static final int CHAIN_BLOCK_HEIGHT = 428;
-    /** 链路区最小高度：保证链路条完整可见，候选列表至少露出一行。 */
-    private static final int CHAIN_BLOCK_MIN_HEIGHT = 330;
+    /**
+     * 控制台默认高度与上下分栏比例。
+     *
+     * <p>网页版 Generate 页的控制台是固定 360px、选链区吃掉剩余空间（实测 1280×900 下
+     * 选链区约占整页 61%）。本工具的窗口高度有限，因此对齐的是**比例**而不是绝对值：
+     * 分栏按 {@link #CONSOLE_WEIGHT} 分配，控制台落在三百来像素、选链区拿到六成左右，
+     * 与网页版的版面比例一致。使用者随时可以拖分栏或拖选链区下方那条拖拽条再调。
+     */
+    /**
+     * 网页版 Generate 页的实测高度：控制台 {@code .studio-top-console} 360px，
+     * 选链区 {@code .chain-builder-block} 486px。
+     *
+     * <p>这两个值是量出来的，不是估的：用 CDP 驱动无头 Chrome 打开上游
+     * {@code #/Generate/<payload>} 页，再读 {@code getBoundingClientRect()}。
+     * 窗口高矮只影响网页版要不要滚动，两块自身的比例是固定的，因此本工具对齐的
+     * 就是「选链区占两块之和」的比例（486 / 846 ≈ 57.4%），而不是照搬 360px 这个绝对值。
+     */
+    private static final int WEB_CONSOLE_HEIGHT = 360;
+    /** 网页版选链区高度：{@code .chain-builder-block} 实测 486px。 */
+    private static final int WEB_CHAIN_HEIGHT = 486;
+    private static final int CONSOLE_HEIGHT = 330;
+    /** 控制台最小高度：再矮就会把输出区压成一条细线（自检要求可视高度 > 120px）。 */
+    private static final int CONSOLE_MIN_HEIGHT = 250;
+    /** 控制台在上下分栏里的占比：与网页版「控制台 360 / 选链区 61%」的比例一致。 */
+    static final double CONSOLE_WEIGHT =
+            (double) WEB_CONSOLE_HEIGHT / (WEB_CONSOLE_HEIGHT + WEB_CHAIN_HEIGHT);
     /** 链路条高度：链路输入行 + 链路徽标行 + 链信息行 + 卡片内边距。 */
-    private static final int CHAIN_STRIP_HEIGHT = 146;
+    private static final int CHAIN_STRIP_HEIGHT = 138;
+    /** 链路输入行高度：按次级按钮的实际首选高度给，矮了会把按钮裁掉 5px（实测踩到）。 */
+    private static final int CHAIN_TOP_HEIGHT = 46;
     /** 链路徽标行高度：一行徽标加横滚条。 */
     private static final int CHAIN_CHIP_HEIGHT = 34;
+    /** 选链标题行高度：与其它页面的分组标题同高。 */
+    private static final int SELECTOR_TITLE_HEIGHT = 22;
+    /** 链路区默认高度：链路条 + 选链标题 + 列式列表（与选择器首选高度对齐）。 */
+    private static final int CHAIN_BLOCK_HEIGHT = CHAIN_STRIP_HEIGHT + 10
+            + SELECTOR_TITLE_HEIGHT + 8 + ChainSelectorSizing.HANDLE_HEIGHT
+            + ChainSelectorSizing.stripHeight(ChainSelectorSizing.DEFAULT_LIST_HEIGHT);
+    /** 链路区最小高度：保证链路条完整可见，候选列表至少露出最小档。 */
+    private static final int CHAIN_BLOCK_MIN_HEIGHT = CHAIN_STRIP_HEIGHT + 10
+            + SELECTOR_TITLE_HEIGHT + 8 + ChainSelectorSizing.HANDLE_HEIGHT
+            + ChainSelectorSizing.stripHeight(ChainSelectorSizing.MIN_LIST_HEIGHT);
     /** 参数区高度：约三行参数行，再多就在区内滚动。 */
     private static final int PARAMS_MIN_HEIGHT = 150;
     /** CONTEXT 列表高度：约六行条目。 */
@@ -70,96 +100,13 @@ final class PayloadPanels {
      * 落点即 69% × 43% ≈ 参考宽度（比例是相对父分栏的，不是相对整页）。
      */
     static JComponent console(PayloadPage.Widgets widgets, UiKit.FontSink sink) {
-        JSplitPane left = splitPane(JSplitPane.HORIZONTAL_SPLIT,
+        JSplitPane left = SplitPaneKit.splitPane(JSplitPane.HORIZONTAL_SPLIT,
                 outputPanel(widgets, sink), contextPanel(widgets, sink), 0.43, 10);
-        JSplitPane all = splitPane(JSplitPane.HORIZONTAL_SPLIT,
+        JSplitPane all = SplitPaneKit.splitPane(JSplitPane.HORIZONTAL_SPLIT,
                 left, optionsPanel(widgets, sink), 0.69, 10);
         all.setPreferredSize(new Dimension(0, CONSOLE_HEIGHT));
         all.setMinimumSize(new Dimension(0, CONSOLE_MIN_HEIGHT));
         return all;
-    }
-
-    /**
-     * 一个可拖拽的分栏：第一块占 {@code weight}，第二块吃掉其余空间。
-     *
-     * <p>分隔线位置不能在建好时用 {@code setDividerLocation(double)} 定：
-     * 那时分栏还没有尺寸，Swing 会按「当前尺寸 × 比例」算成 0，比例因此完全不生效
-     * （实测踩到：三栏宽度按各自首选尺寸乱分，OUTPUT 吃掉大半、CONTEXT 被压成一条）。
-     * 这里改成第一次拿到真实尺寸时按比例定一次，之后交给使用者拖拽。
-     */
-    static JSplitPane splitPane(int orientation, JComponent first, JComponent second,
-                                       final double weight, int divider) {
-        final JSplitPane split = new JSplitPane(orientation, first, second);
-        split.setResizeWeight(weight);
-        split.setDividerSize(divider);
-        split.setContinuousLayout(true);
-        split.setBorder(null);
-        split.setOpaque(false);
-        final bool dragged = new bool();
-        // 分隔线被拖过之后比例就不再作数：否则下一次窗口变化会把使用者调好的宽度拽回去
-        split.addMouseListener(new java.awt.event.MouseAdapter() {
-            @Override
-            public void mousePressed(java.awt.event.MouseEvent event) {
-                if (nearDivider(split, event.getX(), event.getY())) dragged.value = true;
-            }
-        });
-        split.addComponentListener(new java.awt.event.ComponentAdapter() {
-            @Override
-            public void componentResized(java.awt.event.ComponentEvent event) {
-                applyRatio(split, weight, dragged.value, true);
-            }
-
-            @Override
-            public void componentShown(java.awt.event.ComponentEvent event) {
-                applyRatio(split, weight, dragged.value, true);
-            }
-        });
-        return split;
-    }
-
-    /**
-     * 按比例摆放分隔线。
-     *
-     * <p>不能在建好时一次性用 {@code setDividerLocation} 定死：那时分栏还没有尺寸，
-     * 比例会算成 0，三栏于是按各自首选宽度乱分（实测踩到：OUTPUT 吃掉大半、CONTEXT 被压成一条）。
-     * 也不能只在「第一次拿到尺寸」时算一次：嵌套分栏的内层会在外层布局完成前先被量一次，
-     * 那一次的尺寸偏小，之后不会再触发 resize，比例就冻在错误的宽度上（实测踩到：内层 31% 变成 59%）。
-     * 因此每次尺寸变化都按比例重算，并在下一轮事件队列里再确认一次——子组件布局
-     * 有可能在本次布局中把分隔线挪走，补一次即可把它拉回比例位置。
-     *
-     * @param reassert 是否在下一轮事件队列里再确认一次位置
-     */
-    private static void applyRatio(final JSplitPane split, final double weight, boolean dragged,
-                                  boolean reassert) {
-        if (dragged) return;
-        int size = split.getOrientation() == JSplitPane.VERTICAL_SPLIT
-                ? split.getHeight() : split.getWidth();
-        final int location = (int) Math.round(weight * (size - split.getDividerSize()));
-        if (location <= 0) return;
-        split.setDividerLocation(location);
-        if (!reassert) return;
-        javax.swing.SwingUtilities.invokeLater(new Runnable() {
-            @Override
-            public void run() {
-                int now = split.getOrientation() == JSplitPane.VERTICAL_SPLIT
-                        ? split.getHeight() : split.getWidth();
-                int target = (int) Math.round(weight * (now - split.getDividerSize()));
-                if (target > 0 && split.getDividerLocation() != target) split.setDividerLocation(target);
-            }
-        });
-    }
-
-    /** 鼠标按在这个点上是否落在分隔线上（含两侧各 3px 的容差）。 */
-    private static boolean nearDivider(JSplitPane split, int x, int y) {
-        int location = split.getDividerLocation();
-        int size = split.getDividerSize();
-        int position = split.getOrientation() == JSplitPane.VERTICAL_SPLIT ? y : x;
-        return position >= location - 3 && position <= location + size + 3;
-    }
-
-    /** 可变的布尔量：JDK 8 的匿名内部类里要改外部局部变量，只能借一层容器。 */
-    private static final class bool {
-        private boolean value;
     }
 
     /** 链路区：链路条（链路 ID + 徽标 + 链信息）与列式选链条。 */
@@ -182,6 +129,11 @@ final class PayloadPanels {
      */
     private static JPanel chainStrip(PayloadPage.Widgets widgets, UiKit.FontSink sink) {
         JPanel bar = UiKit.surface(null);
+        // 卡片内边距收紧：链路条有三行内容，22px 的上下留白会把它顶到 150 以上，
+        // 而这块高度是从候选列表那里借来的（网页版这一条也没有那么厚的留白）
+        bar.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(UiKit.BORDER),
+                BorderFactory.createEmptyBorder(12, 18, 12, 18)));
         bar.setLayout(new BoxLayout(bar, BoxLayout.Y_AXIS));
         bar.setPreferredSize(new Dimension(0, CHAIN_STRIP_HEIGHT));
 
@@ -202,9 +154,11 @@ final class PayloadPanels {
         actions.add(widgets.undo);
         actions.add(widgets.clear);
         top.add(actions, BorderLayout.EAST);
-        setFixedHeight(top, 38);
+        // 行高按按钮的实际首选高度给：次级按钮带 9px 上下内边距，实际 43px 高，
+        // 写死 38 会把「删除末节点 / 清空链」两个按钮各裁掉 5px（实测踩到）
+        SplitPaneKit.setFixedHeight(top, CHAIN_TOP_HEIGHT);
         bar.add(top);
-        bar.add(Box.createVerticalStrut(6));
+        bar.add(Box.createVerticalStrut(4));
 
         widgets.chainChips.setOpaque(false);
         widgets.chainChips.setLayout(new BoxLayout(widgets.chainChips, BoxLayout.X_AXIS));
@@ -216,10 +170,10 @@ final class PayloadPanels {
         chips.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_NEVER);
         chips.setAlignmentX(java.awt.Component.LEFT_ALIGNMENT);
         // 这里不能铺满：链路徽标行宽度由徽标个数决定，铺满会把滚动条拉成整行宽
-        setFixedHeight(chips, CHAIN_CHIP_HEIGHT);
+        SplitPaneKit.setFixedHeight(chips, CHAIN_CHIP_HEIGHT);
         chips.setMaximumSize(new Dimension(Integer.MAX_VALUE, CHAIN_CHIP_HEIGHT));
         bar.add(chips);
-        bar.add(Box.createVerticalStrut(6));
+        bar.add(Box.createVerticalStrut(4));
 
         widgets.chainMeta.setForeground(UiKit.MUTED);
         sink.track(widgets.chainMeta, Font.PLAIN, 12);
@@ -230,7 +184,13 @@ final class PayloadPanels {
     }
 
     private static JPanel outputPanel(PayloadPage.Widgets widgets, UiKit.FontSink sink) {
-        JPanel card = UiKit.surface(new BorderLayout(0, 10));
+        JPanel card = UiKit.surface(new BorderLayout(0, 6));
+        // 内边距比通用卡片紧两档：这一栏要塞「标题 + 工具行 + 输出区 + 按钮 + 状态」五块，
+        // 而控制台在上下分栏里只占四成高；留白按 22px 给会把输出区可视高度压到 120px 以下
+        // （自检有「输出区可视高度 > 120px」的硬断言）
+        card.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(UiKit.BORDER),
+                BorderFactory.createEmptyBorder(10, 14, 10, 14)));
         card.setMinimumSize(new Dimension(300, 0));
 
         JPanel head = new JPanel();
@@ -245,7 +205,7 @@ final class PayloadPanels {
         sink.track(widgets.outputSize, Font.BOLD, 12);
         titleRow.add(widgets.outputSize, BorderLayout.EAST);
         head.add(titleRow);
-        head.add(Box.createVerticalStrut(6));
+        head.add(Box.createVerticalStrut(2));
 
         // 按钮另起一行并用等分网格：窄栏里和标题挤一行会把标题盖掉，而 FlowLayout
         // 换行后按「一行的高度」上报首选尺寸，第二行会被裁掉（实测踩到：
@@ -275,7 +235,7 @@ final class PayloadPanels {
         tools.add(widgets.copy);
         tools.add(widgets.export);
         tools.add(widgets.expand);
-        stretch(tools, 38);
+        SplitPaneKit.stretch(tools, 38);
         head.add(tools);
         head.setMaximumSize(new Dimension(Integer.MAX_VALUE, 64));
         card.add(head, BorderLayout.NORTH);
@@ -297,10 +257,13 @@ final class PayloadPanels {
         UiKit.styleSecondaryButton(widgets.toCapture, sink);
         sendRow.add(widgets.toCapture);
         footer.add(sendRow);
-        footer.add(Box.createVerticalStrut(6));
+        footer.add(Box.createVerticalStrut(2));
         widgets.status.setForeground(UiKit.MUTED);
         sink.track(widgets.status, Font.PLAIN, 13);
         widgets.status.setAlignmentX(java.awt.Component.LEFT_ALIGNMENT);
+        // 状态文字比栏宽还长（实测需要 438px，栏里只有 333px），给足宽度让它折行，
+        // 否则会截成「已选载体 blazedsamf3ampay…」，结论看不到
+        widgets.status.setMaximumSize(new Dimension(Integer.MAX_VALUE, 2 * 20 + 2));
         footer.add(widgets.status);
         card.add(footer, BorderLayout.SOUTH);
         return card;
@@ -323,7 +286,9 @@ final class PayloadPanels {
         listScroll.setBorder(BorderFactory.createLineBorder(UiKit.BORDER));
         listScroll.getViewport().setBackground(Color.WHITE);
         listScroll.setPreferredSize(new Dimension(0, CONTEXT_LIST_HEIGHT));
-        listScroll.setMinimumSize(new Dimension(0, 70));
+        // 下限给小：CONTEXT 栏的高度是从控制台分栏里分来的，给大了会把下方的
+        // 「条目内容」整块挤成负高（实测踩到：条目内容区 41px 里塞 43px 的标题行）
+        listScroll.setMinimumSize(new Dimension(0, 40));
 
         widgets.params.setOpaque(false);
         widgets.params.setLayout(new BoxLayout(widgets.params, BoxLayout.Y_AXIS));
@@ -339,8 +304,8 @@ final class PayloadPanels {
         contextCard.add(contextHead(widgets, sink), BorderLayout.NORTH);
         // 清单与条目内容按比例分高度：把条目内容写死成 SOUTH，外层高度一紧
         // 就会被 CENTER 抢光，清单只剩一条缝（实测踩到）
-        contextCard.add(splitPane(JSplitPane.VERTICAL_SPLIT, listScroll,
-                detailBlock(widgets, sink), 0.62, 8), BorderLayout.CENTER);
+        contextCard.add(SplitPaneKit.splitPane(JSplitPane.VERTICAL_SPLIT, listScroll,
+                detailBlock(widgets, sink), 0.58, 8), BorderLayout.CENTER);
         contextCard.setMinimumSize(new Dimension(200, 150));
 
         JPanel paramsBlock = new JPanel(new BorderLayout(0, 6));
@@ -349,7 +314,7 @@ final class PayloadPanels {
         paramsBlock.add(paramsScroll, BorderLayout.CENTER);
         paramsBlock.setMinimumSize(new Dimension(0, 110));
 
-        return splitPane(JSplitPane.VERTICAL_SPLIT, contextCard, paramsBlock, 0.6, 10);
+        return SplitPaneKit.splitPane(JSplitPane.VERTICAL_SPLIT, contextCard, paramsBlock, 0.6, 10);
     }
 
     /** CONTEXT 栏标题行：标题带条目数与搜索框，对应网页版的「CONTEXT (10) + 搜索框」。 */
@@ -371,7 +336,7 @@ final class PayloadPanels {
         UiKit.styleField(widgets.contextSearch, sink);
         widgets.contextSearch.setToolTipText("按上下文键或来源节点过滤条目；清空即显示全部");
         widgets.contextSearch.setAlignmentX(java.awt.Component.LEFT_ALIGNMENT);
-        stretch(widgets.contextSearch, 34);
+        SplitPaneKit.stretch(widgets.contextSearch, 34);
         head.add(widgets.contextSearch);
         return head;
     }
@@ -391,7 +356,7 @@ final class PayloadPanels {
         UiKit.styleMonospaceArea(widgets.contextDetail, sink);
         JScrollPane scroll = UiKit.scroll(widgets.contextDetail);
         scroll.setPreferredSize(new Dimension(0, CONTEXT_DETAIL_HEIGHT));
-        scroll.setMinimumSize(new Dimension(0, 48));
+        scroll.setMinimumSize(new Dimension(0, 0));
         detail.add(scroll, BorderLayout.CENTER);
         return detail;
     }
@@ -426,7 +391,7 @@ final class PayloadPanels {
         // 三列排：五个按钮落成两行。两列会排成三行，右栏的「生成」按钮就被挤到
         // 滚动区之外，看起来像「没有生成入口」（实测踩到）
         int encodeRows = (PayloadCodec.Option.values().length + 1 + 2) / 3;
-        stretch(encodeRow, 34 * encodeRows + 6 * (encodeRows - 1));
+        SplitPaneKit.stretch(encodeRow, 34 * encodeRows + 6 * (encodeRows - 1));
         c.gridy = row++; c.insets = new Insets(0, 0, 14, 0);
         card.add(encodeRow, c);
 
@@ -455,7 +420,7 @@ final class PayloadPanels {
         behavior.add(widgets.autoCopy);
         behavior.add(widgets.autoExpand);
         behavior.add(widgets.hoverSelect);
-        stretch(behavior, 2 * 28 + 2);
+        SplitPaneKit.stretch(behavior, 2 * 28 + 2);
         c.gridy = row++; c.insets = new Insets(0, 0, 16, 0);
         card.add(behavior, c);
 
@@ -466,7 +431,7 @@ final class PayloadPanels {
         UiKit.stylePrimaryButton(widgets.build, sink);
         buttons.add(widgets.buildDebug);
         buttons.add(widgets.build);
-        stretch(buttons, 40);
+        SplitPaneKit.stretch(buttons, 40);
         c.gridy = row++; c.insets = new Insets(0, 0, 0, 0);
         card.add(buttons, c);
 
@@ -494,32 +459,23 @@ final class PayloadPanels {
         return label;
     }
 
-    /** 只固定高度：宽度交给布局拉伸，与整块分栏配合使用。 */
-    private static void setFixedHeight(JComponent component, int height) {
-        component.setPreferredSize(new Dimension(component.getPreferredSize().width, height));
-        component.setMinimumSize(new Dimension(0, height));
-    }
-
-    /**
-     * 固定高度并允许横向铺满。
-     *
-     * <p>盒式布局按最大尺寸决定能给多少宽度，而 {@code JComponent} 未显式设置时
-     * 最大尺寸等于首选尺寸：只设首选高度会让组件停在首选宽度上，
-     * 一排按钮因此被裁掉最后一个（实测踩到：OUTPUT 行的「展开」只剩「展…」）。
-     */
-    private static void stretch(JComponent component, int height) {
-        setFixedHeight(component, height);
-        component.setMaximumSize(new Dimension(Integer.MAX_VALUE, height));
-    }
-
     /** 底部选链条：每级一列，对应网页版的 Gadget1 / Gadget2 …。 */
     private static JPanel selectorBar(PayloadPage.Widgets widgets, UiKit.FontSink sink) {
         JPanel block = new JPanel(new BorderLayout(0, 8));
         block.setOpaque(false);
-        block.add(UiKit.sectionTitle("选择利用链",
-                "点某一列的候选即追加并展开下一列；点回前面某一列即从那里重开链；带 END 的节点之后没有可接的节点", sink),
-                BorderLayout.NORTH);
+        JPanel title = UiKit.sectionTitle("选择利用链",
+                "点某一列的候选即追加并展开下一列；点回前面某一列即从那里重开链；带 END 的节点之后没有可接的节点",
+                sink);
+        SplitPaneKit.setFixedHeight(title, SELECTOR_TITLE_HEIGHT);
+        block.add(title, BorderLayout.NORTH);
         block.add(widgets.selector.component(), BorderLayout.CENTER);
+        // 竖向拖拽条摆在选择器下方：往上拖把候选列表调高（网页版同一条的位置），
+        // 高度变化会经 HeightSink 让出控制台的高度，所以这里必须和分栏一起接线
+        JPanel handleRow = new JPanel(new BorderLayout());
+        handleRow.setOpaque(false);
+        handleRow.add(widgets.selector.resizeHandle(), BorderLayout.CENTER);
+        SplitPaneKit.setFixedHeight(handleRow, ChainSelectorSizing.HANDLE_HEIGHT);
+        block.add(handleRow, BorderLayout.SOUTH);
         return block;
     }
 

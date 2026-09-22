@@ -59,6 +59,64 @@ public final class UiKit {
         void track(javax.swing.JComponent component, int style, int baseSize);
     }
 
+    /**
+     * 字号基准：控件按它乘上缩放系数得到当前字号。
+     *
+     * <p>基准记在控件自己的客户端属性上（{@link #trackFont}），而不是集中在界面层的一张
+     * 登记表里：页面每次进入都会重建一批控件，集中登记会长期持有已被丢弃的旧控件，
+     * 实测三轮导航后登记表从 19 涨到 1007 项，切页一次比一次慢。
+     */
+    public static final class FontSpec {
+        public final int style;
+        public final int baseSize;
+
+        public FontSpec(int style, int baseSize) {
+            this.style = style;
+            this.baseSize = baseSize;
+        }
+    }
+
+    /** 控件上存放 {@link FontSpec} 的客户端属性键。 */
+    private static final String FONT_SPEC_KEY = "javasec.fontSpec";
+
+    /** 记录控件的字号基准，并按当前缩放立即应用一次。 */
+    public static void trackFont(javax.swing.JComponent component, int style, int baseSize, double scale) {
+        FontSpec spec = new FontSpec(style, baseSize);
+        component.putClientProperty(FONT_SPEC_KEY, spec);
+        applyFont(component, spec, scale);
+    }
+
+    /**
+     * 按缩放系数重算一棵组件树里全部已登记控件的字号，返回处理过的控件数。
+     *
+     * <p>遍历当前活动的组件树，而不是维护一张登记表：重建页面时旧控件连同基准一起被回收，
+     * 不存在「越切越慢」。渲染器里临时创建的控件（列表行）不在树上，它们在每次绘制时
+     * 按当前缩放新建，因此同样是正确的。
+     */
+    public static int scaleFonts(java.awt.Component root, double scale) {
+        int count = 0;
+        if (root instanceof javax.swing.JComponent) {
+            Object spec = ((javax.swing.JComponent) root).getClientProperty(FONT_SPEC_KEY);
+            if (spec instanceof FontSpec) {
+                applyFont((javax.swing.JComponent) root, (FontSpec) spec, scale);
+                count++;
+            }
+        }
+        if (root instanceof java.awt.Container) {
+            for (java.awt.Component child : ((java.awt.Container) root).getComponents()) {
+                count += scaleFonts(child, scale);
+            }
+        }
+        return count;
+    }
+
+    /** 应用字号：字号下限 11px，避免窗口很小的时候文字糊成一团。 */
+    private static void applyFont(javax.swing.JComponent component, FontSpec spec, double scale) {
+        String family = component.getFont() == null ? Font.SANS_SERIF : component.getFont().getFamily();
+        component.setFont(new Font(family, spec.style,
+                Math.max(11, (int) Math.round(spec.baseSize * scale))));
+    }
+
     /** 页面容器：统一的背景色与四周留白。 */
     public static JPanel page() {
         JPanel page = new JPanel(new BorderLayout());

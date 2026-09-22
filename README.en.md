@@ -145,6 +145,20 @@ and the output pane at once, and the parameter column gets squeezed at smaller w
 
 First-level categories show a `▾` / `▸` marker pinned to the right edge of the row; clicking one toggles its children without leaving the current page. `打开探测` on the home card expands the group and jumps straight to the probe page.
 
+## Startup warm-up
+
+Everything that needs a one-off initialisation is done on a background thread at launch, so
+entering a page later never stalls:
+
+- the java-chains engine (`MetadataRegistry` measured at about 1.1 s; 429 nodes, 28 carriers, 52 presets)
+- the preset-chain catalog and the malicious-server service adapters
+
+A **splash screen** appears first while a background thread warms up; the main window is built on
+the event dispatch thread, and if the warm-up has not finished, the remaining steps are completed
+before the window settles. The warm-up is **idempotent**: a second call returns in 0 ms, so revisiting
+a page never re-initialises anything. The progress text is the per-step timings, so it is obvious
+which step is slow.
+
 ## Settings page
 
 The `配置` page stores fixed parameters in
@@ -202,7 +216,7 @@ readable hint instead of an engine error — set CEYE Token on the settings page
 | Path | Purpose |
 | --- | --- |
 | `src/` | Composition root `Main.java` (301 lines: wiring and page switching only), `pom.xml`, the local proxy (`proxy/ProxyServer.java`), and the Shiro module (`shiro/`) |
-| `src/ui/` | Per-feature **views** and **behaviour** kept apart: views `*Page` / `*Form` (`HomePage` / `ProbePage` / `CapturePage` / `ProxyPage` / `ShiroPage` / `PayloadPage` / `PresetPage` / `ServicePage` / `ConfigPage` / `ConfigForm`), behaviour `*Controller` (`NavController` / `ProbeController` / `CaptureController` / `ProxyController` / `ShiroController` / `ConfigController` / `PayloadController` / `PresetController` / `ServiceController` / `WorkbenchPages`), plus styling `UiKit`, the shared `ChainEditor`, the column selector `PayloadChainSelector` (the payload page's chain picker, holding no chain state) with its collaborators `ChainColumnFilter` (filter predicate) / `ChainNodeRenderer` (row rendering) / `ChainTagMenu` (tag menu), the payload page split-outs `PayloadPanels` (panel building) / `PayloadColumns` (column mapping) / `PayloadOutputText` (output text) / `PayloadExporter` (export to disk), and the self-check facade `UiHandle` + `WidgetRegistry` |
+| `src/ui/` | Per-feature **views** and **behaviour** kept apart: views `*Page` / `*Form` (`HomePage` / `ProbePage` / `CapturePage` / `ProxyPage` / `ShiroPage` / `PayloadPage` / `PresetPage` / `ServicePage` / `ConfigPage` / `ConfigForm`), behaviour `*Controller` (`NavController` / `ProbeController` / `CaptureController` / `ProxyController` / `ShiroController` / `ConfigController` / `PayloadController` / `PresetController` / `ServiceController` / `WorkbenchPages`), plus styling `UiKit`, the shared `ChainEditor`, startup warm-up `StartupWarmup` / splash `StartupSplash`, the column selector `PayloadChainSelector` (the payload page's chain picker, holding no chain state) with its collaborators `ChainSelectorSizing` (geometry) / `ChainColumn` / `ChainColumnState` / `ChainColumnPanel` (per-column panel and filter state) / `ChainResizeHandle` (vertical drag bar) / `ChainColumnFilter` (filter predicate) / `ChainNodeRenderer` (row rendering) / `ChainTagMenu` (tag menu), the payload page split-outs `PayloadPanels` (panel building) / `PayloadColumns` (column mapping) / `PayloadOutputText` (output text) / `PayloadExporter` (export to disk), and the self-check facade `UiHandle` + `WidgetRegistry` |
 | `src/payload/` | Generic payload generation (`PayloadEngine` / `PayloadCatalog` / `PayloadResult`), decoupled from concrete features such as Shiro |
 | `src/service/` | Malicious servers (`ServiceManager` / `ServiceSpec` / `ServiceEndpoint` / `ServiceDefaults`): the only package that talks to the java-chains server-side adapters |
 | `src/preset/` | Built-in preset chains (`PresetCatalogService` / `PresetItem`): the only package that touches the upstream preset model, exposing plain data |
@@ -414,6 +428,15 @@ Candidates always come from the **engine's own** criterion (first-level nodes va
 nor this repository keeps a second node-relationship table. The chain text is read-only — a chain
 is built by clicking, never typed. A node without successors simply does not open another column,
 so a leaf never leaves an empty list behind.
+
+The layout follows the **measured proportion** of the web UI: driving headless Chrome over CDP
+against the upstream `#/Generate/<payload>` route gives a console (`.studio-top-console`) of 360 px
+and a chain area (`.chain-builder-block`) of 486 px, a 360 : 486 split. The vertical divider therefore
+matches the **ratio** (the chain area takes about 57.4% of the two blocks) instead of copying the
+360 px absolute value. The list is 320 px by default, draggable between 160 px and 640 px, and a
+double-click on the drag bar toggles between 320 px and 480 px; column width is shared evenly
+between 300 px and 500 px and falls back to horizontal scrolling when the columns do not fit —
+all of these numbers match the web UI.
 
 The result shows the chain order, byte length, a body-free digest and the Base64 text. `复制`
 copies it, `导出文件` writes it to the default export directory from the settings page (the

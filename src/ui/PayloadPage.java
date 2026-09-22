@@ -146,7 +146,11 @@ public final class PayloadPage {
         /** 导出 / 保存时的文件名前缀（网页版「保存/下载 文件名」）。 */
         public final JTextField fileName = new JTextField("", 18);
 
-        public final JLabel status = new JLabel("");
+        /**
+         * 状态行：用 {@link WrappedLabel} 而不是普通 JLabel——窄栏里状态文字常比栏宽还长，
+         * 普通标签会截成省略号，结论看不到。{@code getText()} 仍是原始文本，断言不受影响。
+         */
+        public final JLabel status = new WrappedLabel("");
         /** 导出目录；空表示落到用户目录。由界面层从配置页注入。 */
         public String exportDirectory = "";
         /** 把载荷填入抓包页；由界面层提供，未提供时按钮给出提示。 */
@@ -172,10 +176,21 @@ public final class PayloadPage {
         work.setOpaque(false);
         work.setBorder(BorderFactory.createEmptyBorder(20, 0, 0, 0));
 
-        // 控制台与链路区上下分栏：网页版同样可以拖拽中间那条分隔线调高度
-        work.add(PayloadPanels.splitPane(javax.swing.JSplitPane.VERTICAL_SPLIT,
+        // 控制台与链路区上下分栏：网页版同样可以拖拽中间那条分隔线调高度。
+        // 比例对齐网页版的版面（控制台约四成、选链区约六成），而不是照搬它的 360px 绝对值
+        javax.swing.JSplitPane workSplit = SplitPaneKit.splitPane(
+                javax.swing.JSplitPane.VERTICAL_SPLIT,
                 PayloadPanels.console(widgets, sink), PayloadPanels.chainArea(widgets, sink),
-                0.45, 12), BorderLayout.CENTER);
+                PayloadPanels.CONSOLE_WEIGHT, 12);
+        // 选链区下方的拖拽条要把高度变化转给这条分栏：只改列表高度而分栏不动，
+        // 多出来的高度会被控制台吃掉，使用者看到的是「拖了没反应」
+        widgets.selector.setHeightSink(new PayloadChainSelector.HeightSink() {
+            @Override
+            public void changed(int delta) {
+                SplitPaneKit.setDivider(workSplit, workSplit.getDividerLocation() - delta);
+            }
+        });
+        work.add(workSplit, BorderLayout.CENTER);
         page.add(work, BorderLayout.CENTER);
         return page;
     }

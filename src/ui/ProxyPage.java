@@ -118,11 +118,14 @@ public final class ProxyPage {
         interceptBar.add(widgets.drop);
         panel.add(interceptBar, BorderLayout.CENTER);
 
-        JLabel hint = UiKit.label("浏览器或插件把 HTTP 代理指向「监听地址:端口」即可实时看到流量；"
+        // 提示文字较长（实测需要 2108px，卡片里只有 1266px），必须用会折行的标签，
+        // 否则后半段「拦截 / 放行 / HTTPS 只透传」这些关键说明会被截掉
+        JLabel hint = new WrappedLabel("浏览器或插件把 HTTP 代理指向「监听地址:端口」即可实时看到流量；"
                 + "地址默认为本机联网 IP（同一局域网的其他设备也能用），改成 127.0.0.1 则仅本机可用，"
                 + "填 0.0.0.0 表示监听所有网卡。勾选「拦截请求」后请求会停在上方等待，"
-                + "改完请求包点「放行」才发往目标，「丢弃」则直接断开。HTTPS 目前只透传不解密（不会记录明文）。",
-                Font.PLAIN, 12, UiKit.MUTED, sink);
+                + "改完请求包点「放行」才发往目标，「丢弃」则直接断开。HTTPS 目前只透传不解密（不会记录明文）。");
+        hint.setForeground(UiKit.MUTED);
+        sink.track(hint, Font.PLAIN, 12);
         panel.add(hint, BorderLayout.SOUTH);
         return panel;
     }

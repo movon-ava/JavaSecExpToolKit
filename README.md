@@ -128,6 +128,17 @@ Maven 的 POM 位于 Java 工作区（`src/pom.xml`，与源码同级），产�
 一级分类行右侧固定显示 `▾` / `▸` 标记；点击它只展开 / 收起子项，不会离开当前页面。
 主页卡片上的 `打开探测` 会展开分组并直接跳到探测页。
 
+## 启动预热
+
+启动时先把需要初始化的一次性动作在后台做完，中途进页面不再等：
+
+- java-chains 引擎（`MetadataRegistry` 实测约 1.1 秒，429 个节点、28 个载体、52 条预设）
+- 预设链目录与恶意服务器的服务适配器
+
+界面上先出现**启动画面**并在后台线程预热；主窗口在事件分发线程上构建，预热若还没结束，
+剩余的步骤会在主窗口出现前补齐。预热是**幂等**的：第二次调用直接返回 0 ms，
+因此重复进页面不会重复初始化。进度文字即各项耗时，便于判断是哪一步慢。
+
 ## 配置页
 
 `配置` 页把固定参数保存在 `%USERPROFILE%\.JavaSecExpToolKit\config.properties`，分组如下：
@@ -178,7 +189,7 @@ CEYE 确认作为附属阶段时仍依赖 DNS 阶段。未填 Token 就执行 `C
 | 路径 | 用途 |
 | --- | --- |
 | `src/` | 组合根 `Main.java`（301 行，只做装配与切页）、`pom.xml`、本地代理（`proxy/ProxyServer.java`）与 Shiro 模块（`shiro/`） |
-| `src/ui/` | 各功能页的**视图**与**行为**分开放：视图 `*Page` / `*Form`（`HomePage` / `ProbePage` / `CapturePage` / `ProxyPage` / `ShiroPage` / `PayloadPage` / `PresetPage` / `ServicePage` / `ConfigPage` / `ConfigForm`），行为 `*Controller`（`NavController` / `ProbeController` / `CaptureController` / `ProxyController` / `ShiroController` / `ConfigController` / `PayloadController` / `PresetController` / `ServiceController` / `WorkbenchPages`），另有样式 `UiKit`、共用链编辑 `ChainEditor`、列式链选择器 `PayloadChainSelector`（载荷生成页的选链主体，不持有链状态）及其协作类 `ChainColumnFilter`（过滤判定）/ `ChainNodeRenderer`（条目渲染）/ `ChainTagMenu`（标签菜单）、载荷页拆分出的 `PayloadPanels`（面板构建）/ `PayloadColumns`（列换算）/ `PayloadOutputText`（输出文本）/ `PayloadExporter`（导出落盘）、自检门面 `UiHandle` + `WidgetRegistry` |
+| `src/ui/` | 各功能页的**视图**与**行为**分开放：视图 `*Page` / `*Form`（`HomePage` / `ProbePage` / `CapturePage` / `ProxyPage` / `ShiroPage` / `PayloadPage` / `PresetPage` / `ServicePage` / `ConfigPage` / `ConfigForm`），行为 `*Controller`（`NavController` / `ProbeController` / `CaptureController` / `ProxyController` / `ShiroController` / `ConfigController` / `PayloadController` / `PresetController` / `ServiceController` / `WorkbenchPages`），另有样式 `UiKit`、共用链编辑 `ChainEditor`、启动预热 `StartupWarmup` / 启动画面 `StartupSplash`、列式链选择器 `PayloadChainSelector`（载荷生成页的选链主体，不持有链状态）及其协作类 `ChainSelectorSizing`（几何换算）/ `ChainColumn` / `ChainColumnState` / `ChainColumnPanel`（每列的面板与筛选状态）/ `ChainResizeHandle`（竖向拖拽条）/ `ChainColumnFilter`（过滤判定）/ `ChainNodeRenderer`（条目渲染）/ `ChainTagMenu`（标签菜单）、载荷页拆分出的 `PayloadPanels`（面板构建）/ `PayloadColumns`（列换算）/ `PayloadOutputText`（输出文本）/ `PayloadExporter`（导出落盘）、自检门面 `UiHandle` + `WidgetRegistry` |
 | `src/payload/` | 通用载荷生成（`PayloadEngine` / `PayloadCatalog` / `PayloadResult`），与 Shiro 等具体功能解耦 |
 | `src/service/` | 恶意服务器（`ServiceManager` / `ServiceSpec` / `ServiceEndpoint` / `ServiceDefaults`）：唯一直接调用 java-chains 服务端适配器的包 |
 | `src/preset/` | 内置预设链读取（`PresetCatalogService` / `PresetItem`）：唯一引用上游预设模型的包，纯数据出参 |
@@ -361,6 +372,12 @@ Shiro 页为**每个动作保留独立回显框**（`指纹检测` / `密钥爆�
 候选节点始终是**引擎自己的**判据（首节点按「载体 + 候选节点」逐个校验，后继节点查引擎的后继表），
 界面与本仓库都不内置第二套节点关系表。链文本只读——链只能由点击构建，不能手填。
 若某个节点没有后继，就不再展开空列；叶子节点选中后不会再多出一列空列表。
+
+版面按**网页版实测比例**摆放：用 CDP 驱动无头 Chrome 打开上游 `#/Generate/<payload>` 页量到
+控制台 `.studio-top-console` 360px、选链区 `.chain-builder-block` 486px，两边之比 360 : 486，
+因此上下分栏对齐的是**比例**（选链区约占两块之和的 57.4%）而不是照搬 360px 绝对值。
+列表默认 320px、可拖到 160~640px，双击拖拽条在 320 与 480 之间切换，列宽在 300~500px 之间
+按容器宽度均分，列放不下时转横向滚动——这几个数与网页版一致。
 
 生成结果给出链序、字节长度、不含正文的摘要与 Base64。`复制` 写入剪贴板，`导出文件` 按
 配置页的默认导出目录落盘（文件名带载体与时间戳），`填入抓包页` 把载荷送进 `抓包转换` 的请求体，

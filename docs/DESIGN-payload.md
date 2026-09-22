@@ -393,3 +393,100 @@ if (data instanceof byte[]) {
 | --- | --- | --- |
 | `payload_auto_expand` | 生成后默认展开完整载荷 | 开 |
 | `payload_hover_select` | 默认开启悬停选链 | 开 |
+
+## 十一、启动预热与版面比例对齐（2026-09-22）
+
+### 11.1 为什么要有启动预热
+
+改版后单页要塞下更多内容，进页面时的第一帧会做一次性的重活：java-chains 的
+`MetadataRegistry.init()` 实测 **1074 ms**（连插件与 gadget 注册合计约 1.2 s），
+而它当时是在**第一次进 Payload 页**、并且**在事件分发线程上**同步跑的。
+表现就是「第一次点进 Payload 卡几秒」——恶意服务器页同样是首次进页才建适配器。
+
+**方案**：新增 `src/ui/StartupWarmup.java`，把三件事做成一次性的幂等预热：
+
+| 步骤 | 实测 | 内容 |
+| --- | --- | --- |
+| java-chains 引擎 | 1154 ms | `PayloadEngine.init()`，429 节点 / 28 载体 |
+| 预设链目录 | 46 ms | 52 条预设 |
+| 服务适配器 | 22 ms | 五类恶意服务器 |
+
+- **幂等**：`warmUp` 完成后 `isDone()` 为真，再次调用 **0 ms**，重复进页面不会重复初始化。
+- **不阻塞界面**：`main` 先弹 `StartupSplash`（无边框启动画面，headless 下自动跳过），
+  **在后台线程**预热，主窗口在事件分发线程上构建；窗口出现时预热若还没完，
+  剩余步骤在 `show(splash)` 里同步补齐，预热结束才关掉启动画面。
+- 启动画面上的进度文字就是各步耗时，慢在哪一步一眼可见。
+
+实测：首次 1263 ms，二次 0 ms，预设 52 条。
+
+### 11.2 选链区高度：对齐的是比例，不是绝对值
+
+网页版 Generate 页的选链区不是按比例分的，而是**控制台固定 360px、选链区吃掉剩余高度**。
+所以「和网页版一样高」这个说法本身不成立——网页版会随窗口变，比例才是不变量。
+
+为避免再靠估，本轮改成**实测**：用 CDP（Chrome DevTools Protocol）驱动无头 Chrome 打开
+上游 `#/Generate/<payloadKey>` 页，读 `getBoundingClientRect()`，得到权威数值：
+
+| 元素 | 选择器 | 实测高度 |
+| --- | --- | --- |
+| 控制台 | `.studio-top-console` | 360 px |
+| 选链区 | `.chain-builder-block` | 486 px |
+| 列面板 | `.chain-column` | 389 px |
+| 候选列表 | `.option-list` | 320 px |
+
+两块之比为 360 : 486，即**选链区占两块之和的 57.4%**。因此
+`PayloadPanels.CONSOLE_WEIGHT` 由常量直接算出来：
+
+```java
+static final double CONSOLE_WEIGHT =
+        (double) WEB_CONSOLE_HEIGHT / (WEB_CONSOLE_HEIGHT + WEB_CHAIN_HEIGHT);
+```
+
+**实测对照**（窗口 1721×1033，可用高 817px）：
+
+| | 控制台 | 选链区 | 选链区占比 | 候选列表可视高 |
+| --- | --- | --- | --- | --- |
+| 网页版（设计值） | 360 px | 486 px | 57.4% | 320 px |
+| 本工具（实测） | 343 px | 462 px | 56.5% | 309 px |
+
+列宽、列表档位沿用第十节已对齐的网页版常量（300~500px 列宽、160~640px 列表高、
+默认 320px、双击在 320/480 间切换），本轮不变。
+
+### 11.3 分割线必须在「布局那一刻」生效
+
+**根因**（实测，不是猜测）：原来靠 `componentResized` / `componentShown` 事件回调去
+`setDividerLocation`。组件事件是**异步投递**的，布局结束到事件被处理之间存在一个空窗，
+此时分割线还停在上一次尺寸算出来的位置。同一个构建里因此能读到两个值：
+
+```
+[probe2] round=0 split=817 divider=290 output=101   <- 自检读到的就是这个空窗
+[probe2] round=1 split=817 divider=322 output=133   <- 事件处理完之后
+```
+
+这既让 `UiNavigationCheck` 的「输出区可视高度 > 120px」失败，也意味着使用者拖窗口时
+分割线会先停在错处再跳一下。
+
+**方案**：新增 `src/ui/RatioSplitPane.java`，把比例校正放进 `doLayout()`——每次布局先按
+当前尺寸摆好分割线，布局一结束位置就是对的，不依赖任何后续事件。要点：
+
+- `doLayout()` 里调 `setDividerLocation` 会触发 `revalidate()`，正处在布局过程中会重入，
+  因此用 `applying` 标志挡住重入；
+- 用户一旦按在分割线上拖动（或调用 `lock()`），比例立即**失效**，不再把使用者调好的位置拽回去；
+- 选链区拖拽条改高度时走 `SplitPaneKit.setDivider(...)`，它先 `lock()` 再挪分割线；
+  不锁的话下一次布局会立刻按比例拽回原位，使用者看到的是「拖了没反应」。
+
+修完后 `divider` 第一次读就是 322px，输出区可视高 133px（改为比例后为 154px）。
+
+### 11.4 界面文件行数与新增文件
+
+新增的类都保持单一职责、均远低于 600 行上限：
+
+| 文件 | 行数 | 职责 |
+| --- | --- | --- |
+| `src/ui/RatioSplitPane.java` | 87 | 在布局期按比例摆放分割线的分栏 |
+| `src/ui/SplitPaneKit.java` | 64 | 分栏构造、锁定式 `setDivider`、固定高度/拉伸工具 |
+| `src/ui/StartupWarmup.java` | 138 | 幂等启动预热 |
+| `src/ui/StartupSplash.java` | 96 | 无边框启动画面 |
+| `src/ui/ChainSelectorSizing.java` | 85 | 选链几何常量与纯算术 |
+| `src/ui/ChainColumnPanel.java` | 220 | 一列的面板（列头 + 过滤 + 列表） |
+| `src/ui/WrappedLabel.java` | 151 | 按宽度折行的标签（`getText()` 仍是原始文本） |

@@ -24,8 +24,8 @@ final class PayloadColumns {
      * <p>末端没有后继时不再新增列——多出一列空列表会让人以为「还没加载出来」；
      * 带 END 标签的节点同样不展开，引擎已声明它之后没有可接节点。
      */
-    static List<PayloadChainSelector.Column> of(ChainEditor editor) {
-        List<PayloadChainSelector.Column> columns = new ArrayList<PayloadChainSelector.Column>();
+    static List<ChainColumn> of(ChainEditor editor) {
+        List<ChainColumn> columns = new ArrayList<ChainColumn>();
         List<String> payloads = PayloadEngine.payloadIds();
         columns.add(column("载体 / Payload", payloads, editor.head()));
         List<String> chain = editor.snapshot();
@@ -46,7 +46,7 @@ final class PayloadColumns {
     }
 
     /** 组一列的展示数据：显示名、标签与末端标记全部取自引擎元数据。 */
-    private static PayloadChainSelector.Column column(String title, List<String> ids, String selected) {
+    private static ChainColumn column(String title, List<String> ids, String selected) {
         List<String> labels = new ArrayList<String>();
         List<String> tags = new ArrayList<String>();
         List<Boolean> ends = new ArrayList<Boolean>();
@@ -56,7 +56,7 @@ final class PayloadColumns {
             tags.add(join(info.tags));
             ends.add(Boolean.valueOf(info.end));
         }
-        return new PayloadChainSelector.Column(title, ids, labels, tags, ends,
+        return new ChainColumn(title, ids, labels, tags, ends,
                 PayloadEngine.tagsOf(ids), selected);
     }
 

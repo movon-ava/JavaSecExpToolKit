@@ -35,7 +35,7 @@ final class ChainTagMenu {
     private ChainTagMenu() {
     }
 
-    static void show(javax.swing.JComponent anchor, final int index, PayloadChainSelector.Column data,
+    static void show(javax.swing.JComponent anchor, final int index, ChainColumn data,
                      final Handler handler) {
         final javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
         if (data.availableTags.isEmpty()) {
