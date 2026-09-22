@@ -74,6 +74,14 @@ public final class ConfigForm {
     public final JCheckBox payloadHoverSelect = new JCheckBox("默认开启悬停选链", false);
     public final JComboBox<String> presetCategory = new JComboBox<String>(new String[]{"全部分类"});
 
+    // 小工具
+    /** 文件上传页的默认目标 URL；上传接口每次都不同，留空则进页时自行填写。 */
+    public final JTextField uploadUrl = new JTextField("", 32);
+    /** 文件对应的表单字段名：不同框架默认值不同（file / upload / multipartFile）。 */
+    public final JTextField uploadField = new JTextField("file", 16);
+    /** 上传请求超时（秒）：上传大文件比探测慢，默认放宽到 30 秒。 */
+    public final JTextField uploadTimeout = new JTextField("30", 5);
+
     // 恶意服务器
     public final JTextField serverBindHost = new JTextField("", 24);
     public final JTextField serverAdvertiseHost = new JTextField("", 24);
@@ -174,6 +182,15 @@ public final class ConfigForm {
                                 new ConfigPage.Row("JRMP 端口", serverJrmp, "默认 13999"),
                                 new ConfigPage.Row("FakeMySQL 端口", serverMysql, "默认 3308"),
                                 new ConfigPage.Row("TCP 端口", serverTcp, "默认 11527")}),
+                new ConfigPage.Group("小工具配置",
+                        "「小工具 → 文件上传」的默认参数；每次上传的文件与响应都不保存。",
+                        new ConfigPage.Row[]{
+                                new ConfigPage.Row("默认上传 URL", uploadUrl,
+                                        "例如 http://host/upload；留空则每次手工填写"),
+                                new ConfigPage.Row("默认表单字段名", uploadField,
+                                        "目标接口读取文件的参数名，默认 file"),
+                                new ConfigPage.Row("上传超时（秒）", uploadTimeout,
+                                        "上传大文件时比探测耗时更长，默认 30")}),
                 new ConfigPage.Group("预设链配置",
                         "「预设链」页的默认分类筛选；链与参数每次都不同，故不保存。",
                         new ConfigPage.Row[]{

@@ -25,6 +25,8 @@ import ui.ProxyController;
 import ui.ProxyPage;
 import ui.ShiroController;
 import ui.ShiroPage;
+import ui.ToolsUploadController;
+import ui.ToolsUploadPage;
 import ui.StartupSplash;
 import ui.StartupWarmup;
 import ui.UiHandle;
@@ -70,12 +72,14 @@ public final class Main implements UiHandle.Source {
     private final CapturePage.Widgets captureWidgets = CapturePage.defaults();
     private final ShiroPage.Widgets shiroWidgets = ShiroPage.defaults();
     private final ProxyPage.Widgets proxyWidgets = ProxyPage.defaults();
+    private final ToolsUploadPage.Widgets toolsUploadWidgets = ToolsUploadPage.defaults();
 
     private final ConfigController configController;
     private final ProbeController probeController;
     private final CaptureController captureController;
     private final ProxyController proxyController;
     private final ShiroController shiroController;
+    private final ToolsUploadController toolsUploadController;
     private final WorkbenchPages workbench;
 
     private JPanel navigation;
@@ -93,6 +97,8 @@ public final class Main implements UiHandle.Source {
                 configController, this::selectNav);
         proxyController = new ProxyController(proxyWidgets, captureController, configController);
         shiroController = new ShiroController(shiroWidgets, probeWidgets);
+        toolsUploadController = new ToolsUploadController(toolsUploadWidgets, configController);
+        configController.attachUpload(toolsUploadController);
         buildNavigation();
         workbench = new WorkbenchPages(fonts, configController, captureWidgets, this::selectNav);
         configController.attachView(workbench);
@@ -159,6 +165,7 @@ public final class Main implements UiHandle.Source {
         else if ("payload.build".equals(key)) setContent(workbench.payload());
         else if ("payload.preset".equals(key)) setContent(workbench.preset());
         else if ("service.servers".equals(key)) setContent(workbench.servers());
+        else if ("tools.upload".equals(key)) showToolsUpload();
         else showHome();
     }
 
@@ -180,6 +187,10 @@ public final class Main implements UiHandle.Source {
 
     private void showShiro() {
         setContent(ShiroPage.build(shiroWidgets, fonts));
+    }
+
+    private void showToolsUpload() {
+        setContent(ToolsUploadPage.build(toolsUploadWidgets, fonts));
     }
 
     private void showConfig() {
@@ -222,6 +233,12 @@ public final class Main implements UiHandle.Source {
 
     public void startDetection() {
         probeController.startDetection();
+    }
+
+    /** 自检入口：直接跑一次文件上传，不依赖按钮点击。 */
+    public String runUpload(String url, String file, String field, String fields, String headers)
+            throws Exception {
+        return toolsUploadController.runUpload(url, file, field, fields, headers);
     }
 
     public void startCapture() {
@@ -268,6 +285,7 @@ public final class Main implements UiHandle.Source {
         registry.capture = captureWidgets;
         registry.proxy = proxyWidgets;
         registry.shiro = shiroWidgets;
+        registry.toolsUpload = toolsUploadWidgets;
         registry.configForm = configForm;
         registry.payload = workbench.payloadWidgets;
         registry.payloadSelector = workbench.payloadSelector;

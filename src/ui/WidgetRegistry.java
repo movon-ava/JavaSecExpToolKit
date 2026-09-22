@@ -30,6 +30,7 @@ public final class WidgetRegistry {
     public CapturePage.Widgets capture;
     public ProxyPage.Widgets proxy;
     public ShiroPage.Widgets shiro;
+    public ToolsUploadPage.Widgets toolsUpload;
     public ConfigForm configForm;
 
     public PayloadPage.Widgets payload;
@@ -141,6 +142,17 @@ public final class WidgetRegistry {
         entries.put("shiroBuildOutput", shiro.buildOutput);
         entries.put("shiroRunOutput", shiro.runOutput);
 
+        entries.put("toolsUploadUrl", toolsUpload.url);
+        entries.put("toolsUploadFile", toolsUpload.filePath);
+        entries.put("toolsUploadChoose", toolsUpload.choose);
+        entries.put("toolsUploadField", toolsUpload.field);
+        entries.put("toolsUploadFields", toolsUpload.fields);
+        entries.put("toolsUploadHeaders", toolsUpload.headers);
+        entries.put("toolsUploadRun", toolsUpload.run);
+        entries.put("toolsUploadCopy", toolsUpload.copy);
+        entries.put("toolsUploadStatus", toolsUpload.status);
+        entries.put("toolsUploadResult", toolsUpload.result);
+
         entries.put("configStatus", configForm.status);
         entries.put("configCeyeDomain", configForm.ceyeDomain);
         entries.put("configCeyeToken", configForm.ceyeToken);
@@ -176,6 +188,9 @@ public final class WidgetRegistry {
         entries.put("configPayloadAutoExpand", configForm.payloadAutoExpand);
         entries.put("configPayloadHoverSelect", configForm.payloadHoverSelect);
         entries.put("configPresetCategory", configForm.presetCategory);
+        entries.put("configUploadUrl", configForm.uploadUrl);
+        entries.put("configUploadField", configForm.uploadField);
+        entries.put("configUploadTimeout", configForm.uploadTimeout);
         entries.put("configServerBindHost", configForm.serverBindHost);
         entries.put("configServerAdvertiseHost", configForm.serverAdvertiseHost);
         entries.put("configServerJndiLdap", configForm.serverJndiLdap);

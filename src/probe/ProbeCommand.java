@@ -36,6 +36,11 @@ public final class ProbeCommand {
         public String captureUrl = "";
         public String convertTargets = "";
         public String pastedRequest = "";
+        /** 文件上传：目标 URL、要上传的本地文件、表单字段名与附加普通字段（JSON）。 */
+        public String uploadUrl = "";
+        public List<String> uploadFiles = new ArrayList<String>();
+        public String uploadField = "file";
+        public String uploadFields = "";
         /** 报告详细度：brief 只给结论与关键判定，detail 附探针明细。 */
         public String report = "brief";
         public boolean capture = true;
@@ -106,6 +111,32 @@ public final class ProbeCommand {
         command.add("--format");
         command.add("text");
         if (!options.capture) addText(command, "--pasted-request", options.pastedRequest);
+        return command;
+    }
+
+    /**
+     * 文件上传模式的启动参数。
+     *
+     * <p>上传是「一次请求 + 记录原始响应」，内容即结果，因此固定要求详细报告；
+     * 目标 URL 与文件都走 {@code addText}，为空即不传，由引擎给出可读的失败结论
+     * （「上传目标 URL 不能为空」/「未选择文件」），而不是在这里静默放过。
+     */
+    public static List<String> upload(Options options) {
+        List<String> command = new ArrayList<String>();
+        command.add(options.python);
+        command.add(Platform.commandArg(options.script));
+        command.add("--timeout");
+        command.add(options.timeout);
+        command.add("--mode");
+        command.add("upload");
+        addText(command, "--upload-url", options.uploadUrl);
+        addText(command, "--upload-field", options.uploadField);
+        addText(command, "--upload-fields", options.uploadFields);
+        addText(command, "--headers", options.headers);
+        for (String file : options.uploadFiles) addText(command, "--upload-file", file);
+        addText(command, "--report", "detail");
+        command.add("--format");
+        command.add("text");
         return command;
     }
 

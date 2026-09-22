@@ -46,6 +46,7 @@ public final class ConfigController {
     private View view;
 
     private ProbeController probeController;
+    private ToolsUploadController uploadController;
 
     public ConfigController(Properties config, ConfigForm form, ProbePage.Widgets probe,
                             ProxyPage.Widgets proxy, CapturePage.Widgets capture, ShiroPage.Widgets shiro,
@@ -62,6 +63,11 @@ public final class ConfigController {
     /** 配置控制器与探测控制器互相需要对方的一小部分能力，构造完成后接线，避免构造期环。 */
     public void attachProbe(ProbeController controller) {
         this.probeController = controller;
+    }
+
+    /** 接线文件上传页：它的默认值同样在启动与保存后各下发一次。 */
+    public void attachUpload(ToolsUploadController controller) {
+        this.uploadController = controller;
     }
 
     /**
@@ -135,6 +141,7 @@ public final class ConfigController {
         applyToToolForms();
         resetForm();
         if (probeController != null) probeController.applyStageFieldState();
+        if (uploadController != null) uploadController.applyDefaults();
     }
 
     /**
@@ -226,6 +233,9 @@ public final class ConfigController {
         form.serverMysql.setText(config.getProperty("server_mysql_port", "3308"));
         form.serverTcp.setText(config.getProperty("server_tcp_port", "11527"));
         selectOption(form.presetCategory, config.getProperty("preset_category", "全部分类"));
+        form.uploadUrl.setText(config.getProperty("upload_url", ""));
+        form.uploadField.setText(config.getProperty("upload_field", "file"));
+        form.uploadTimeout.setText(config.getProperty("upload_timeout", "30"));
         form.status.setText("已载入当前配置");
     }
 
@@ -264,6 +274,9 @@ public final class ConfigController {
         config.setProperty("shiro_chain", chain == null ? "" : ((ShiroExploit.ChainKind) chain).name());
         config.setProperty("shiro_command", form.shiroCommand.getText().trim());
         config.setProperty("shiro_body", form.shiroBody.getText().trim());
+        config.setProperty("upload_url", form.uploadUrl.getText().trim());
+        config.setProperty("upload_field", Platform.valueOr(form.uploadField.getText(), "file"));
+        config.setProperty("upload_timeout", Platform.valueOr(form.uploadTimeout.getText(), "30"));
         config.setProperty("payload_export_dir", form.payloadExportDir.getText().trim());
         config.setProperty("payload_encode", encodeId(String.valueOf(form.payloadEncode.getSelectedItem())));
         config.setProperty("payload_url_encode", String.valueOf(form.payloadUrlEncode.isSelected()));

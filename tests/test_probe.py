@@ -932,6 +932,134 @@ class CaptureModeTest(unittest.TestCase):
         self.assertIsNotNone(result["status"])
 
 
+class UploadHandler(BaseHTTPRequestHandler):
+    """模拟上传接口：记录 multipart 请求原文，返回可断言的 JSON。"""
+
+    MARKER = "jset-upload-marker"
+    received = {}
+
+    def _body(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        return self.rfile.read(length)
+
+    def do_POST(self):
+        body = self._body()
+        UploadHandler.received = {
+            "content_type": self.headers.get("Content-Type", ""),
+            "cookie": self.headers.get("Cookie", ""),
+            "body": body,
+        }
+        payload = b'{"code":0,"msg":"uploaded"}'
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Set-Cookie", "SID=upload; Path=/")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def log_message(self, format, *args):
+        return
+
+
+class UploadModeTest(unittest.TestCase):
+    """文件上传模式：multipart 请求体、字段名、附加字段、响应记录与失败路径。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.server = HTTPServer(("127.0.0.1", 0), UploadHandler)
+        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.thread.start()
+        cls.url = "http://127.0.0.1:{0}/upload".format(cls.server.server_port)
+        handle, cls.path = tempfile.mkstemp(suffix=".bin")
+        with os.fdopen(handle, "wb") as stream:
+            stream.write(("head-" + UploadHandler.MARKER + "-tail").encode("utf-8"))
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.thread.join(timeout=2)
+        cls.server.server_close()
+        os.remove(cls.path)
+
+    def _upload(self, **extras):
+        payload = {"upload_url": self.url, "upload_files": [self.path], "upload_field": "file"}
+        payload.update(extras)
+        return run("", "upload", 5.0, None, extras=payload)
+
+    def test_multipart_request_body_is_built(self):
+        """文件按原始字节进入 multipart 分段，附加字段以普通表单字段发出。"""
+        result = self._upload(upload_fields={"csrf": "tok"}, request_headers={"Cookie": "a=1"})
+        self.assertEqual(200, result["status"])
+        self.assertIsNone(result["error"])
+        received = UploadHandler.received
+        self.assertIn("multipart/form-data", received["content_type"])
+        self.assertIn("boundary=", received["content_type"])
+        body = received["body"]
+        self.assertIn(b'name="file"', body)
+        self.assertIn(os.path.basename(self.path).encode("utf-8"), body)
+        self.assertIn(UploadHandler.MARKER.encode("utf-8"), body)
+        self.assertIn(b'name="csrf"', body)
+        self.assertIn(b"tok", body)
+        self.assertEqual("a=1", received["cookie"])
+        # 声明出去的 Content-Type 必须与真实发送的一致，否则目标无法解析分段
+        self.assertEqual(received["content_type"], result["request"]["content_type"])
+        self.assertEqual(len(body), result["request"]["body_bytes"])
+
+    def test_upload_records_response(self):
+        """响应状态、耗时、响应头与 Set-Cookie 都要被记录下来。"""
+        result = self._upload()
+        self.assertEqual(200, result["status"])
+        self.assertIn("uploaded", result["body"])
+        self.assertEqual({"SID": "upload"}, result["response_cookies"])
+        self.assertIn("content-type", {key.lower() for key in result["response_headers"]})
+        self.assertGreater(result["elapsed_ms"], 0)
+        json.dumps(result, ensure_ascii=False)
+
+    def test_upload_report_is_detailed(self):
+        """上传报告属于「内容即结果」：精简模式也必须给出请求与响应全文。"""
+        result = self._upload(upload_fields={"csrf": "tok"})
+        report = fj_probe.format_report(result, "upload")
+        self.assertIn("===== 文件上传 =====", report)
+        self.assertIn("上传字段: file", report)
+        self.assertIn("响应体:", report)
+        self.assertIn("uploaded", report)
+        self.assertNotIn("\ufffd", report)
+
+    def test_upload_without_target_is_rejected(self):
+        with self.assertRaises(ValueError):
+            run("", "upload", 5.0, None, extras={})
+
+    def test_upload_without_file_reports_readable_conclusion(self):
+        result = run("", "upload", 5.0, None, extras={"upload_url": self.url})
+        self.assertIn("未选择文件", result["summary"])
+        self.assertIsNone(result["status"])
+
+    def test_upload_missing_file_reports_readable_conclusion(self):
+        result = self._upload(upload_files=[self.path + ".missing"])
+        self.assertIn("未发送请求", result["summary"])
+        self.assertIn("不是可读的普通文件", result["summary"])
+
+    def test_upload_rejects_invalid_extra_fields(self):
+        broken = self._upload(upload_fields="{")
+        self.assertIn("不是合法 JSON", broken["summary"])
+        not_object = self._upload(upload_fields=[1, 2])
+        self.assertIn("必须是 JSON 对象", not_object["summary"])
+
+    def test_cli_parses_upload_arguments(self):
+        parser = fj_probe._build_parser()
+        args = parser.parse_args([
+            "http://127.0.0.1:1/upload", "--mode", "upload",
+            "--upload-file", "a.txt", "--upload-file", "b.txt",
+            "--upload-field", "upload", "--upload-fields", '{"csrf":"x"}',
+        ])
+        self.assertEqual(["a.txt", "b.txt"], args.upload_file)
+        self.assertEqual("upload", args.upload_field)
+        self.assertEqual({"csrf": "x"}, json.loads(args.upload_fields))
+        self.assertIn("upload", fj_probe.MODE_LABELS)
+        self.assertIn("upload", fj_probe.MODE_TITLES)
+        self.assertIn("upload", fj_probe.RENDERERS)
+
+
 class ProbeMethodTest(unittest.TestCase):
     """探测请求方法：默认 POST、可切换、被 405 拒绝时自动换方法，且不把静态页当成功。"""
 

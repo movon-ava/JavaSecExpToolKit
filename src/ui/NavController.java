@@ -201,6 +201,8 @@ public final class NavController {
                         new NavItem("capture", "抓包转换"))),
                 new NavItem("fastjson", "FastJson", Arrays.asList(
                         new NavItem("fastjson.detect", "Fastjson 探测"))),
+                new NavItem("tools", "小工具", Arrays.asList(
+                        new NavItem("tools.upload", "文件上传"))),
                 new NavItem("config", "配置"));
     }
 }

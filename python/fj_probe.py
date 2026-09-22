@@ -51,6 +51,7 @@ MODE_LABELS = {
     "ceye": "CEYE 确认",
     "capture": "HTTP 抓包",
     "convert": "报文转换",
+    "upload": "文件上传",
 }
 
 
@@ -358,13 +359,31 @@ def _request_raw(
     headers: Dict[str, str],
     content_type: str = "",
 ) -> Tuple[Optional[int], Optional[float], str, Dict[str, str], Optional[str]]:
-    """按指定方法发送原始请求，返回 (状态码, 耗时, 响应体, 响应头, 错误)。"""
+    """按指定方法发送原始请求，返回 (状态码, 耗时, 响应体, 响应头, 错误)。
+
+    文本模式的入口；二进制请求体（multipart 上传里的文件部分）走
+    :func:`_request_bytes`，两者共用同一套请求头净化与不跟随跳转的行为。
+    """
+    return _request_bytes(
+        method, target, body.encode("utf-8") if body else None, timeout, headers, content_type
+    )
+
+
+def _request_bytes(
+    method: str,
+    target: str,
+    body: Optional[bytes],
+    timeout: float,
+    headers: Dict[str, str],
+    content_type: str = "",
+) -> Tuple[Optional[int], Optional[float], str, Dict[str, str], Optional[str]]:
+    """按指定方法发送原始请求体（bytes），返回 (状态码, 耗时, 响应体, 响应头, 错误)。"""
     merged = _sanitize_request_headers({str(k): str(v) for k, v in (headers or {}).items()})
     if content_type and not any(key.lower() == "content-type" for key in merged):
         merged["Content-Type"] = content_type
     request = urllib.request.Request(
         target,
-        data=(body.encode("utf-8") if body else None),
+        data=body,
         headers=merged,
         method=(method or "GET").upper(),
     )
@@ -2071,6 +2090,259 @@ def _capture(ctx: dict) -> dict:
     }
 
 
+# 单文件大小上限：上传功能用于验证接口可达性与响应格式，8 MB 足够覆盖常见
+# 木马 / 图片 / 压缩包样本，又不会把桌面端的内存和目标的磁盘打满。
+UPLOAD_MAX_BYTES = 8 * 1024 * 1024
+
+UPLOAD_LIMITATIONS = [
+    "上传只发送一次请求，不做任何变形或重复投递，请确认目标已授权。",
+    "HTTP 客户端不校验 TLS 证书，也不跟随 30x 跳转。",
+    "响应体只截取前 1 MB，超出部分不会展示。",
+    "文件内容按原始字节发送，不做编码转换，也不写入目标以外的任何位置。",
+]
+
+
+def _multipart_header_value(value: str) -> str:
+    """清洗 multipart 头里的名字：去掉分隔符与换行，避免头注入与分段错位。"""
+    cleaned = re.sub(r'[\r\n]', " ", str(value or ""))
+    return cleaned.replace('"', "_").strip()
+
+
+def _multipart_body(
+    boundary: str,
+    fields: Sequence[Tuple[str, str]],
+    files: Sequence[Tuple[str, str, bytes]],
+) -> bytes:
+    """构造 multipart/form-data 请求体：先普通字段，再文件字段，最后结束分隔符。"""
+    chunks: List[bytes] = []
+    for name, value in fields:
+        head = (
+            "--{0}\r\nContent-Disposition: form-data; name=\"{1}\"\r\n\r\n{2}\r\n".format(
+                boundary, _multipart_header_value(name), value
+            )
+        )
+        chunks.append(head.encode("utf-8"))
+    for name, filename, payload in files:
+        head = (
+            "--{0}\r\nContent-Disposition: form-data; name=\"{1}\"; filename=\"{2}\"\r\n"
+            "Content-Type: application/octet-stream\r\n\r\n".format(
+                boundary, _multipart_header_value(name), _multipart_header_value(filename)
+            )
+        )
+        chunks.append(head.encode("utf-8"))
+        chunks.append(payload)
+        chunks.append(b"\r\n")
+    chunks.append(("--{0}--\r\n".format(boundary)).encode("utf-8"))
+    return b"".join(chunks)
+
+
+def _upload_base(url: str) -> dict:
+    """上传结果的公共骨架：成功与失败路径共用同一套字段，渲染器无需分支判空。"""
+    return {
+        "mode": "upload",
+        "target": url,
+        "method": "POST",
+        "status": None,
+        "elapsed_ms": 0.0,
+        "request": {"url": url, "method": "POST", "field": "file", "fields": {}, "files": [],
+                    "content_type": "", "headers": {}, "body_bytes": 0},
+        "response_headers": {},
+        "body": "",
+        "body_length": 0,
+        "response_cookies": {},
+        "summary": "",
+        "notes": [],
+        "error": None,
+        "limitations": list(UPLOAD_LIMITATIONS),
+    }
+
+
+def _upload(ctx: dict) -> dict:
+    """文件上传：按 multipart/form-data 发送本地文件，返回可读的响应结果。
+
+    只做「发一次请求并如记录响应」：不猜测目标的上传接口语义，也不对响应做
+    指纹判定——上传结果是否有意义取决于目标业务，工具给出的结论只描述这一
+    次请求本身（状态码、耗时、响应头、响应体）。
+    """
+    extras = ctx["extras"]
+    url = str(extras.get("upload_url") or ctx["target"] or "").strip()
+    if not url:
+        raise ValueError("上传目标 URL 不能为空")
+    url = _normalize_target(url)
+    field = str(extras.get("upload_field") or "file").strip() or "file"
+    result = _upload_base(url)
+
+    raw_files = extras.get("upload_files") or []
+    if isinstance(raw_files, str):
+        raw_files = [item for item in raw_files.split(";")]
+    paths = [str(item).strip() for item in raw_files if str(item).strip()]
+    if not paths:
+        result["summary"] = "未选择文件：请先选择一个本地文件再执行上传。"
+        result["notes"] = ["本地上传只读取磁盘上的文件，不会凭空构造内容。"]
+        return result
+
+    raw_fields = extras.get("upload_fields") or {}
+    if isinstance(raw_fields, str):
+        text = raw_fields.strip()
+        if text:
+            try:
+                raw_fields = json.loads(text)
+            except ValueError as exc:
+                result["summary"] = "附加表单字段不是合法 JSON：{0}".format(exc)
+                result["notes"] = ['格式形如 {"csrf":"abc"}；留空表示只上传文件。']
+                return result
+        else:
+            raw_fields = {}
+    if not isinstance(raw_fields, dict):
+        result["summary"] = "附加表单字段必须是 JSON 对象，例如 {\"csrf\":\"abc\"}。"
+        result["notes"] = ["数组或字符串无法作为表单字段发送。"]
+        return result
+    fields = [(str(name), str(value)) for name, value in raw_fields.items()]
+
+    files: List[Tuple[str, str, bytes]] = []
+    skipped: List[str] = []
+    for path in paths:
+        if not os.path.isfile(path):
+            skipped.append("{0}：不是可读的普通文件".format(path))
+            continue
+        try:
+            size = os.path.getsize(path)
+        except OSError as exc:
+            skipped.append("{0}：{1}".format(path, exc))
+            continue
+        if size > UPLOAD_MAX_BYTES:
+            skipped.append(
+                "{0}：{1} 字节超过单文件上限 {2} 字节".format(path, size, UPLOAD_MAX_BYTES)
+            )
+            continue
+        try:
+            with open(path, "rb") as handle:
+                payload = handle.read()
+        except OSError as exc:
+            skipped.append("{0}：{1}".format(path, exc))
+            continue
+        files.append((field, os.path.basename(path), payload))
+
+    if not files:
+        result["summary"] = "未发送请求：{0}".format("；".join(skipped) or "没有可读取的文件")
+        result["notes"] = ["请确认文件存在、可读，且大小不超过 {0} 字节。".format(UPLOAD_MAX_BYTES)]
+        return result
+
+    headers = dict(extras.get("request_headers") or ctx["headers"] or {})
+    boundary = "----JavaSecExpToolKit{0}".format(uuid.uuid4().hex)
+    body = _multipart_body(boundary, fields, files)
+    content_type = "multipart/form-data; boundary={0}".format(boundary)
+    existing_type = _header_lookup(headers, "content-type")
+    if existing_type and "multipart/form-data" in existing_type.lower():
+        # 使用者自己填了 Content-Type：以他填的为准（可能带自定义 boundary）
+        content_type = existing_type
+    request_summary = {
+        "url": url,
+        "method": "POST",
+        "field": field,
+        "fields": {name: value for name, value in fields},
+        "files": [{"name": name, "size": len(payload)} for _field, name, payload in files],
+        "content_type": content_type,
+        "headers": {str(k): str(v) for k, v in headers.items()},
+        "body_bytes": len(body),
+    }
+    result["request"] = request_summary
+    result["status"], result["elapsed_ms"], payload_text, response_headers, error = _request_bytes(
+        "POST", url, body, ctx["timeout"], headers, content_type
+    )
+    result["response_headers"] = {str(k): str(v) for k, v in (response_headers or {}).items()}
+    result["body"] = payload_text
+    result["body_length"] = len(payload_text or "")
+    result["response_cookies"] = {
+        name: value for name, value in _cookie_pairs(_header_lookup(response_headers, "set-cookie"))
+    }
+    result["error"] = error
+
+    notes: List[str] = []
+    for item in skipped:
+        notes.append("已跳过：{0}".format(item))
+    if error:
+        result["summary"] = "上传失败：{0}".format(error)
+        notes.append("请确认目标可达、端口开放，以及代理 / 证书设置。")
+    else:
+        status = result["status"]
+        result["summary"] = "已上传 {0} 个文件（{1} 字节请求体），响应 HTTP {2}（{3} ms，{4} 字节）".format(
+            len(files), len(body), status, result["elapsed_ms"], result["body_length"]
+        )
+        if 300 <= int(status or 0) < 400:
+            notes.append(
+                "收到 {0} 跳转（Location: {1}）：上传默认不跟随跳转，便于观察原始响应。".format(
+                    status, _header_lookup(response_headers, "location") or "未提供"
+                )
+            )
+        elif int(status or 0) in (401, 403):
+            notes.append("目标要求登录态：把会话 Cookie 填进「请求头」后重试。")
+        elif int(status or 0) >= 500:
+            notes.append("目标返回服务端错误：确认上传字段名与目标接口一致（默认 file）。")
+        elif int(status or 0) == 404:
+            notes.append("目标返回 404：确认上传接口路径正确。")
+        if not (payload_text or "").strip():
+            notes.append("响应体为空：该接口可能只回状态码，或需要额外的表单字段。")
+        if fields:
+            notes.append("已附带 {0} 个普通表单字段。".format(len(fields)))
+    result["notes"] = notes
+    return result
+
+
+def _render_upload(result: dict) -> List[str]:
+    request = result.get("request") or {}
+    lines = ["探测结论: {0}".format(result.get("summary", ""))]
+    lines.append("请求方法: {0}".format(result.get("method", "POST")))
+    lines.append("请求 URL : {0}".format(request.get("url", "")))
+    if request.get("content_type"):
+        lines.append("Content-Type: {0}".format(request["content_type"]))
+    lines.append("上传字段: {0}".format(request.get("field", "file")))
+    for item in request.get("files") or []:
+        lines.append("  文件: {0}（{1} 字节）".format(item.get("name", ""), item.get("size", 0)))
+    extra_fields = request.get("fields") or {}
+    if extra_fields:
+        lines.append(
+            "附加字段: {0}".format("、".join("{0}={1}".format(k, v) for k, v in extra_fields.items()))
+        )
+    lines.append("请求体字节: {0}".format(request.get("body_bytes", 0)))
+    request_headers = request.get("headers") or {}
+    if request_headers:
+        lines.append("请求头:")
+        for name, value in request_headers.items():
+            lines.append("  {0}: {1}".format(name, _one_line(str(value), 160)))
+    lines.append("")
+    lines.append("响应状态: {0}".format(_status_text(result.get("status"), result.get("error"))))
+    lines.append("响应耗时: {0} ms".format(result.get("elapsed_ms")))
+    lines.append("响应字节: {0}".format(result.get("body_length", 0)))
+    response_headers = result.get("response_headers") or {}
+    if response_headers:
+        lines.append("响应头:")
+        for name, value in response_headers.items():
+            lines.append("  {0}: {1}".format(name, _one_line(str(value), 160)))
+    lines.append("")
+    lines.append("响应体:")
+    lines.append("  {0}".format(_one_line(result.get("body") or "（空响应）", 600)))
+    response_cookies = result.get("response_cookies") or {}
+    if response_cookies:
+        lines.append("")
+        lines.append("响应 Set-Cookie:")
+        for name, value in response_cookies.items():
+            lines.append("  {0} = {1}".format(name, value))
+    return lines
+
+
+def _brief_upload(result: dict) -> List[str]:
+    request = result.get("request") or {}
+    return [
+        "探测结论: {0}".format(_brief_conclusion(result.get("summary", ""))),
+        "上传文件: {0} 个    响应状态: {1}    响应字节: {2}".format(
+            len(request.get("files") or []),
+            _status_text(result.get("status"), result.get("error")),
+            result.get("body_length", 0),
+        ),
+    ]
+
+
 def _convert(ctx: dict) -> dict:
     """报文转换：把粘贴的原始请求或 URL 转成常用格式。"""
     extras = ctx["extras"]
@@ -2130,6 +2402,9 @@ def run(
     # 抓包 / 转换模式允许只用 --capture-url 指定目标，不强制位置参数
     if mode in ("capture", "sniff"):
         ctx_target = _normalize_target(target or extras.get("capture_url") or "")
+    elif mode in ("upload", "upload-file", "fileupload"):
+        # 上传目标允许走 --upload-url，与抓包一致
+        ctx_target = str(target or extras.get("upload_url") or "").strip()
     elif mode in ("convert", "converter", "format"):
         # 转换模式可以完全离线：URL 只作为输出上下文，允许为空
         ctx_target = str(target or extras.get("capture_url") or "").strip()
@@ -2154,6 +2429,8 @@ def run(
         return _capture(ctx)
     if mode in ("convert", "converter", "format"):
         return _convert(ctx)
+    if mode in ("upload", "upload-file", "fileupload"):
+        return _upload(ctx)
     if mode in ("detect", "fingerprint", "probe"):
         return _annotate_login_gate(
             ctx,
@@ -2228,6 +2505,7 @@ MODE_TITLES = {
     "ceye": "CEYE 确认",
     "capture": "HTTP 抓包",
     "convert": "报文转换",
+    "upload": "文件上传",
 }
 
 STATUS_NOTES = {
@@ -2443,6 +2721,7 @@ RENDERERS = {
     "ceye": _render_ceye,
     "capture": _render_capture,
     "convert": _render_convert,
+    "upload": _render_upload,
 }
 
 
@@ -2567,6 +2846,7 @@ BRIEF_RENDERERS = {
     "expect": _brief_expect,
     "dns": _brief_dns,
     "ceye": _brief_ceye,
+    "upload": _brief_upload,
 }
 
 
@@ -2650,7 +2930,7 @@ def format_report(result: dict, mode: str = "", detail: bool = False) -> str:
     if result.get("error"):
         return "探测失败: {0}".format(result["error"])
     key = (mode or result.get("mode") or "detect").strip().lower()
-    if key in ("capture", "convert"):
+    if key in ("capture", "convert", "upload"):
         detail = True
     title = MODE_TITLES.get(key, key)
     lines = ["===== {0} =====".format(title)]
@@ -2715,6 +2995,27 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--body", default="", help="抓包请求体（仅 capture 模式生效）")
     parser.add_argument("--capture-url", default="", help="抓包目标 URL，缺省回落到 target")
     parser.add_argument(
+        "--upload-url",
+        default="",
+        help="上传目标 URL（upload 模式），缺省回落到 target",
+    )
+    parser.add_argument(
+        "--upload-file",
+        action="append",
+        default=[],
+        help="要上传的本地文件路径，可重复指定多个（upload 模式）",
+    )
+    parser.add_argument(
+        "--upload-field",
+        default="file",
+        help="上传文件对应的表单字段名，默认 file（upload 模式）",
+    )
+    parser.add_argument(
+        "--upload-fields",
+        default="{}",
+        help='附加普通表单字段的 JSON 对象，例如 {"csrf":"abc"}（upload 模式）',
+    )
+    parser.add_argument(
         "--probe-method",
         default="",
         help="探测请求方法（默认 POST）：{0}".format("/".join(SUPPORTED_REQUEST_METHODS)),
@@ -2769,6 +3070,9 @@ def _main() -> int:
         raw_query = json.loads(args.query or "{}")
         if not isinstance(raw_query, dict):
             raise ValueError("query 必须是 JSON 对象")
+        raw_upload_fields = json.loads(args.upload_fields or "{}")
+        if not isinstance(raw_upload_fields, dict):
+            raise ValueError("upload-fields 必须是 JSON 对象")
         extras = {
             "content_type": args.content_type,
             "dns_filter": args.dns_filter,
@@ -2782,6 +3086,10 @@ def _main() -> int:
             "probe_method": args.probe_method or args.method,
             "body": args.body,
             "capture_url": args.capture_url,
+            "upload_url": args.upload_url,
+            "upload_files": [item for item in (args.upload_file or []) if str(item).strip()],
+            "upload_field": args.upload_field,
+            "upload_fields": {str(k): str(v) for k, v in raw_upload_fields.items()},
             "pasted_request": args.pasted_request,
             "convert_targets": [item.strip() for item in (args.convert_targets or "").split(",") if item.strip()],
             "query": {str(k): str(v) for k, v in raw_query.items()},

@@ -137,6 +137,8 @@ The sidebar is grouped by feature:
 - `代理` — first-level category; click it to expand / collapse `代理抓包` (local HTTP proxy)
   and `抓包转换` (capture one request, inspect the raw response, convert formats)
 - `FastJson` — first-level category; click it to expand / collapse `Fastjson 探测`
+- `小工具` — first-level category; click it to expand / collapse `文件上传` (pick a local file,
+  upload it as multipart to a target endpoint, and keep the raw response)
 - `配置` — settings, grouped into `通用配置` and per-feature sections
 
 The order mirrors the left-hand menu of the java-chains web UI. The main window now starts
@@ -174,6 +176,8 @@ The `配置` page stores fixed parameters in
 - `恶意服务器配置` — default bind address, default advertised address, and the JNDI LDAP / RMI / HTTP
   ports plus the HTTP service, JRMP, FakeMySQL and TCP ports (blank or 0 keeps the default)
 - `预设链配置` — default category filter for the preset page (choices come from the built-in preset file itself)
+- `小工具配置` — the file-upload page defaults: upload URL, form field name (default `file`) and
+  upload timeout (default 30 seconds)
 
 Saved values pre-fill **every feature page** (probe, proxy, capture, Shiro, Payload, presets,
 malicious servers) and are pushed to already-open pages right after saving, with no restart needed. After the proxy
@@ -216,7 +220,7 @@ readable hint instead of an engine error — set CEYE Token on the settings page
 | Path | Purpose |
 | --- | --- |
 | `src/` | Composition root `Main.java` (301 lines: wiring and page switching only), `pom.xml`, the local proxy (`proxy/ProxyServer.java`), and the Shiro module (`shiro/`) |
-| `src/ui/` | Per-feature **views** and **behaviour** kept apart: views `*Page` / `*Form` (`HomePage` / `ProbePage` / `CapturePage` / `ProxyPage` / `ShiroPage` / `PayloadPage` / `PresetPage` / `ServicePage` / `ConfigPage` / `ConfigForm`), behaviour `*Controller` (`NavController` / `ProbeController` / `CaptureController` / `ProxyController` / `ShiroController` / `ConfigController` / `PayloadController` / `PresetController` / `ServiceController` / `WorkbenchPages`), plus styling `UiKit`, the shared `ChainEditor`, startup warm-up `StartupWarmup` / splash `StartupSplash`, the column selector `PayloadChainSelector` (the payload page's chain picker, holding no chain state) with its collaborators `ChainSelectorSizing` (geometry) / `ChainColumn` / `ChainColumnState` / `ChainColumnPanel` (per-column panel and filter state) / `ChainResizeHandle` (vertical drag bar) / `ChainColumnFilter` (filter predicate) / `ChainNodeRenderer` (row rendering) / `ChainTagMenu` (tag menu), the payload page split-outs `PayloadPanels` (panel building) / `PayloadColumns` (column mapping) / `PayloadOutputText` (output text) / `PayloadExporter` (export to disk), and the self-check facade `UiHandle` + `WidgetRegistry` |
+| `src/ui/` | Per-feature **views** and **behaviour** kept apart: views `*Page` / `*Form` (`HomePage` / `ProbePage` / `CapturePage` / `ProxyPage` / `ShiroPage` / `PayloadPage` / `PresetPage` / `ServicePage` / `ConfigPage` / `ConfigForm` / `ToolsUploadPage`), behaviour `*Controller` (`NavController` / `ProbeController` / `CaptureController` / `ProxyController` / `ShiroController` / `ConfigController` / `PayloadController` / `PresetController` / `ServiceController` / `ToolsUploadController` / `WorkbenchPages`), plus styling `UiKit`, the shared `ChainEditor`, startup warm-up `StartupWarmup` / splash `StartupSplash`, the column selector `PayloadChainSelector` (the payload page's chain picker, holding no chain state) with its collaborators `ChainSelectorSizing` (geometry) / `ChainColumn` / `ChainColumnState` / `ChainColumnPanel` (per-column panel and filter state) / `ChainResizeHandle` (vertical drag bar) / `ChainColumnFilter` (filter predicate) / `ChainNodeRenderer` (row rendering) / `ChainTagMenu` (tag menu), the payload page split-outs `PayloadPanels` (panel building) / `PayloadColumns` (column mapping) / `PayloadOutputText` (output text) / `PayloadExporter` (export to disk), and the self-check facade `UiHandle` + `WidgetRegistry` |
 | `src/payload/` | Generic payload generation (`PayloadEngine` / `PayloadCatalog` / `PayloadResult`), decoupled from concrete features such as Shiro |
 | `src/service/` | Malicious servers (`ServiceManager` / `ServiceSpec` / `ServiceEndpoint` / `ServiceDefaults`): the only package that talks to the java-chains server-side adapters |
 | `src/preset/` | Built-in preset chains (`PresetCatalogService` / `PresetItem`): the only package that touches the upstream preset model, exposing plain data |
@@ -330,6 +334,37 @@ When `拦截请求` (intercept) is off, the proxy panel shows the most recent fl
 `转发到抓包转换` still exports it. One-click send carries the URL,
 method, headers **and body** across: a captured POST body is usually the endpoint's business
 payload, and omitting it only yields a validation error.
+
+## File upload
+
+`小工具 → 文件上传` sends one local file to a target upload endpoint and hands the raw response
+back to you:
+
+- `目标 URL` is the upload endpoint; `选择文件` opens the native file dialog (the path field is
+  read-only so an unreachable path cannot be typed in);
+- `表单字段名` is the form field the target reads the file from, default `file`
+  (other frameworks commonly use `upload` / `multipartFile`);
+- `附加表单字段（JSON）` carries plain form fields the endpoint expects, e.g. `{"csrf":"abc"}`;
+- `请求头（JSON）` carries the session, e.g. `{"Cookie":"JWT=xxx"}`;
+- `上传` sends exactly **one** multipart POST and does not follow 3xx redirects; `复制结果` copies
+  the report to the clipboard.
+
+The body is assembled from **raw bytes**, so the file content is never rewritten by a text codec,
+and the boundary declared in `Content-Type` always matches the one used in the body. The per-file
+limit is 8 MB; larger files are skipped with a readable reason.
+
+Every failure path produces a readable conclusion instead of failing silently: empty target URL,
+no file selected, missing or unreadable file, size over the limit, extra fields that are not valid
+JSON, connection failure, 3xx redirect, 401 / 403, 404, and 5xx.
+
+Upload is a "content is the result" feature, so its report is **always detailed** (same as capture
+and convert) and does not follow the brief / detailed switch of `探测报告配置`.
+
+```powershell
+# Equivalent CLI invocation
+python python\fj_probe.py --mode upload --upload-url http://host/upload ^
+  --upload-file payload.txt --upload-field file --upload-fields "{\"csrf\":\"abc\"}" --format text
+```
 
 ## Capture & convert
 
@@ -550,6 +585,10 @@ python .\python\fj_probe.py http://127.0.0.1:8080/api/json --mode detect --repor
 
 # keep the raw structured result instead of the rendered report
 python .\python\fj_probe.py http://127.0.0.1:8080/api/json --mode version --format json
+
+# file upload (multipart, exactly one request; --upload-file may be repeated, the UI sends one)
+python .\python\fj_probe.py --mode upload --upload-url http://127.0.0.1:8080/upload ^
+  --upload-file .\payload.txt --upload-field file --upload-fields '{"csrf":"abc"}' --format text
 ```
 
 `CEYE_TOKEN` / `CEYE_DOMAIN` / `CEYE_API` environment variables work as well.

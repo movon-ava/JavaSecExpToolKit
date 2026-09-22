@@ -42,18 +42,20 @@ public final class UiNavigationCheck {
         final JList<?> list = (JList<?>) field(main, "navigationList");
         List<?> collapsed = (List<?>) field(main, "navigationItems");
         System.out.println("初始导航项: " + labels(collapsed));
-        // 一级分类顺序对齐网页版 java-chains：主页 / Payload / 服务 / 代理 / FastJson / 配置。
-        check("初始应为 6 项（主页/Payload/服务/代理/FastJson/配置）", collapsed.size() == 6);
+        // 一级分类顺序对齐网页版 java-chains：主页 / Payload / 服务 / 代理 / FastJson / 小工具 / 配置。
+        check("初始应为 7 项（主页/Payload/服务/代理/FastJson/小工具/配置）", collapsed.size() == 7);
         check("初始第二项为 Payload 分类", labels(collapsed).get(1).startsWith("Payload"));
         check("初始含服务分类", labels(collapsed).get(2).startsWith("服务"));
         check("初始含代理分类", labels(collapsed).get(3).startsWith("代理"));
         check("初始含 FastJson 分类", labels(collapsed).get(4).startsWith("FastJson"));
-        check("末项为配置", "配置".equals(labels(collapsed).get(5)));
+        check("初始含小工具分类", labels(collapsed).get(5).startsWith("小工具"));
+        check("末项为配置", "配置".equals(labels(collapsed).get(6)));
         check("初始各分类都显示收起箭头",
                 labels(collapsed).get(1).endsWith("\u25b8")
                         && labels(collapsed).get(2).endsWith("\u25b8")
                         && labels(collapsed).get(3).endsWith("\u25b8")
-                        && labels(collapsed).get(4).endsWith("\u25b8"));
+                        && labels(collapsed).get(4).endsWith("\u25b8")
+                        && labels(collapsed).get(5).endsWith("\u25b8"));
         check("展开箭头位于文字右侧",
                 labels(collapsed).get(4).indexOf("\u25b8") > labels(collapsed).get(4).indexOf("FastJson"));
 
@@ -61,7 +63,7 @@ public final class UiNavigationCheck {
         toggle(main);
         List<?> expanded = (List<?>) field(main, "navigationItems");
         System.out.println("展开后导航项: " + labels(expanded));
-        check("展开后应为 7 项（含 Fastjson 探测）", expanded.size() == 7);
+        check("展开后应为 8 项（含 Fastjson 探测）", expanded.size() == 8);
         check("展开后 FastJson 应显示展开箭头", labels(expanded).get(4).endsWith("\u25be"));
         check("展开后子项紧跟其分类", "Fastjson 探测".equals(labels(expanded).get(5)));
         System.out.println("展开后选中项: " + displayFor(list.getSelectedValue()));
@@ -70,13 +72,13 @@ public final class UiNavigationCheck {
         toggle(main);
         List<?> recollapsed = (List<?>) field(main, "navigationItems");
         System.out.println("收起后导航项: " + labels(recollapsed));
-        check("再次点击应收起回 6 项", recollapsed.size() == 6);
+        check("再次点击应收起回 7 项", recollapsed.size() == 7);
         check("收起后 FastJson 应显示收起箭头", labels(recollapsed).get(4).endsWith("\u25b8"));
 
         select(main, "fastjson.detect");
         List<?> afterJump = (List<?>) field(main, "navigationItems");
         System.out.println("跳转探测页后: " + labels(afterJump));
-        check("跳转二级功能应自动展开分类", afterJump.size() == 7);
+        check("跳转二级功能应自动展开分类", afterJump.size() == 8);
         check("跳转后选中二级功能", "Fastjson 探测".equals(plain(list.getSelectedValue())));
 
         check("识别默认勾选", ((AbstractButton) field(main, "modeDetect")).isSelected());
@@ -576,6 +578,51 @@ public final class UiNavigationCheck {
                         .get("ldap")).getText().equals("50389"));
         snapshot(frame, "target/ui-check/09-servers.png");
 
+        // 小工具 - 文件上传页：导航 + 控件 + 默认值 + 失败路径
+        select(main, "tools.upload");
+        List<String> toolsTexts = contentLabels(main);
+        System.out.println("文件上传页标题: " + toolsTexts);
+        check("跳转小工具二级项打开文件上传页", toolsTexts.contains("文件上传"));
+        check("跳转文件上传页不回落到主页", !toolsTexts.contains("安全测试工具箱"));
+        check("小工具分类自动展开且含二级项", labels(navItems(main)).contains("文件上传")
+                && labels(navItems(main)).size() == expectedNavSize());
+        check("文件上传页选中项正确", "文件上传".equals(plain(list.getSelectedValue())));
+        check("文件上传页含目标 URL 输入框", fieldQuiet(main, "toolsUploadUrl") instanceof JTextField);
+        check("文件上传页含本地文件输入框且只读",
+                fieldQuiet(main, "toolsUploadFile") instanceof JTextField
+                        && !((JTextField) fieldQuiet(main, "toolsUploadFile")).isEditable());
+        check("文件上传页含选择文件按钮", fieldQuiet(main, "toolsUploadChoose") instanceof JButton);
+        check("文件上传页含表单字段名输入框", fieldQuiet(main, "toolsUploadField") instanceof JTextField);
+        check("文件上传页默认字段名为 file",
+                "file".equals(((JTextField) fieldQuiet(main, "toolsUploadField")).getText()));
+        check("文件上传页含附加表单字段与请求头输入框",
+                fieldQuiet(main, "toolsUploadFields") instanceof JTextField
+                        && fieldQuiet(main, "toolsUploadHeaders") instanceof JTextField);
+        check("文件上传页含上传按钮", fieldQuiet(main, "toolsUploadRun") instanceof JButton);
+        check("文件上传页含复制结果按钮", fieldQuiet(main, "toolsUploadCopy") instanceof JButton);
+        check("文件上传页含状态标签", fieldQuiet(main, "toolsUploadStatus") instanceof javax.swing.JLabel);
+        check("文件上传页含结果文本域", fieldQuiet(main, "toolsUploadResult") instanceof JTextArea);
+        check("文件上传页结果区只读", !((JTextArea) fieldQuiet(main, "toolsUploadResult")).isEditable());
+        // 未填参数时给出可读提示而不是静默失败
+        setText(main, "toolsUploadUrl", "");
+        clickButton(main, "toolsUploadRun");
+        check("未填目标 URL 时提示且不发请求",
+                ((JTextArea) fieldQuiet(main, "toolsUploadResult")).getText().contains("目标 URL 不能为空"));
+        setText(main, "toolsUploadUrl", "http://127.0.0.1:1/upload");
+        clickButton(main, "toolsUploadRun");
+        check("未选择文件时提示",
+                ((JTextArea) fieldQuiet(main, "toolsUploadResult")).getText().contains("请先选择"));
+        snapshot(frame, "target/ui-check/10-tools-upload.png");
+
+        // 配置页新增「小工具配置」分组
+        select(main, "config");
+        check("配置页含小工具配置分组", contentLabels(main).contains("小工具配置"));
+        check("配置页含默认上传 URL 输入框", fieldQuiet(main, "configUploadUrl") instanceof JTextField);
+        check("配置页含默认表单字段名输入框", fieldQuiet(main, "configUploadField") instanceof JTextField);
+        check("配置页含上传超时输入框", fieldQuiet(main, "configUploadTimeout") instanceof JTextField);
+        check("上传超时默认 30 秒",
+                "30".equals(((JTextField) fieldQuiet(main, "configUploadTimeout")).getText()));
+
         select(main, "home");
         snapshot(frame, "target/ui-check/04-home.png");
 
@@ -775,6 +822,23 @@ public final class UiNavigationCheck {
     /** 取控件：走 ui.UiHandle 稳定门面，界面内部拆分不再影响断言。 */
     private static Object fieldQuiet(Object target, String name) {
         return ui.UiHandle.get(target, name);
+    }
+
+    /** 写入文本控件（输入框或文本域）：在 EDT 上落到稳定门面取到的控件上。 */
+    private static void setText(Object target, String name, String value) throws Exception {
+        Object component = fieldQuiet(target, name);
+        final String text = value;
+        if (component instanceof JTextArea) {
+            final JTextArea area = (JTextArea) component;
+            onEdt(new Runnable() {
+                public void run() { area.setText(text); }
+            });
+            return;
+        }
+        final JTextField field = (JTextField) component;
+        onEdt(new Runnable() {
+            public void run() { field.setText(text); }
+        });
     }
 
     /** 读取下拉框的全部选项文字，用于断言「一键发送」的目标清单。 */

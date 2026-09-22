@@ -1,5 +1,105 @@
 # AI 工作报告
 
+## 2026-09-22（本轮：小工具 - 文件上传）
+
+### 一、需求
+
+新增一个「小工具」模块，其中一项功能为**文件上传**：输入 URL、选择文件即可上传，
+并返回响应结果。
+
+### 二、根因分析（改代码之前先定位成因）
+
+**现象**：抓包页与 Shiro 页都能发请求，但没有任何入口能把本地文件发出去。
+
+**成因**：既有请求体通道在**类型**上不支持文件上传，不是参数没传对：
+
+1. `python/fj_probe.py` 的 `_request_raw` 固定 `body.encode("utf-8")`，请求体是 `str`。
+   文件是任意二进制，先按 UTF-8 编解码一次会把非法字节序列替换成 `\ufffd`，
+   上传上去的内容与本地文件不再一致；
+2. `multipart/form-data` 需要按 boundary 拼多段（普通字段段 + 文件段 + 结束分隔符），
+   且 `Content-Type` 必须带同一个 boundary。界面上只给「请求体文本」是表达不出分段的。
+
+**改法**：新增一条**字节通道**而不是改造既有文本通道——
+把 `_request_raw` 拆成 `_request_raw`（文本入口，行为与签名不变）+ `_request_bytes`
+（`Optional[bytes]`），两者共用同一套请求头净化与 `_NoRedirect`；上传模式在这条新通道上
+用 `uuid4().hex` 生成 boundary 并按字节拼 multipart。
+
+### 三、改动清单
+
+| 文件 | 写入域 | 动作 |
+| --- | --- | --- |
+| `python/fj_probe.py` | probe | 改：新增 `upload` 模式、multipart 字节构造、报告渲染、六个 CLI 参数 |
+| `src/probe/ProbeCommand.java` | probe | 改：新增 `uploadUrl` / `uploadFiles` / `uploadField` / `uploadFields` 与 `upload(...)` 拼装 |
+| `src/ui/ToolsUploadPage.java` | ui | 新增：文件上传页视图（Widgets + defaults + build，含 `JFileChooser` 实例） |
+| `src/ui/ToolsUploadController.java` | ui | 新增：选文件 / 上传 / 复制结果行为 |
+| `src/ui/NavController.java` | ui | 改：新增「小工具」一级分类与「文件上传」二级项 |
+| `src/ui/ConfigForm.java` | ui | 改：新增「小工具配置」分组与三个控件 |
+| `src/ui/ConfigController.java` | ui | 改：`applyDefaults` 接线 + `resetForm` / `save` 两处同步 |
+| `src/ui/WidgetRegistry.java` | ui | 改：登记上传页 10 个控件与配置页 3 个控件 |
+| `src/Main.java` | ui | 改：装配页面、路由 `tools.upload`、`runUpload` 自检转发 |
+| `tests/UiNavigationCheck.java` | 测试 | 改：导航项数 6→7、新增上传页与配置页 20 条断言、补 `setText` 辅助 |
+| `tests/UiSwitchEndToEndCheck.java` | 测试 | 改：`/upload` 桩端点与 9 条端到端断言 |
+| `tests/test_probe.py` | 测试 | 改：新增 `UploadModeTest` 8 项单测 |
+| `README.md` / `README.en.md` | 主 agent | 改：导航 / 配置页 / 文件上传 / 项目结构 / 命令行速查中英同步 |
+| `openspec/changes/tools-file-upload/**` | 主 agent | 新增后归档为 `openspec/changes/archive/2026-09-22-tools-file-upload`，主 spec 落地 `openspec/specs/tools/file-upload/spec.md` |
+
+### 四、功能行为
+
+- 页面：`小工具 → 文件上传`。目标 URL、选择文件（系统文件对话框，路径框只读）、
+  表单字段名（默认 `file`）、附加表单字段（JSON）、请求头（JSON）、上传、复制结果。
+- 引擎：一次 multipart POST，不跟随 3xx；记录状态码 / 耗时 / 响应头 / 响应体 / Set-Cookie。
+- 上传属于「内容即结果」，报告**始终详细**（与 `capture` / `convert` 处理一致）。
+- 单文件上限 8 MB，超限跳过并说明原因（不静默截断，避免拿着被改过的样本继续排查）。
+- 失败路径全部给可读结论：空 URL / 未选文件 / 文件不可读 / 超限 / 附加字段非法 JSON /
+  连接失败 / 3xx（附 Location）/ 401 / 403（提示补 Cookie）/ 404 / 5xx（提示核对字段名）。
+- 新增可持久化配置进配置页「小工具配置」：默认上传 URL、默认表单字段名、上传超时（默认 30 秒）。
+
+### 五、验证记录
+
+| 验证项 | 命令 | 结果 |
+| --- | --- | --- |
+| Python 单测 | `python -X utf8 -m unittest discover -s tests` | **114 项 OK**（原 106 + 新增 8） |
+| 依赖边界 | `python -X utf8 tools\audit_boundary.py` | 结论「全部通过」（无环 / 无越界 / 无叶子出边 / 无内核反向依赖） |
+| 工具链自检 | `powershell -File tools\check_agent_tools.ps1` | **91 项通过** |
+| 界面与端到端自检 | `UiNavigationCheck` / `UiSwitchEndToEndCheck` / `UiShiroCheck` / `PayloadCheck` / `ShiroCheck` / `ProxyServerCheck` | 六套全部 exit 0 |
+| OpenSpec | `openspec validate --all --strict` | **7 项 passed**（新增 `spec/tools/file-upload`） |
+
+端到端实测（`UiSwitchEndToEndCheck`，桩服务校验请求原文）：
+`文件上传 -> 探测结论: 已上传 1 个文件（407 字节请求体），响应 HTTP 200（5.69 ms，40 字节）`，
+桩服务确认 `Content-Type` 含 `multipart/form-data`、请求体含 `name="csrf"` 与文件内容标记、
+请求头带上了 `JWT_TOKEN=upload`。
+
+### 六、监控复核
+
+| 复核项 | 结论 |
+| --- | --- |
+| 越界改动 | 无：改动只落在 `python/fj_probe.py`、`src/probe/ProbeCommand.java`、`src/ui/`、`src/Main.java`、`tests/`、`README*.md`、`openspec/`；`src/pom.xml`、`src/config/AppConfig.java`、`src/util/` 未被触碰 |
+| 新依赖 | 无：只用 Java 标准库（`JFileChooser` / `HttpURLConnection` 未引入）与 Python 标准库（`uuid` / `json` / `os`） |
+| 偷懒代码 | 无 TODO / FIXME / pass / 空方法体；新增两个类均有完整实现 |
+| 断言放宽 | 未放宽：`UiNavigationCheck` 断言数由 225 增至 248（+23），其余五套不变，一条未删 |
+| 文件规模 | `src/Main.java` 345 行（≤400）；`src/ui/` 最大 583 行（`PayloadController`，≤600），由 `tests/test_decoupling.py` 机械校验 |
+| 配置落页 | 三个新配置项（`upload_url` / `upload_field` / `upload_timeout`）全部落到配置页「小工具配置」分组 |
+| 构建一致性 | `build.ps1` 逐文件校验 JAR 时间晚于 `src/`、`python/`、`tests/` 下全部源文件 |
+
+### 七、备份与 Git
+
+- 改动前快照 `.backups/20260922-162456`（158 个文件），轮转删除最旧的
+  `20260922-101154` 与 `20260922-105212`，现保留最近三份：
+  `20260922-123500`、`20260922-161611`、`20260922-162456`。
+- `.backups/`、`target/`、`JavaSecExpToolKit.jar`、`.pi/` 由 `.gitignore` 忽略。
+
+### 八、如实说明的局限
+
+1. 界面一次只上传**一个**文件；引擎侧 `--upload-file` 支持重复指定，但界面未开放多选。
+2. 上传不做响应语义判定：不会告诉你「上传成功了」「这里是 webshell 路径」——
+   这些结论取决于目标业务，工具只如实记录这一次请求的响应。
+3. 8 MB 上限是工程折中：足够覆盖常见样本，但不适合传大文件；需要更大文件时改
+   `UPLOAD_MAX_BYTES` 并接受内存占用。
+4. `Content-Type` 若由使用者在请求头里手填 `multipart/form-data`，则以其填写值为准；
+   此时 boundary 是否与请求体一致取决于填写内容，工具不再覆盖。
+5. 上传不进「一键发送」链路：抓包页与代理页本轮未新增入口。
+
+
 ## 2026-09-18
 
 - 按需求在 `G:\java\JavaSecExpToolKit` 从空目录新建独立工程。

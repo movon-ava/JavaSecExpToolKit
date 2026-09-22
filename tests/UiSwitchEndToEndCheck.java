@@ -37,11 +37,17 @@ public final class UiSwitchEndToEndCheck {
         server.createContext("/loginpage", new MethodNotAllowedHandler());
         server.createContext("/gated", new LoginGatedHandler());
         server.createContext("/auth", new SessionAuthHandler());
+        server.createContext("/upload", new UploadHandler());
         server.start();
         final String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/api";
         final String blockedUrl = "http://127.0.0.1:" + server.getAddress().getPort() + "/loginpage";
         final String gatedUrl = "http://127.0.0.1:" + server.getAddress().getPort() + "/gated";
         final String authUrl = "http://127.0.0.1:" + server.getAddress().getPort() + "/auth";
+        final String uploadUrl = "http://127.0.0.1:" + server.getAddress().getPort() + "/upload";
+        final java.io.File uploadFile = java.io.File.createTempFile("jset-upload-", ".txt");
+        uploadFile.deleteOnExit();
+        java.nio.file.Files.write(uploadFile.toPath(),
+                ("prefix-" + UploadHandler.MARKER + "-suffix").getBytes(StandardCharsets.UTF_8));
         try {
             Constructor<?> constructor = Class.forName("Main").getDeclaredConstructor();
             constructor.setAccessible(true);
@@ -399,6 +405,38 @@ public final class UiSwitchEndToEndCheck {
             invokeVoid(main, "toggleProxy");
             Thread.sleep(200);
 
+            // 小工具 - 文件上传：真实发一次 multipart 请求，响应结果回填到结果区；
+            // 同时验证「选择本地文件 → 上传」这条链路与引擎的字节级请求体一致。
+            setText(main, "toolsUploadUrl", uploadUrl);
+            setText(main, "toolsUploadFile", uploadFile.getAbsolutePath());
+            setText(main, "toolsUploadField", "file");
+            setText(main, "toolsUploadFields", "{\"csrf\":\"tok\"}");
+            setText(main, "toolsUploadHeaders", "{\"Cookie\":\"JWT_TOKEN=upload\"}");
+            String upload = runUpload(main, uploadUrl, uploadFile.getAbsolutePath(), "file",
+                    "{\"csrf\":\"tok\"}", "{\"Cookie\":\"JWT_TOKEN=upload\"}");
+            System.out.println("文件上传 -> " + conclusion(upload));
+            check("上传返回可读报告", upload.contains("===== 文件上传 =====") && upload.contains("响应状态:"));
+            check("上传报告回显文件与字段",
+                    upload.contains(uploadFile.getName()) && upload.contains("附加字段: csrf=tok"));
+            check("上传报告回显响应体", upload.contains("\"uploaded\""));
+            check("上传结果中文未乱码", !upload.contains("\ufffd"));
+            check("上传请求为 multipart 且带表单字段",
+                    UploadHandler.lastContentType != null
+                            && UploadHandler.lastContentType.contains("multipart/form-data")
+                            && UploadHandler.lastBody != null
+                            && UploadHandler.lastBody.contains("name=\"csrf\"")
+                            && UploadHandler.lastBody.contains(UploadHandler.MARKER));
+            check("上传请求带上了请求头里的会话 Cookie",
+                    UploadHandler.lastCookie != null && UploadHandler.lastCookie.contains("JWT_TOKEN=upload"));
+
+            // 未选择文件时给出可读提示，而不是发一个空请求
+            String noFile = runUpload(main, uploadUrl, "", "file", "", "");
+            check("未选择文件时给出可读结论", noFile.contains("未选择文件"));
+            // 本地文件不存在时同样不发请求
+            String badFile = runUpload(main, uploadUrl,
+                    uploadFile.getAbsolutePath() + ".missing", "file", "", "");
+            check("文件不存在时给出可读结论", badFile.contains("未发送请求"));
+
             // 抓包头里常带的两个陷阱必须被过滤：旧 Content-Length 会让所有探针
             // 等到超时，Accept-Encoding: gzip 会让探针拿到一堆乱码。
             setText(main, "target", url);
@@ -431,6 +469,15 @@ public final class UiSwitchEndToEndCheck {
         field.setAccessible(true);
         java.util.Properties properties = (java.util.Properties) field.get(main);
         properties.setProperty(key, value);
+    }
+
+    /** 直接调用文件上传动作：不依赖按钮点击，与探针 / 抓包自检的做法一致。 */
+    private static String runUpload(Object main, String url, String file, String field,
+                                    String fields, String headers) throws Exception {
+        Method method = main.getClass().getDeclaredMethod("runUpload", String.class, String.class,
+                String.class, String.class, String.class);
+        method.setAccessible(true);
+        return String.valueOf(method.invoke(main, url, file, field, fields, headers));
     }
 
     private static String runProbe(Object main, String url, String mode) throws Exception {
@@ -762,6 +809,23 @@ public final class UiSwitchEndToEndCheck {
                 return;
             }
             reply(exchange, 200, "application/json", "{\"ok\":true}");
+        }
+    }
+
+    /** 模拟上传接口：记录收到的 multipart 请求，返回可断言的 JSON 响应。 */
+    private static final class UploadHandler implements HttpHandler {
+        /** 文件内容里的标记，用来证明文件字节真的到达了目标。 */
+        static final String MARKER = "JavaSecExpToolKit-upload-marker";
+        static volatile String lastContentType = "";
+        static volatile String lastBody = "";
+        static volatile String lastCookie = "";
+
+        public void handle(HttpExchange exchange) throws IOException {
+            lastContentType = exchange.getRequestHeaders().getFirst("Content-Type");
+            lastCookie = exchange.getRequestHeaders().getFirst("Cookie");
+            lastBody = new String(readAll(exchange), StandardCharsets.ISO_8859_1);
+            reply(exchange, 200, "application/json",
+                    "{\"code\":0,\"msg\":\"uploaded\",\"size\":\"" + lastBody.length() + "\"}");
         }
     }
 

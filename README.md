@@ -120,6 +120,8 @@ Maven 的 POM 位于 Java 工作区（`src/pom.xml`，与源码同级），产�
 - `代理` — 一级分类；点击可展开 / 收起二级项 `代理抓包`（本地 HTTP 代理）
   与 `抓包转换`（单次抓包、格式转换）
 - `FastJson` — 一级分类；点击可展开 / 收起二级项 `Fastjson 探测`
+- `小工具` — 一级分类；点击可展开 / 收起二级项 `文件上传`（选择本地文件按 multipart
+  上传到指定接口，并记录原始响应）
 - `配置` — 设置项，分为 `通用配置` 与各功能分组
 
 顺序对齐网页版 java-chains 的左侧菜单。主窗口**默认最大化**：
@@ -154,6 +156,7 @@ Maven 的 POM 位于 Java 工作区（`src/pom.xml`，与源码同级），产�
 - `恶意服务器配置` — 默认绑定地址、默认公布地址，以及 JNDI 的 LDAP / RMI / HTTP 端口、
   HTTP 服务端口、JRMP 端口、FakeMySQL 端口、TCP 端口（留空或填 0 表示沿用默认值）
 - `预设链配置` — 预设链页的默认分类筛选（候选值来自内置预设文件本身）
+- `小工具配置` — 文件上传页的默认上传 URL、默认表单字段名（默认 `file`）、上传超时（默认 30 秒）
 
 保存后的值会预填到**全部功能页**（探测页 + 代理页 + 抓包页 + Shiro 页 + Payload 页 +
 预设链页 + 恶意服务器页），保存后即刻下发到已经打开的页面，不需要重开程序。代理启动后会
@@ -189,7 +192,7 @@ CEYE 确认作为附属阶段时仍依赖 DNS 阶段。未填 Token 就执行 `C
 | 路径 | 用途 |
 | --- | --- |
 | `src/` | 组合根 `Main.java`（301 行，只做装配与切页）、`pom.xml`、本地代理（`proxy/ProxyServer.java`）与 Shiro 模块（`shiro/`） |
-| `src/ui/` | 各功能页的**视图**与**行为**分开放：视图 `*Page` / `*Form`（`HomePage` / `ProbePage` / `CapturePage` / `ProxyPage` / `ShiroPage` / `PayloadPage` / `PresetPage` / `ServicePage` / `ConfigPage` / `ConfigForm`），行为 `*Controller`（`NavController` / `ProbeController` / `CaptureController` / `ProxyController` / `ShiroController` / `ConfigController` / `PayloadController` / `PresetController` / `ServiceController` / `WorkbenchPages`），另有样式 `UiKit`、共用链编辑 `ChainEditor`、启动预热 `StartupWarmup` / 启动画面 `StartupSplash`、列式链选择器 `PayloadChainSelector`（载荷生成页的选链主体，不持有链状态）及其协作类 `ChainSelectorSizing`（几何换算）/ `ChainColumn` / `ChainColumnState` / `ChainColumnPanel`（每列的面板与筛选状态）/ `ChainResizeHandle`（竖向拖拽条）/ `ChainColumnFilter`（过滤判定）/ `ChainNodeRenderer`（条目渲染）/ `ChainTagMenu`（标签菜单）、载荷页拆分出的 `PayloadPanels`（面板构建）/ `PayloadColumns`（列换算）/ `PayloadOutputText`（输出文本）/ `PayloadExporter`（导出落盘）、自检门面 `UiHandle` + `WidgetRegistry` |
+| `src/ui/` | 各功能页的**视图**与**行为**分开放：视图 `*Page` / `*Form`（`HomePage` / `ProbePage` / `CapturePage` / `ProxyPage` / `ShiroPage` / `PayloadPage` / `PresetPage` / `ServicePage` / `ConfigPage` / `ConfigForm` / `ToolsUploadPage`），行为 `*Controller`（`NavController` / `ProbeController` / `CaptureController` / `ProxyController` / `ShiroController` / `ConfigController` / `PayloadController` / `PresetController` / `ServiceController` / `ToolsUploadController` / `WorkbenchPages`），另有样式 `UiKit`、共用链编辑 `ChainEditor`、启动预热 `StartupWarmup` / 启动画面 `StartupSplash`、列式链选择器 `PayloadChainSelector`（载荷生成页的选链主体，不持有链状态）及其协作类 `ChainSelectorSizing`（几何换算）/ `ChainColumn` / `ChainColumnState` / `ChainColumnPanel`（每列的面板与筛选状态）/ `ChainResizeHandle`（竖向拖拽条）/ `ChainColumnFilter`（过滤判定）/ `ChainNodeRenderer`（条目渲染）/ `ChainTagMenu`（标签菜单）、载荷页拆分出的 `PayloadPanels`（面板构建）/ `PayloadColumns`（列换算）/ `PayloadOutputText`（输出文本）/ `PayloadExporter`（导出落盘）、自检门面 `UiHandle` + `WidgetRegistry` |
 | `src/payload/` | 通用载荷生成（`PayloadEngine` / `PayloadCatalog` / `PayloadResult`），与 Shiro 等具体功能解耦 |
 | `src/service/` | 恶意服务器（`ServiceManager` / `ServiceSpec` / `ServiceEndpoint` / `ServiceDefaults`）：唯一直接调用 java-chains 服务端适配器的包 |
 | `src/preset/` | 内置预设链读取（`PresetCatalogService` / `PresetItem`）：唯一引用上游预设模型的包，纯数据出参 |
@@ -290,6 +293,31 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\check_agent_tools.ps1
 未勾选「拦截请求」时，代理页面板展示的就是最近一条流量，此时
 `转发到抓包转换` 也能正常导出。`一键发送` 会把 URL、方法、请求头**与
 请求体**一起带过去：抓包得到的 POST 体通常就是接口的业务参数，不带上只能拿到校验错误。
+
+## 文件上传
+
+`小工具 → 文件上传` 用于把一个本地文件发到目标上传接口，并把这一次请求的原始响应交回给你：
+
+- `目标 URL` 填上传接口；`选择文件` 打开系统文件对话框（路径框只读，避免填出不存在的路径）；
+- `表单字段名` 是目标读取文件的参数名，默认 `file`（不同框架常用 `upload` / `multipartFile`）；
+- `附加表单字段（JSON）` 用于补目标要求的普通字段，例如 `{"csrf":"abc"}`；
+- `请求头（JSON）` 用于带登录态，例如 `{"Cookie":"JWT=xxx"}`；
+- `上传` 只发**一次** multipart POST，不跟随 3xx 跳转；`复制结果` 把报告复制到剪贴板。
+
+请求体由引擎按**原始字节**构造，文件内容不会被文本编解码改写；`Content-Type` 声明的
+boundary 与请求体里使用的 boundary 始终一致。单文件上限 8 MB，超限会被跳过并说明原因。
+
+失败路径都给可读结论而不是静默失败：目标 URL 为空、未选择文件、文件不存在或不可读、
+大小超限、附加字段不是合法 JSON、连接失败、3xx 跳转、401 / 403、404、5xx。
+
+上传是「内容即结果」的功能，因此报告**始终详细**（与抓包 / 转换一致），不随
+`探测报告配置` 的精简 / 详细切换而变化。
+
+```powershell
+# 命令行等价用法
+python pythonj_probe.py --mode upload --upload-url http://host/upload ^
+  --upload-file payload.txt --upload-field file --upload-fields "{\"csrf\":\"abc\"}" --format text
+```
 
 ## 抓包与格式转换
 
@@ -475,6 +503,10 @@ python .\python\fj_probe.py http://127.0.0.1:8080/api/json --mode detect --repor
 
 # 保留原始结构化结果，而不是渲染后的报告
 python .\python\fj_probe.py http://127.0.0.1:8080/api/json --mode version --format json
+
+# 文件上传（multipart，一次请求；可重复 --upload-file，但当前界面只发一个）
+python .\python\fj_probe.py --mode upload --upload-url http://127.0.0.1:8080/upload ^
+  --upload-file .\payload.txt --upload-field file --upload-fields '{"csrf":"abc"}' --format text
 ```
 
 `CEYE_TOKEN` / `CEYE_DOMAIN` / `CEYE_API` 环境变量同样可用。
