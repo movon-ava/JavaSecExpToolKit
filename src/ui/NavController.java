@@ -192,7 +192,9 @@ public final class NavController {
                 new NavItem("home", "主页"),
                 new NavItem("payload", "Payload", Arrays.asList(
                         new NavItem("payload.build", "Payload 生成"),
-                        new NavItem("payload.preset", "预设链"))),
+                        new NavItem("payload.preset", "预设链"),
+                        new NavItem("payload.tostring", "toString 链"),
+                        new NavItem("payload.oobjar", "HTTP 带外 Jar"))),
                 new NavItem("service", "服务", Arrays.asList(
                         new NavItem("service.servers", "恶意服务器"),
                         new NavItem("shiro.exploit", "Shiro 漏洞利用"))),

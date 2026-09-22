@@ -233,6 +233,13 @@ public final class ConfigController {
         form.serverMysql.setText(config.getProperty("server_mysql_port", "3308"));
         form.serverTcp.setText(config.getProperty("server_tcp_port", "11527"));
         selectOption(form.presetCategory, config.getProperty("preset_category", "全部分类"));
+        selectTostringTemplate(config.getProperty("tostring_default_template", ""));
+        form.tostringCommand.setText(config.getProperty("tostring_default_command", ""));
+        form.oobjarBindHost.setText(config.getProperty("oobjar_bind_host", ""));
+        form.oobjarPort.setText(config.getProperty("oobjar_port", "50001"));
+        form.oobjarDefaultUrl.setText(config.getProperty("oobjar_default_url", ""));
+        form.oobjarDefaultPath.setText(config.getProperty("oobjar_default_path", "/tmp/payload.bin"));
+        form.oobjarDefaultCommand.setText(config.getProperty("oobjar_default_command", ""));
         form.uploadUrl.setText(config.getProperty("upload_url", ""));
         form.uploadField.setText(config.getProperty("upload_field", "file"));
         form.uploadTimeout.setText(config.getProperty("upload_timeout", "30"));
@@ -293,6 +300,15 @@ public final class ConfigController {
         config.setProperty("server_jrmp_port", Platform.valueOr(form.serverJrmp.getText(), "13999"));
         config.setProperty("server_mysql_port", Platform.valueOr(form.serverMysql.getText(), "3308"));
         config.setProperty("server_tcp_port", Platform.valueOr(form.serverTcp.getText(), "11527"));
+        config.setProperty("tostring_default_template",
+                ConfigController.tostringTemplateId(form.tostringTemplate.getSelectedIndex()));
+        config.setProperty("tostring_default_command", form.tostringCommand.getText().trim());
+        config.setProperty("oobjar_bind_host", form.oobjarBindHost.getText().trim());
+        config.setProperty("oobjar_port", Platform.valueOr(form.oobjarPort.getText(), "50001"));
+        config.setProperty("oobjar_default_url", form.oobjarDefaultUrl.getText().trim());
+        config.setProperty("oobjar_default_path",
+                Platform.valueOr(form.oobjarDefaultPath.getText(), "/tmp/payload.bin"));
+        config.setProperty("oobjar_default_command", form.oobjarDefaultCommand.getText().trim());
         Object presetCategory = form.presetCategory.getSelectedItem();
         config.setProperty("preset_category", presetCategory == null ? "全部分类"
                 : String.valueOf(presetCategory));
@@ -410,6 +426,36 @@ public final class ConfigController {
             }
         }
         form.shiroChain.setSelectedIndex(0);
+    }
+
+    /**
+     * 按模板标识选中下拉项。
+     *
+     * <p>配置里存的是稳定标识（如 ts.cc3.jackson），界面上显示的是模板名，
+     * 两者不同名，因此必须按下标对应选中；标识不存在时保持当前选择，
+     * 避免把使用者看到的模板换成第一项。
+     */
+    public void selectTostringTemplate(String id) {
+        String wanted = id == null ? "" : id.trim();
+        if (wanted.isEmpty()) return;
+        int found = ConfigController.tostringTemplateIndex(wanted);
+        if (found >= 0) form.tostringTemplate.setSelectedIndex(found);
+    }
+
+    /** 下拉项下标转模板标识；越界时回退到默认模板。 */
+    public static String tostringTemplateId(int index) {
+        java.util.List<payload.ToStringPreset.Template> templates = payload.ToStringPreset.templates();
+        if (index < 0 || index >= templates.size()) return payload.ToStringPreset.defaultId();
+        return templates.get(index).id;
+    }
+
+    /** 模板标识转下拉项下标；找不到时返回 -1。 */
+    public static int tostringTemplateIndex(String id) {
+        java.util.List<payload.ToStringPreset.Template> templates = payload.ToStringPreset.templates();
+        for (int index = 0; index < templates.size(); index++) {
+            if (templates.get(index).id.equalsIgnoreCase(id == null ? "" : id.trim())) return index;
+        }
+        return -1;
     }
 
     /** 编码显示名转成配置值：配置里存英文标识，界面显示的是按钮短名。 */

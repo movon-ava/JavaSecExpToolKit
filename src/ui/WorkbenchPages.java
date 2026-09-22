@@ -8,7 +8,7 @@ import javax.swing.JPanel;
 import service.ServiceDefaults;
 
 /**
- * 载荷工作台三页的装配：Payload 生成、预设链、恶意服务器。
+ * 载荷工作台五页的装配：Payload 生成、预设链、toString 链、HTTP 带外 Jar、恶意服务器。
  *
  * <p>这三页放在一起，是因为它们的控制器都必须「进过一次就一直复用」：
  * Payload 页持有使用者刚配好的链，预设链页持有已解析的 YAML，
@@ -33,10 +33,15 @@ public final class WorkbenchPages implements ConfigController.View {
     public final PayloadChainSelector payloadSelector;
     public final PresetPage.Widgets presetWidgets = new PresetPage.Widgets();
     public final ServicePage.Widgets serviceWidgets = new ServicePage.Widgets();
+    /** toString 链页与带外 Jar 页的控件：同样由装配方持有，反复进出不累积状态。 */
+    public final PayloadToStringPage.Widgets tostringWidgets = PayloadToStringPage.defaults();
+    public final OobJarPage.Widgets oobJarWidgets = OobJarPage.defaults();
 
     private PayloadController payloadController;
     private PresetController presetController;
     private ServiceController serviceController;
+    private PayloadToStringController tostringController;
+    private OobJarController oobJarController;
 
     public WorkbenchPages(UiKit.FontSink fonts, ConfigController config, CapturePage.Widgets capture,
                           Consumer<String> navigator) {
@@ -55,6 +60,10 @@ public final class WorkbenchPages implements ConfigController.View {
             open("capture");
         };
         presetWidgets.onSendToServers = (payloadId, gadgets, params) -> sendTaskToServers(payloadId, gadgets, params);
+        tostringWidgets.onSendToCapture = payload -> {
+            capture.body.setText(payload);
+            open("capture");
+        };
     }
 
     /** Payload 生成页：控制器只有第一次进页时创建，否则使用者刚配好的链会被清空。 */
@@ -87,6 +96,45 @@ public final class WorkbenchPages implements ConfigController.View {
         }
         presetController.applyDefaultCategory(config.property("preset_category", "").trim());
         return PresetPage.build(presetWidgets, fonts);
+    }
+
+    /**
+     * toString 链页：控制器持有模板清单与当前选择，每次进页都重建会重置使用者填好的
+     * 目标类与命令，因此与其余工作台页面一样只创建一次。
+     */
+    public JPanel tostring() {
+        if (tostringController == null) {
+            tostringController = new PayloadToStringController(tostringWidgets, fonts,
+                    new PayloadToStringController.View() {
+                        @Override public void setStatus(String text) { tostringWidgets.status.setText(text); }
+
+                        @Override public void setOutput(String text) { tostringWidgets.output.setText(text); }
+                    });
+        }
+        tostringController.applyDefaults(config.property("tostring_default_template", "").trim(),
+                config.property("tostring_default_command", "").trim());
+        return PayloadToStringPage.build(tostringWidgets, fonts);
+    }
+
+    /**
+     * HTTP 带外 Jar 页：控制器持有正在监听的 HTTP 服务，
+     * 重建控制器等于把已经托管出去的地址丢掉，界面上再也停不掉它。
+     */
+    public JPanel oobJar() {
+        if (oobJarController == null) {
+            oobJarController = new OobJarController(oobJarWidgets, fonts, new OobJarController.View() {
+                @Override public void setStatus(String text) { oobJarWidgets.status.setText(text); }
+
+                @Override public void setOutput(String text) { oobJarWidgets.output.setText(text); }
+            });
+        }
+        oobJarController.applyDefaults(config.property("oobjar_bind_host", "").trim(),
+                // 配置里没写过该键时回落到 50001：端口框留空会让首次托管必然报「端口非法」
+                config.property("oobjar_port", "50001").trim(),
+                config.property("oobjar_default_url", "").trim(),
+                config.property("oobjar_default_path", "").trim(),
+                config.property("oobjar_default_command", "").trim());
+        return OobJarPage.build(oobJarWidgets, fonts);
     }
 
     /**
@@ -127,6 +175,7 @@ public final class WorkbenchPages implements ConfigController.View {
 
     /** 退出前停掉全部服务并释放端口；失败也不阻塞退出，避免关不掉窗口。 */
     public void shutdown() {
+        if (oobJarController != null) oobJarController.shutdown();
         if (serviceController == null) return;
         try {
             serviceController.shutdown();

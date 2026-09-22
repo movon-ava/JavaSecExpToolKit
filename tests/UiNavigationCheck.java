@@ -329,6 +329,23 @@ public final class UiNavigationCheck {
         check("换载体后仍是两列", chainSelector.columnCount() == 2);
         check("换载体后候选列换成该载体的首节点",
                 payload.PayloadEngine.firstNodes("javanativepayload").containsAll(chainSelector.valuesAt(1)));
+        // toString 触发节点已单独成页（payload.tostring），生成页的候选里不应再出现：
+        // 两处都留着会让同一批节点被暴露两次，且通用页给的链路与 toString 页的模板对不上
+        check("生成页候选不含 toString 触发节点",
+                !chainSelector.valuesAt(1).contains("caseinsensitivemap3tostring")
+                        && !chainSelector.valuesAt(1).contains("gstringcomparetotostring")
+                        && !chainSelector.valuesAt(1).contains("eventlistenerlisttostring"));
+        check("生成页候选确实少于引擎首节点集合（证明过滤生效）",
+                chainSelector.valuesAt(1).size()
+                        < payload.PayloadEngine.firstNodes("javanativepayload").size());
+        check("过滤只针对 toString 节点，其余候选与引擎结论一致",
+                payload.PayloadEngine.firstNodes("javanativepayload")
+                        .containsAll(chainSelector.valuesAt(1)));
+        check("被收走的候选数等于该载体的 toString 触发节点数",
+                payload.PayloadEngine.firstNodes("javanativepayload").size()
+                        - chainSelector.valuesAt(1).size()
+                        == payload.ChainScope.availableToStringNodes(
+                                payload.PayloadEngine.firstNodes("javanativepayload")).size());
 
         // 逐级展开：clojure 是已知叶子（实测无后继），选中后不应多出一列空列表
         selectColumn(chainSelector, 1, "clojure");
@@ -540,6 +557,119 @@ public final class UiNavigationCheck {
         check("预设链生成后输出含载体", presetOutput.contains("载体："));
         snapshot(frame, "target/ui-check/08-preset.png");
 
+        // toString 链页：模板清单 / 自定义输入 / 生成 / 复制模板
+        select(main, "payload.tostring");
+        List<String> tostringTexts = contentLabels(main);
+        System.out.println("toString 链页标题: " + tostringTexts);
+        check("跳转 toString 链二级项打开对应页面", tostringTexts.contains("toString 链"));
+        check("toString 链页不回落到主页", !tostringTexts.contains("安全测试工具箱"));
+        check("toString 链页选中项正确", "toString 链".equals(plain(list.getSelectedValue())));
+        check("Payload 分类含四个二级项", labels(navItems(main)).contains("toString 链")
+                && labels(navItems(main)).contains("HTTP 带外 Jar")
+                && labels(navItems(main)).size() == expectedNavSize());
+        Object tostringWidgets = fieldQuiet(main, "tostringWidgets");
+        check("toString 页含模板清单", fieldQuiet(tostringWidgets, "templateList") instanceof JList);
+        check("toString 页模板清单已载入全部模板",
+                ((javax.swing.DefaultListModel<?>) fieldQuiet(tostringWidgets, "templates")).size()
+                        == payload.ToStringPreset.templates().size());
+        check("toString 页含自定义目标类输入框",
+                fieldQuiet(tostringWidgets, "targetClass") instanceof JTextField);
+        check("toString 页含末端命令输入框", fieldQuiet(tostringWidgets, "command") instanceof JTextField);
+        check("toString 页含生成 / 复制模板 / 复制 / 填入抓包页按钮",
+                fieldQuiet(tostringWidgets, "build") instanceof JButton
+                        && fieldQuiet(tostringWidgets, "copyTemplate") instanceof JButton
+                        && fieldQuiet(tostringWidgets, "copy") instanceof JButton
+                        && fieldQuiet(tostringWidgets, "toCapture") instanceof JButton);
+        check("toString 页含链步骤容器", fieldQuiet(tostringWidgets, "steps") instanceof javax.swing.JPanel);
+        check("toString 页含载荷输出文本域", fieldQuiet(tostringWidgets, "output") instanceof JTextArea);
+        check("toString 页输出区只读", !((JTextArea) fieldQuiet(tostringWidgets, "output")).isEditable());
+        check("toString 页含状态标签", fieldQuiet(tostringWidgets, "status") instanceof javax.swing.JLabel);
+        check("toString 页目标类默认留空（用引擎随机类名）",
+                ((JTextField) fieldQuiet(tostringWidgets, "targetClass")).getText().trim().isEmpty());
+        // 步骤行是「序号 + 节点标识 + 显示名」拼在一个标签里，因此按整段文字子串判定，
+        // 不能按标签逐个相等去比
+        check("toString 页已渲染链步骤（含触发节点标识）",
+                joined(labels(tostringWidgets, "steps")).contains("caseinsensitivemap3tostring"));
+        check("选中模板后状态栏给出链序",
+                ((javax.swing.JLabel) fieldQuiet(tostringWidgets, "status")).getText()
+                        .contains("javanativepayload"));
+        // 目标类按用例填写：留空会用引擎随机类名，断言就看不出「自定义」是否真的生效
+        setText(main, "tostringTargetClass", "com.example.User");
+        setText(main, "tostringCommand", "whoami");
+        clickButton(tostringWidgets, "build");
+        String tostringStatus = awaitStatus(main, "tostringStatus", "正在生成载荷…", 60000);
+        System.out.println("toString 生成状态: " + tostringStatus);
+        String tostringOutput = ((JTextArea) fieldQuiet(tostringWidgets, "output")).getText();
+        check("toString 页生成后状态栏报告成功", tostringStatus.startsWith("生成成功"));
+        check("toString 页输出含 Base64 段", tostringOutput.contains("Base64："));
+        check("toString 页输出含触发节点", tostringOutput.contains("caseinsensitivemap3tostring"));
+        check("toString 页输出回显自定义目标类", tostringOutput.contains("com.example.User"));
+        check("toString 页输出回显末端命令", tostringOutput.contains("whoami"));
+        check("toString 页输出链序含触发节点与中继",
+                tostringOutput.contains("jacksontostring") && tostringOutput.contains("exec"));
+        clickButton(tostringWidgets, "toCapture");
+        check("toString 页填入抓包页后跳转", "抓包转换".equals(plain(list.getSelectedValue())));
+
+        // 带外 Jar 页：类型 / 动作联动 / 参数校验（真实托管放到端到端自检）
+        select(main, "payload.oobjar");
+        List<String> oobTexts = contentLabels(main);
+        System.out.println("带外 Jar 页标题: " + oobTexts);
+        check("跳转带外 Jar 二级项打开对应页面", oobTexts.contains("HTTP 带外 Jar"));
+        check("带外 Jar 页选中项正确", "HTTP 带外 Jar".equals(plain(list.getSelectedValue())));
+        Object oobWidgets = fieldQuiet(main, "oobJarWidgets");
+        check("带外 Jar 页含 Jar 类型下拉框", fieldQuiet(oobWidgets, "kindCombo") instanceof JComboBox);
+        check("带外 Jar 页类型下拉框已载入模板",
+                ((JComboBox<?>) fieldQuiet(oobWidgets, "kindCombo")).getItemCount()
+                        == payload.JarPreset.kinds().size());
+        check("带外 Jar 页含末端动作下拉框", fieldQuiet(oobWidgets, "actionCombo") instanceof JComboBox);
+        check("带外 Jar 页动作下拉框已载入模板",
+                ((JComboBox<?>) fieldQuiet(oobWidgets, "actionCombo")).getItemCount()
+                        == payload.JarPreset.actions().size());
+        check("带外 Jar 页含 URL / 命令 / 路径输入框",
+                fieldQuiet(oobWidgets, "url") instanceof JTextField
+                        && fieldQuiet(oobWidgets, "command") instanceof JTextField
+                        && fieldQuiet(oobWidgets, "path") instanceof JTextField);
+        check("带外 Jar 页含目标类与前缀输入框",
+                fieldQuiet(oobWidgets, "targetClass") instanceof JTextField
+                        && fieldQuiet(oobWidgets, "classNamePrefix") instanceof JTextField);
+        check("带外 Jar 页含绑定地址与端口输入框",
+                fieldQuiet(oobWidgets, "bindHost") instanceof JTextField
+                        && fieldQuiet(oobWidgets, "port") instanceof JTextField);
+        check("带外 Jar 页含可执行 Jar 开关", fieldQuiet(oobWidgets, "executable") instanceof AbstractButton);
+        check("带外 Jar 页含托管 / 停止 / 复制地址按钮",
+                fieldQuiet(oobWidgets, "host") instanceof JButton
+                        && fieldQuiet(oobWidgets, "stop") instanceof JButton
+                        && fieldQuiet(oobWidgets, "copyUrl") instanceof JButton);
+        check("带外 Jar 页含输出文本域", fieldQuiet(oobWidgets, "output") instanceof JTextArea);
+        check("带外 Jar 页输出区只读", !((JTextArea) fieldQuiet(oobWidgets, "output")).isEditable());
+        // 动作联动：执行命令不需要 URL，回连 HTTP 需要 URL
+        selectComboItem(main, oobWidgets, "actionCombo", "执行命令");
+        check("选择「执行命令」后 URL 与路径输入框被禁用",
+                !((JTextField) fieldQuiet(oobWidgets, "url")).isEnabled()
+                        && !((JTextField) fieldQuiet(oobWidgets, "path")).isEnabled());
+        check("选择「执行命令」后命令输入框可用",
+                ((JTextField) fieldQuiet(oobWidgets, "command")).isEnabled());
+        selectComboItem(main, oobWidgets, "actionCombo", "回连 HTTP 请求");
+        check("选择「回连 HTTP 请求」后 URL 输入框可用",
+                ((JTextField) fieldQuiet(oobWidgets, "url")).isEnabled());
+        check("选择「回连 HTTP 请求」后命令输入框被禁用",
+                !((JTextField) fieldQuiet(oobWidgets, "command")).isEnabled());
+        // 未填 URL 就托管：必须给可读提示，而不是拿空地址去建载荷
+        setText(main, "oobJarUrl", "");
+        clickButton(oobWidgets, "host");
+        check("端口框进页即有可用默认值（50001）",
+                "50001".equals(((JTextField) fieldQuiet(oobWidgets, "port")).getText().trim()));
+        check("未填必填 URL 时给出可读提示",
+                ((javax.swing.JLabel) fieldQuiet(oobWidgets, "status")).getText().contains("不能为空"));
+        // 端口非法：同样必须拦在绑定之前
+        setText(main, "oobJarUrl", "http://127.0.0.1:1/x");
+        setText(main, "oobJarPort", "70000");
+        clickButton(oobWidgets, "host");
+        check("端口越界时给出可读提示",
+                ((javax.swing.JLabel) fieldQuiet(oobWidgets, "status")).getText().contains("1-65535"));
+        setText(main, "oobJarPort", "50001");
+        snapshot(frame, "target/ui-check/11-oobjar.png");
+
         // 恶意服务器页：五类服务 / 端口表单 / 发布 / 状态
         select(main, "service.servers");
         List<String> serviceTexts = contentLabels(main);
@@ -622,6 +752,26 @@ public final class UiNavigationCheck {
         check("配置页含上传超时输入框", fieldQuiet(main, "configUploadTimeout") instanceof JTextField);
         check("上传超时默认 30 秒",
                 "30".equals(((JTextField) fieldQuiet(main, "configUploadTimeout")).getText()));
+        check("配置页含 toString 链配置分组", contentLabels(main).contains("toString 链配置"));
+        check("配置页含默认链模板下拉框", fieldQuiet(main, "configTostringTemplate") instanceof JComboBox);
+        check("默认链模板候选项来自工具栏模板表",
+                ((javax.swing.JComboBox<?>) fieldQuiet(main, "configTostringTemplate")).getItemCount()
+                        == payload.ToStringPreset.templates().size());
+        check("配置页含默认末端命令输入框",
+                fieldQuiet(main, "configTostringCommand") instanceof JTextField);
+        check("配置页含带外 Jar 配置分组", contentLabels(main).contains("带外 Jar 配置"));
+        check("配置页含带外 Jar 绑定地址与端口输入框",
+                fieldQuiet(main, "configOobJarBindHost") instanceof JTextField
+                        && fieldQuiet(main, "configOobJarPort") instanceof JTextField);
+        check("带外 Jar 默认端口为 50001",
+                "50001".equals(((JTextField) fieldQuiet(main, "configOobJarPort")).getText()));
+        check("配置页含带外 Jar 默认 URL / 路径 / 执行参数输入框",
+                fieldQuiet(main, "configOobJarDefaultUrl") instanceof JTextField
+                        && fieldQuiet(main, "configOobJarDefaultPath") instanceof JTextField
+                        && fieldQuiet(main, "configOobJarDefaultCommand") instanceof JTextField);
+        check("带外 Jar 默认落地路径与上游预设一致",
+                "/tmp/payload.bin".equals(
+                        ((JTextField) fieldQuiet(main, "configOobJarDefaultPath")).getText()));
 
         select(main, "home");
         snapshot(frame, "target/ui-check/04-home.png");
@@ -948,6 +1098,38 @@ public final class UiNavigationCheck {
     }
 
     /** 点击页面上的某个按钮：必须走真实点击路径，否则动作监听器不会触发。 */
+    /** 把标签文字拼成一段，便于按子串判定某一行是否渲染出来。 */
+    private static String joined(List<String> texts) {
+        StringBuilder builder = new StringBuilder();
+        for (String text : texts) builder.append(text).append('\n');
+        return builder.toString();
+    }
+
+    /** 收集某个容器控件内的全部标签文字，用于判断渲染出了哪些行。 */
+    private static List<String> labels(Object target, String name) {
+        List<String> texts = new ArrayList<String>();
+        collectLabels((java.awt.Container) fieldQuiet(target, name), texts);
+        return texts;
+    }
+
+    /**
+     * 等到状态标签不再是「进行中」那一条。
+     *
+     * <p>生成载荷在后台线程里跑，点完按钮立刻读状态只会读到「正在生成…」。
+     * 这里按固定间隔轮询，超时后把最后一次读到的文本交回，由调用处的断言暴露问题。
+     */
+    private static String awaitStatus(Object main, String field, String inProgress, long timeoutMs)
+            throws Exception {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        String text = "";
+        while (System.currentTimeMillis() < deadline) {
+            text = ((javax.swing.JLabel) fieldQuiet(main, field)).getText();
+            if (text != null && !text.equals(inProgress)) return text;
+            Thread.sleep(150);
+        }
+        return text == null ? "" : text;
+    }
+
     private static void clickButton(Object widgets, String name) throws Exception {
         final javax.swing.AbstractButton button =
                 (javax.swing.AbstractButton) fieldQuiet(widgets, name);

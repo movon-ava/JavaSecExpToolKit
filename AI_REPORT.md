@@ -1,5 +1,139 @@
 # AI 工作报告
 
+## 2026-09-22（本轮：HTTP 带外 Jar + toString 利用链）
+
+### 一、需求
+
+补齐上一轮遗留的两项功能：
+
+1. **HTTP 带外 Jar** — 在预设链 / Payload 分类下生成可落地执行的 Jar，支持自定义 URL 与命令，
+   并由本机托管给目标拉取；
+2. **toString 利用链** — 在 Payload 分类下单独成页，支持自定义目标类，只暴露 toString 相关链。
+
+### 二、根因分析（改代码之前先定位成因）
+
+**现象 A**：toString 链模板全部报「链不被引擎认可」，一条都出不了载荷。
+
+**成因 A**：模板序列从**中继节点**写起，漏掉了 toString **触发节点**。触发节点是链的第一个
+gadget，缺了它，引擎判定首节点非法。实测把触发节点补到链首后 5 条模板全部
+`valid=true build=true`。因此 `ToStringPreset.Template` 显式持有 `trigger` 字段，
+`chain(trigger, relay)` 拼的是**含触发节点的完整序列**。
+
+**现象 B**：带外 Jar 用另一个 `ServiceManager` 实例发布时返回成功，但给出的地址打不开。
+
+**成因 B**：发布结果与地址来自**两个不同的服务实例**，另一个实例上并没有这次发布，
+地址因此回落到上游默认端口 50000，与界面显示的端口不一致。约束必须收在同一处，
+调用方无法绕过。因此新增 `src/service/OobJarService.java`，把「HTTP 服务实例 + 发布 +
+地址拼接 + 停止」封在类内。
+
+**现象 C**：上一轮留下的 5 个半成品文件从未被引用，其中 `PayloadToStringPage.java` 有语法错误
+（`new JTextField(...)` 行末缺分号），并存在掉字的注释与位置不当的常量声明。
+
+**成因 C**：功能未接线完成即中断。本轮补齐引用链（导航 → 页面 → 控制器 → 注册表 → 装配），
+并修正语法与注释。
+
+### 三、改动清单
+
+| 文件 | 写入域 | 动作 |
+| --- | --- | --- |
+| `src/payload/ToStringPreset.java` | 利用链 | 重写：新增 `trigger` 字段，`chain(trigger, relay)` 拼完整序列，`gadgets` 含触发节点 |
+| `src/payload/ChainScope.java` | 利用链 | 新增：23 个 toString 触发节点清单 + `genericCandidates()` 候选过滤 |
+| `src/payload/JarPreset.java` | 利用链 | 新增：5 种包装 × 5 种末端动作模板、参数键声明、`looksLikeJar` 魔数校验 |
+| `src/service/OobJarService.java` | 利用链 | 新增：同实例托管（约束收在类内），修正常量位置与注释 |
+| `src/ui/PayloadToStringPage.java` | 界面 | 新增：toString 链页视图（修正语法错误） |
+| `src/ui/PayloadToStringController.java` | 界面 | 新增：模板选择 / 生成 / 复制行为，`attempt()` 返回数组规避 final 重赋值 |
+| `src/ui/OobJarPage.java` | 界面 | 新增：带外 Jar 页视图（动作联动启用输入框） |
+| `src/ui/OobJarController.java` | 界面 | 新增：生成 / 托管 / 停止 / 复制行为 |
+| `src/ui/PayloadColumns.java` | 界面 | 改：末列候选过 `ChainScope.genericCandidates()`（过滤只放候选层，不动共用编辑器） |
+| `src/ui/PayloadController.java` | 界面 | 改：新增 `candidates()`，状态栏与链信息行同步过滤 |
+| `src/ui/NavController.java` | 界面 | 改：`payload` 分类下新增 `payload.tostring`、`payload.oobjar` 两个二级项 |
+| `src/ui/WorkbenchPages.java` | 界面 | 改：新增两个懒加载页、`shutdown()` 先停带外 Jar、端口缺省回落 50001 |
+| `src/ui/ConfigForm.java` | 界面 | 改：新增 7 个控件与「toString 链配置」「带外 Jar 配置」两个分组 |
+| `src/ui/ConfigController.java` | 界面 | 改：`resetForm()` 回填、`save()` 落盘 7 键、模板索引换算 |
+| `src/ui/WidgetRegistry.java` | 界面 | 改：登记 tostring 13 项、oobJar 15 项、config 7 项 |
+| `src/Main.java` | 界面 | 改：`openKey()` 两个分支 + 注册表两行 |
+| `tests/PayloadCheck.java` | 测试 | 改：新增 `oobJarPresets()` / `tostringPresets()`，68 → **100** 条断言 |
+| `tests/UiNavigationCheck.java` | 测试 | 改：新增两个页面与配置页断言，补 `awaitStatus()` / `labels()` 等辅助 |
+| `tests/UiSwitchEndToEndCheck.java` | 测试 | 改：新增「真实托管 → HTTP 取回 Jar → 停止后端口可再绑定」端到端 |
+| `docs/DESIGN-payload.md` | 主 agent | 改：补第十二节（带外 Jar 实测矩阵 / 参数键 / 排除项 / 同实例约束）、第十三节（toString 模板 / 根因 / 角色表 / 排除项 / 单点归属） |
+| `README.md` / `README.en.md` | 主 agent | 改：导航 / 配置页 / 预填页面 / 项目结构 / 测试章节中英同步，并新增两节功能说明 |
+| `PROGRESS.md` | 主 agent | 改：状态表新增两行功能与两行配置，时间线补四条 |
+| `openspec/changes/payload-tostring-chain/**` | 主 agent | 新增：proposal / design / tasks / delta spec |
+| `openspec/changes/presets-http-jar/**` | 主 agent | 新增：proposal / design / tasks / delta spec |
+
+### 四、功能行为
+
+**toString 链**（`主页 → Payload → toString 链`）
+
+- 5 条实测可用模板，链序固定为 `javanativepayload -> <trigger> -> <relay> -> templatesimpl -> bytecodeconvert -> exec`：
+  `ts.cc3.jackson`（1555 字节）、`ts.cc4.jackson`（1552）、`ts.cc3.fastjson`（1468）、
+  `ts.eventlistener.jackson`（2031）、`ts.gstring.jackson`（1819）。
+- 自定义目标类走 `BytecodeConvert.classNameMode=manual` + `BytecodeConvert.className`；
+  留空沿用引擎随机类名。模板一键复制。
+- 节点归属只有一份规则：`ChainScope` 登记 23 个触发节点，toString 页按它取可用触发节点，
+  通用生成页按它把这批触发节点从候选剔除。过滤只放候选层，不放进共用的 `ChainEditor`——
+  否则会连带砍掉恶意服务器页发布 toString 载荷的能力。
+
+**HTTP 带外 Jar**（`主页 → Payload → HTTP 带外 Jar`）
+
+- 5 种包装（普通 JAR / Charset SPI / Groovy SPI / SnakeYAML SPI / JDBC Driver）
+  × 5 种末端动作（下载并执行 / 执行命令 / 回连 HTTP / 下载文件 / DNSLog），
+  链序 `otherpayload -> <kind> -> bytecodeconvert -> <action>`。
+- 输入框跟随动作**声明的参数键**启用；空值一律不下发（下发空串会覆盖上游默认值，
+  实测表现为载荷里命令为空）；勾选写 `Main-Class` 后产物可直接执行。
+- 托管区给出可复制的回连地址；关闭主窗口先停托管再退出，端口不漏。
+
+**配置页新增 7 键**：`tostring_default_template`、`tostring_default_command`、
+`oobjar_bind_host`、`oobjar_port`（默认 50001）、`oobjar_default_url`、
+`oobjar_default_path`（默认 `/tmp/payload.bin`）、`oobjar_default_command`。
+
+### 五、验证记录
+
+| 验证项 | 命令 | 结果 |
+| --- | --- | --- |
+| 源码编译 | `javac` 编译 `src/**` | exit 0 |
+| 自检编译 | `javac` 编译 `tests/*.java` | exit 0 |
+| 载荷自检 | `PayloadCheck` | exit 0，**100** 条断言，失败 0 |
+| 界面自检 | `UiNavigationCheck` | exit 0，「全部界面自检通过」，并清理 2 个计算器进程 |
+| 端到端自检 | `UiSwitchEndToEndCheck` | exit 0，「端到端自检通过」 |
+| 其余自检 | `ShiroCheck` / `ProxyServerCheck` / `UiShiroCheck` | 全部 exit 0 |
+| Python 单测 | `python -X utf8 -m unittest discover -s tests` | **Ran 114 tests OK** |
+| 依赖边界 | `python -X utf8 tools\audit_boundary.py` | 结论「全部通过」 |
+| 工具链自检 | `powershell -File tools\check_agent_tools.ps1` | **91 项通过** |
+| OpenSpec | `openspec validate --all --strict` | **9 passed, 0 failed** |
+| 文件规模 | `Main.java` 349 行（≤400）；`src/ui/` 最大 593 行（`PayloadController.java`，≤600） | 通过 |
+
+带外 Jar 25 种组合实测（字节长度）：
+
+| 类型 \ 动作 | downloadexec | exec | httpreq | download | dnslog |
+| --- | --- | --- | --- | --- | --- |
+| `jar` | 1492 | 887 | 2329 | 1076 | 670 |
+| `charsetjarconvert2` | 1681 | 1094 | 2481 | 1302 | 891 |
+| `groovyjarconvert` | 1644 | 1042 | 2484 | 1236 | 825 |
+| `snakeyamljarconvert` | 1569 | 965 | 2401 | 1153 | 745 |
+| `jdbcdriverjarconvert` | 3023 | 2422 | 3862 | 2645 | 2252 |
+
+### 六、多 Agent 协作
+
+| 角色 | 主要工作 |
+| --- | --- |
+| 主 agent | 需求澄清与任务拆分、OpenSpec change 规划件、设计文档补写、README 中英同步、PROGRESS / AI 报告更新、门禁总控、构建与提交推送 |
+| 利用链 agent | `ToStringPreset` / `JarPreset` / `ChainScope` / `OobJarService` 四个核心类：模板与参数键、触发节点归属单点、同实例托管约束 |
+| 界面 agent | 两个新页面与控制器、导航二级项、配置页两个分组 7 键、`WidgetRegistry` 登记与 `Main.java` 装配 |
+| 测试 agent | `PayloadCheck` 新增 32 条断言（含 25 种组合矩阵与触发节点归属）、`UiNavigationCheck` 与 `UiSwitchEndToEndCheck` 新增页面与端到端断言 |
+| 监督 agent | 逐文件比对写入域与包级依赖边界，确认 `src/config/**`、`src/util/**`、`src/pom.xml` 未被触碰；核对文件规模上限 |
+| 看护 agent | 盯长任务日志判定「在做 / 等待 / 卡死」，本轮无真卡死，无需终止会话 |
+
+### 七、如实说明的局限
+
+- **只保证「引擎认可并构建出载荷」**，不保证目标端触发：是否成立取决于目标依赖与版本。
+- toString 只收录 5 条实测可用模板，上游 `rome` / `xbean` / `xstring` / `HighJDK` 系列**未收录**，
+  原因写在设计文档第十三节；不是「上游的能力都搬进来了」。
+- 带外 Jar 的排除项：旧版 `CharsetJarConvert` 在本机 JDK 17 下报
+  `ClassNotFoundException: sun.nio.cs.ext.MyExtendedCharsets`，只保留 `CharsetJarConvert2`。
+- 托管只监听本机，不做公网可达性验证；回连地址用的是配置页的绑定地址。
+- 两项功能的 OpenSpec change 尚未 archive，等使用稳定后再走 archive 流程。
+
 ## 2026-09-22（本轮：小工具 - 文件上传）
 
 ### 一、需求

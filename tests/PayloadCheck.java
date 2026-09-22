@@ -12,9 +12,13 @@ import java.util.Set;
 import java.util.TreeSet;
 
 import org.vulhub.javachains.common.GadgetParam;
+import payload.ChainScope;
+import payload.JarPreset;
 import payload.PayloadCatalog;
 import payload.PayloadEngine;
 import payload.PayloadResult;
+import payload.RawPayload;
+import payload.ToStringPreset;
 
 /**
  * 载荷生成引擎自检：把「通用链引擎可用且安全」变成可机械判定的断言。
@@ -61,6 +65,8 @@ public final class PayloadCheck {
         labels();
         safety(payloads);
         endToEnd();
+        oobJarPresets();
+        tostringPresets(nodes);
 
         System.out.println();
         System.out.println("断言总数 " + (passed + failed) + "，失败 " + failed);
@@ -365,6 +371,118 @@ public final class PayloadCheck {
             names.add(child.getPath() + (child.isDirectory() ? "/" : ""));
             if (child.isDirectory()) collect(child, names, depth + 1);
         }
+    }
+
+    /**
+     * HTTP 带外 Jar 模板断言。
+     *
+     * <p>要求的是「每条模板都真能出合法 Jar」而不是「列表非空」：模板本身只是节点 id
+     * 与参数键的组合，写错一个键在界面上看不出来，只有真构建一次才能发现。
+     */
+    private static void oobJarPresets() {
+        List<JarPreset.Kind> kinds = JarPreset.kinds();
+        List<JarPreset.Action> actions = JarPreset.actions();
+        System.out.println("  带外 Jar：类型 " + kinds.size() + " 种，末端动作 " + actions.size() + " 种");
+        check("带外 Jar 提供多种包装类型", kinds.size() >= 5);
+        check("带外 Jar 提供多种末端动作", actions.size() >= 5);
+        check("带外 Jar 载体为 otherpayload", "otherpayload".equals(JarPreset.carrier()));
+        check("带外 Jar 链序含载体与字节码转换",
+                JarPreset.chainText("jar", "exec").equals("otherpayload -> jar -> bytecodeconvert -> exec"));
+        check("未知 Jar 类型被拒绝而不是硬凑", JarPreset.kindOf("nosuchkind") == null);
+        check("未知末端动作被拒绝", JarPreset.actionOf("nosuchaction") == null);
+        check("动作声明了自己需要哪些输入",
+                JarPreset.actionOf("exec").usesCommand() && !JarPreset.actionOf("exec").usesUrl());
+        check("URL 类动作声明了 URL 参数键",
+                JarPreset.actionOf("httpreq").usesUrl() && JarPreset.actionOf("httpreq").urlParam.contains("."));
+        check("空值参数不下发（避免覆盖引擎默认值）",
+                JarPreset.params("jar", "httpreq", "", "", "", "", "", false).isEmpty());
+        check("Zip 魔数判别对空数组为假", !JarPreset.looksLikeJar(new byte[0]));
+
+        int built = 0;
+        int failed = 0;
+        int notJar = 0;
+        for (JarPreset.Kind kind : kinds) {
+            for (JarPreset.Action action : actions) {
+                Map<String, Object> params = JarPreset.params(kind.nodeId, action.nodeId,
+                        "http://127.0.0.1:1/x", "whoami", "", "com.example.User", "", true);
+                RawPayload result = PayloadEngine.buildRaw(JarPreset.carrier(),
+                        JarPreset.gadgets(kind.nodeId, action.nodeId), params);
+                if (!result.success) {
+                    failed++;
+                    continue;
+                }
+                built++;
+                if (!JarPreset.looksLikeJar(result.bytes)) notJar++;
+            }
+        }
+        int total = kinds.size() * actions.size();
+        System.out.println("  带外 Jar 实测：" + total + " 种组合，成功 " + built
+                + "，失败 " + failed + "，非 Zip " + notJar);
+        check("全部 Jar 类型 × 末端动作组合都能构建：" + failed + " 个失败", failed == 0);
+        check("构建成功的产物全部是合法 Zip（PK 魔数）", built == total && notJar == 0);
+    }
+
+    /**
+     * toString 触发链模板断言。
+     *
+     * <p>既校验模板自身的完备性，也校验 {@link ChainScope} 的清单与运行时目录一致：
+     * 清单是与「把触发节点从通用页收走」同一份判据，它漂移了就会一边多列一边少列。
+     */
+    private static void tostringPresets(List<String> runtimeNodes) {
+        List<ToStringPreset.Template> templates = ToStringPreset.templates();
+        System.out.println("  toString 链模板 " + templates.size() + " 条");
+        check("toString 链提供多条模板", templates.size() >= 5);
+        check("toString 链载体为 javanativepayload",
+                "javanativepayload".equals(ToStringPreset.carrier()));
+        check("默认模板存在", ToStringPreset.byId(ToStringPreset.defaultId()) != null);
+        check("未知模板被拒绝", ToStringPreset.byId("nosuchtemplate") == null);
+        check("未知模板给出可读提示", !ToStringPreset.issue("nosuchtemplate").isEmpty());
+        check("已知模板不报问题", ToStringPreset.issue(ToStringPreset.defaultId()).isEmpty());
+        check("自定义目标类会写进参数",
+                ToStringPreset.params(ToStringPreset.defaultId(), "", "com.example.User")
+                        .containsKey("BytecodeConvert.className"));
+        check("留空目标类不写该参数",
+                !ToStringPreset.params(ToStringPreset.defaultId(), "", "").containsKey("BytecodeConvert.className"));
+        check("命令有默认值", ToStringPreset.params(ToStringPreset.defaultId(), "", "")
+                .containsKey(ToStringPreset.commandParam()));
+
+        int valid = 0;
+        int built = 0;
+        for (ToStringPreset.Template template : templates) {
+            // 触发节点必须是链的第一个 gadget：早期版本把它漏在模板之外，
+            // 五条模板全部报「链不被引擎认可」，界面看起来正常、一点生成就失败
+            List<String> full = new ArrayList<String>();
+            full.add(ToStringPreset.carrier());
+            full.addAll(template.gadgets);
+            boolean ok = PayloadEngine.isChainValid(full);
+            if (ok) valid++;
+            PayloadResult result = PayloadEngine.build(ToStringPreset.carrier(), template.gadgets,
+                    ToStringPreset.params(template.id, "whoami", "com.example.User"));
+            if (result.success) built++;
+            System.out.println("    " + template.id + " valid=" + ok + " build=" + result.success
+                    + " len=" + result.byteLength());
+        }
+        check("全部 toString 模板都被引擎认可（" + valid + "/" + templates.size() + "）",
+                valid == templates.size());
+        check("全部 toString 模板都能构建出载荷（" + built + "/" + templates.size() + "）",
+                built == templates.size());
+
+        check("toString 清单登记了触发节点", ChainScope.toStringNodes().size() >= 20);
+        check("toString 触发节点是链的首个节点",
+                ChainScope.isToStringNode(ToStringPreset.byId(ToStringPreset.defaultId()).gadgets.get(0)));
+        check("toString 清单与运行时目录一致：" + ChainScope.issues(runtimeNodes),
+                ChainScope.issues(runtimeNodes).isEmpty());
+        check("运行时全部 toString 节点都被清单覆盖",
+                ChainScope.availableToStringNodes(runtimeNodes).size() == ChainScope.toStringNodes().size());
+        // 载体名字里带 tostring，但它不是触发节点：按名字后缀猜一定会误伤
+        check("toString 载体不被当成触发节点", !ChainScope.isToStringNode("hessian2tostringpayload"));
+        check("不以 ToString 结尾的触发节点也被识别", ChainScope.isToStringNode("gstringcomparetotostring"));
+        check("过滤后通用页候选不再含 toString 触发节点",
+                !ChainScope.genericCandidates(runtimeNodes).contains("caseinsensitivemap3tostring"));
+        check("过滤只剔除 toString 节点，其余候选项原样保留",
+                ChainScope.genericCandidates(runtimeNodes).size()
+                        == runtimeNodes.size() - ChainScope.availableToStringNodes(runtimeNodes).size());
+        check("过滤不改动传入清单", runtimeNodes.contains("caseinsensitivemap3tostring"));
     }
 
     /** 端到端断言：一条真实可用的多节点链必须能构建出载荷。 */

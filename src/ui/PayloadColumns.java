@@ -21,6 +21,13 @@ final class PayloadColumns {
     /**
      * 把当前链换算成列：第 0 列是载体目录，第 K 列（K≥1）是第 K 项的可选后继。
      *
+     * <p>候选一律经 {@link payload.ChainScope#genericCandidates} 过滤：toString 触发节点
+     * 已单独成页（payload.tostring），本页不再提供。只过滤候选、不过滤载体，
+     * 也不改动链的合法性判定——链路成立与否仍由引擎决定。
+     *
+     * <p>过滤放在这里而不是 {@link ChainEditor}：那个编辑器被恶意服务器页共用，
+     * 在编辑器里过滤会连带砍掉服务页发布 toString 载荷的能力，而本次并未要求改动服务页。
+     *
      * <p>末端没有后继时不再新增列——多出一列空列表会让人以为「还没加载出来」；
      * 带 END 标签的节点同样不展开，引擎已声明它之后没有可接节点。
      */
@@ -35,9 +42,10 @@ final class PayloadColumns {
             List<String> options = index == 1
                     ? PayloadEngine.firstNodes(chain.get(0))
                     : PayloadEngine.nextNodes(chain.get(index - 1));
-            columns.add(column("Gadget" + index, options, chain.get(index)));
+            columns.add(column("Gadget" + index,
+                    payload.ChainScope.genericCandidates(options), chain.get(index)));
         }
-        List<String> candidates = editor.candidates();
+        List<String> candidates = payload.ChainScope.genericCandidates(editor.candidates());
         if (!candidates.isEmpty() && !editor.atEnd()) {
             int level = Math.max(1, chain.size());
             columns.add(column("Gadget" + level, candidates, ""));

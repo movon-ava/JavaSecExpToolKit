@@ -11,7 +11,7 @@ import shiro.ShiroExploit;
 /**
  * 配置页的全部输入控件与分组清单。
  *
- * <p>从界面层抽出来独立成类，理由只有一个：配置项会持续增长（当前 38 项），
+ * <p>从界面层抽出来独立成类，理由只有一个：配置项会持续增长（当前 45 项），
  * 全部堆在界面层会让「新增一项配置」需要同时改控件声明、分组清单、读写映射三处，
  * 越往后越容易漏。集中在这里后，控件、分组、读写映射三者相邻，新增一项只改本类。
  *
@@ -74,6 +74,19 @@ public final class ConfigForm {
     public final JCheckBox payloadHoverSelect = new JCheckBox("默认开启悬停选链", false);
     public final JComboBox<String> presetCategory = new JComboBox<String>(new String[]{"全部分类"});
 
+    // toString 链 / HTTP 带外 Jar
+    /** 默认 toString 模板：候选取自 {@link payload.ToStringPreset}，模板增删不必改本处。 */
+    public final JComboBox<String> tostringTemplate =
+            new JComboBox<String>(templateNames());
+    /** 默认末端命令：留空则用模板自己的默认值。 */
+    public final JTextField tostringCommand = new JTextField("", 22);
+    /** 带外 Jar 的托管参数：绑定地址、端口与三个动作默认值。 */
+    public final JTextField oobjarBindHost = new JTextField("", 24);
+    public final JTextField oobjarPort = new JTextField("50001", 8);
+    public final JTextField oobjarDefaultUrl = new JTextField("", 32);
+    public final JTextField oobjarDefaultPath = new JTextField("/tmp/payload.bin", 24);
+    public final JTextField oobjarDefaultCommand = new JTextField("", 22);
+
     // 小工具
     /** 文件上传页的默认目标 URL；上传接口每次都不同，留空则进页时自行填写。 */
     public final JTextField uploadUrl = new JTextField("", 32);
@@ -94,6 +107,19 @@ public final class ConfigForm {
     public final JTextField serverTcp = new JTextField("11527", 8);
 
     public final JLabel status = new JLabel("配置保存在用户目录下");
+
+    /**
+     * toString 模板的显示名清单。
+     *
+     * <p>从 {@link payload.ToStringPreset#templates()} 现取，不写死：模板增删时
+     * 配置页的候选项会自动跟上，否则会出现「新模板在功能页有、在配置页选不到」。
+     */
+    private static String[] templateNames() {
+        java.util.List<payload.ToStringPreset.Template> templates = payload.ToStringPreset.templates();
+        String[] names = new String[templates.size()];
+        for (int index = 0; index < templates.size(); index++) names[index] = templates.get(index).name;
+        return names;
+    }
 
     /**
      * 分组清单：新增一项配置只需在这里加一行。
@@ -191,6 +217,25 @@ public final class ConfigForm {
                                         "目标接口读取文件的参数名，默认 file"),
                                 new ConfigPage.Row("上传超时（秒）", uploadTimeout,
                                         "上传大文件时比探测耗时更长，默认 30")}),
+                new ConfigPage.Group("toString 链配置",
+                        "「Payload → toString 链」的默认参数；链模板与命令改完下次进页生效。",
+                        new ConfigPage.Row[]{
+                                new ConfigPage.Row("默认链模板", tostringTemplate,
+                                        "打开 toString 链页时预选的模板"),
+                                new ConfigPage.Row("默认末端命令", tostringCommand,
+                                        "链路末端执行的命令；留空用模板默认值")}),
+                new ConfigPage.Group("带外 Jar 配置",
+                        "「Payload → HTTP 带外 Jar」的默认托管参数；端口用于本机 HTTP 服务。",
+                        new ConfigPage.Row[]{
+                                new ConfigPage.Row("默认绑定地址", oobjarBindHost,
+                                        "服务实际监听的网卡地址，留空用 127.0.0.1"),
+                                new ConfigPage.Row("默认监听端口", oobjarPort, "默认 50001"),
+                                new ConfigPage.Row("默认下载 / 回连 URL", oobjarDefaultUrl,
+                                        "留空则每次进页自行填写"),
+                                new ConfigPage.Row("默认落地路径", oobjarDefaultPath,
+                                        "Jar 落到目标上的路径，默认 /tmp/payload.bin"),
+                                new ConfigPage.Row("默认执行参数", oobjarDefaultCommand,
+                                        "「从 URL 下载并执行」动作的执行参数")}),
                 new ConfigPage.Group("预设链配置",
                         "「预设链」页的默认分类筛选；链与参数每次都不同，故不保存。",
                         new ConfigPage.Row[]{

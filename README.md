@@ -115,7 +115,8 @@ Maven 的 POM 位于 Java 工作区（`src/pom.xml`，与源码同级），产�
 侧边栏按功能分组：
 
 - `主页` — 工作区概览
-- `Payload` — 一级分类；点击可展开 / 收起二级项 `Payload 生成`、`预设链`
+- `Payload` — 一级分类；点击可展开 / 收起二级项 `Payload 生成`、`预设链`、`toString 链`、
+  `HTTP 带外 Jar`
 - `服务` — 一级分类；点击可展开 / 收起二级项 `恶意服务器`、`Shiro 漏洞利用`
 - `代理` — 一级分类；点击可展开 / 收起二级项 `代理抓包`（本地 HTTP 代理）
   与 `抓包转换`（单次抓包、格式转换）
@@ -153,13 +154,16 @@ Maven 的 POM 位于 Java 工作区（`src/pom.xml`，与源码同级），产�
 - `抓包转换配置` — 默认请求方法、默认 Content-Type、默认转换目标
 - `Shiro 配置` — 默认目标 URL、Cookie 名、密钥、AES-GCM、回显请求头、利用链、命令、默认请求体
 - `Payload 生成配置` — Payload 生成页的默认导出目录（留空则写入用户目录）
+- `toString 链配置` — 默认 toString 模板（候选取自内置模板本身）、默认末端命令
+- `带外 Jar 配置` — 默认绑定地址、默认端口（默认 50001）、默认下载 URL、
+  默认落地路径（默认 `/tmp/payload.bin`）、默认执行参数
 - `恶意服务器配置` — 默认绑定地址、默认公布地址，以及 JNDI 的 LDAP / RMI / HTTP 端口、
   HTTP 服务端口、JRMP 端口、FakeMySQL 端口、TCP 端口（留空或填 0 表示沿用默认值）
 - `预设链配置` — 预设链页的默认分类筛选（候选值来自内置预设文件本身）
 - `小工具配置` — 文件上传页的默认上传 URL、默认表单字段名（默认 `file`）、上传超时（默认 30 秒）
 
 保存后的值会预填到**全部功能页**（探测页 + 代理页 + 抓包页 + Shiro 页 + Payload 页 +
-预设链页 + 恶意服务器页），保存后即刻下发到已经打开的页面，不需要重开程序。代理启动后会
+预设链页 + 恶意服务器页 + toString 链页 + 带外 Jar 页），保存后即刻下发到已经打开的页面，不需要重开程序。代理启动后会
 把**实际使用的**地址与端口写回配置，所以配置页里的代理端口反映真实使用情况。
 Python 引擎读取同一份文件；**显式命令行参数始终优先于**存储值。
 
@@ -192,9 +196,9 @@ CEYE 确认作为附属阶段时仍依赖 DNS 阶段。未填 Token 就执行 `C
 | 路径 | 用途 |
 | --- | --- |
 | `src/` | 组合根 `Main.java`（301 行，只做装配与切页）、`pom.xml`、本地代理（`proxy/ProxyServer.java`）与 Shiro 模块（`shiro/`） |
-| `src/ui/` | 各功能页的**视图**与**行为**分开放：视图 `*Page` / `*Form`（`HomePage` / `ProbePage` / `CapturePage` / `ProxyPage` / `ShiroPage` / `PayloadPage` / `PresetPage` / `ServicePage` / `ConfigPage` / `ConfigForm` / `ToolsUploadPage`），行为 `*Controller`（`NavController` / `ProbeController` / `CaptureController` / `ProxyController` / `ShiroController` / `ConfigController` / `PayloadController` / `PresetController` / `ServiceController` / `ToolsUploadController` / `WorkbenchPages`），另有样式 `UiKit`、共用链编辑 `ChainEditor`、启动预热 `StartupWarmup` / 启动画面 `StartupSplash`、列式链选择器 `PayloadChainSelector`（载荷生成页的选链主体，不持有链状态）及其协作类 `ChainSelectorSizing`（几何换算）/ `ChainColumn` / `ChainColumnState` / `ChainColumnPanel`（每列的面板与筛选状态）/ `ChainResizeHandle`（竖向拖拽条）/ `ChainColumnFilter`（过滤判定）/ `ChainNodeRenderer`（条目渲染）/ `ChainTagMenu`（标签菜单）、载荷页拆分出的 `PayloadPanels`（面板构建）/ `PayloadColumns`（列换算）/ `PayloadOutputText`（输出文本）/ `PayloadExporter`（导出落盘）、自检门面 `UiHandle` + `WidgetRegistry` |
-| `src/payload/` | 通用载荷生成（`PayloadEngine` / `PayloadCatalog` / `PayloadResult`），与 Shiro 等具体功能解耦 |
-| `src/service/` | 恶意服务器（`ServiceManager` / `ServiceSpec` / `ServiceEndpoint` / `ServiceDefaults`）：唯一直接调用 java-chains 服务端适配器的包 |
+| `src/ui/` | 各功能页的**视图**与**行为**分开放：视图 `*Page` / `*Form`（`HomePage` / `ProbePage` / `CapturePage` / `ProxyPage` / `ShiroPage` / `PayloadPage` / `PresetPage` / `ServicePage` / `ConfigPage` / `ConfigForm` / `ToolsUploadPage` / `PayloadToStringPage` / `OobJarPage`），行为 `*Controller`（`NavController` / `ProbeController` / `CaptureController` / `ProxyController` / `ShiroController` / `ConfigController` / `PayloadController` / `PresetController` / `ServiceController` / `ToolsUploadController` / `PayloadToStringController` / `OobJarController` / `WorkbenchPages`），另有样式 `UiKit`、共用链编辑 `ChainEditor`、启动预热 `StartupWarmup` / 启动画面 `StartupSplash`、列式链选择器 `PayloadChainSelector`（载荷生成页的选链主体，不持有链状态）及其协作类 `ChainSelectorSizing`（几何换算）/ `ChainColumn` / `ChainColumnState` / `ChainColumnPanel`（每列的面板与筛选状态）/ `ChainResizeHandle`（竖向拖拽条）/ `ChainColumnFilter`（过滤判定）/ `ChainNodeRenderer`（条目渲染）/ `ChainTagMenu`（标签菜单）、载荷页拆分出的 `PayloadPanels`（面板构建）/ `PayloadColumns`（列换算）/ `PayloadOutputText`（输出文本）/ `PayloadExporter`（导出落盘）、自检门面 `UiHandle` + `WidgetRegistry` |
+| `src/payload/` | 通用载荷生成（`PayloadEngine` / `PayloadCatalog` / `PayloadResult`），与 Shiro 等具体功能解耦；功能模板 `JarPreset`（带外 Jar 的包装 × 末端动作）、`ToStringPreset`（toString 链模板）与节点归属规则 `ChainScope` |
+| `src/service/` | 恶意服务器（`ServiceManager` / `ServiceSpec` / `ServiceEndpoint` / `ServiceDefaults`）与带外 Jar 托管 `OobJarService`：唯一直接调用 java-chains 服务端适配器的包 |
 | `src/preset/` | 内置预设链读取（`PresetCatalogService` / `PresetItem`）：唯一引用上游预设模型的包，纯数据出参 |
 | `src/probe/` | 引擎调用与命令行拼装（`ProbeEngine` / `ProbeCommand` / `CaptureBridge`） |
 | `src/config/` `src/util/` | `config.properties` 读写；报文解析与平台差异 |
@@ -415,8 +419,9 @@ Shiro 页为**每个动作保留独立回显框**（`指纹检测` / `密钥爆�
 载体分组表与运行时目录的一致性由 `PayloadCheck` 断言，出现漏登记或多登记会直接失败。
 
 网页版 Generate 的**周边功能一律没做**：暴力矩阵、步进调试生成、分享链、常用链路统计、
-保存预设、Tag 筛选与并集/交集匹配、输出反编译与序列化解析。预设链仍是独立页面
-（`Payload → 预设链`），恶意服务器页也保留它自己的「载体分组 + 载体」下拉框（那是发布流程）。
+保存预设、Tag 筛选与并集/交集匹配、输出反编译与序列化解析。预设链、toString 链与 HTTP 带外 Jar 同为独立页面
+（`Payload → 预设链` / `toString 链` / `HTTP 带外 Jar`），恶意服务器页也保留它自己的
+「载体分组 + 载体」下拉框（那是发布流程）。
 
 实现上，通用部分在 `src/payload/`（与漏洞类型无关，Shiro 模块只是它的一个使用者），
 界面装配在 `src/ui/PayloadPage.java`、`src/ui/PayloadController.java` 与列式选择器
@@ -437,6 +442,75 @@ Shiro 页为**每个动作保留独立回显框**（`指纹检测` / `密钥爆�
 
 载体名与节点名在预设里是大驼峰写法、引擎按小写注册，页面会自动转换；
 参数按「步骤 id → 节点名」反查后再拼成引擎认识的形式，直接用步骤 id 会被判为未知参数。
+
+## toString 链
+
+`主页 → Payload → toString 链` 专门生成「某个类被 `toString()` 时触发」的利用链，
+支持自定义目标类，模板可复制。选链区把「触发」与「后续」拆开：先选**触发节点**
+（哪个类被 toString），再选中继节点，末端固定接到字节码执行。
+
+内置 5 条实测可用模板（`ToStringPreset`）：
+
+| 模板 | 触发节点 | 中继 | 依赖 |
+| --- | --- | --- | --- |
+| `CC3 toString + Jackson` | `CaseInsensitiveMap3.toString` | Jackson | commons-collections:3.x |
+| `CC4 toString + Jackson` | `CaseInsensitiveMap4.toString` | Jackson | commons-collections4 |
+| `CC3 toString + Fastjson` | `CaseInsensitiveMap3.toString` | Fastjson | fastjson + commons-collections:3.x |
+| `EventListenerList toString` | `EventListenerList.toString` | Jackson | jackson-databind |
+| `GString compareTo toString` | `GStringCompareTo.toString` | Jackson | groovy + jackson-databind |
+
+链序固定为 **载体 → 触发节点 → 中继 → 字节码执行**：
+
+```
+javanativepayload -> <trigger> -> <relay> -> templatesimpl -> bytecodeconvert -> exec
+```
+
+触发节点必须是链的**第一个** gadget：早期版本把触发节点漏在模板之外，5 条模板全部报
+「链不被引擎认可」。中继只有 `JacksonToString` 与 `FastjsonToString1` 能接上字节码链路；
+`XString*` / `XalanXString*` 在 `JreFilter` 下不构成合法链，带 `HighJDK` 后缀的模板需要
+额外开放 `java.io` / `java.util`，都不收录——因此**不是**把上游所有 toString 节点都搬了进来，
+只保留实测能出载荷的那些。
+
+`自定义目标类` 走 `BytecodeConvert.classNameMode=manual` 与 `BytecodeConvert.className`：
+链路末端仍有实际执行动作，类名只决定落地类的名字，不改变触发方式。留空则沿用引擎随机类名。
+模板可一键复制，用于在别处二次修改。
+
+节点归属只有**一份规则**（`src/payload/ChainScope.java`，23 个触发节点）：toString 页按它
+确定可用触发节点，通用生成页按它把这批触发节点从候选里剔除。过滤只放在候选层，
+不放进共用的 `ChainEditor`——否则会连带砍掉恶意服务器页发布 toString 载荷的能力。
+
+## HTTP 带外 Jar
+
+`主页 → Payload → HTTP 带外 Jar` 生成「落地后可被加载执行」的 Jar，并用本机托管出来
+给目标拉取。界面分两步：先选**打成什么 Jar**，再选**Jar 落地后做什么**。
+
+包装类型 5 种：
+
+| 类型 | 用途 |
+| --- | --- |
+| 普通 JAR | 标准包装，可被目标 ClassLoader 直接加载 |
+| Charset SPI JAR | 适用于 SpringBoot 写 Jar 落地场景 |
+| Groovy SPI JAR | 目标依赖 Groovy 时可被自动加载 |
+| SnakeYAML SPI JAR | 目标依赖 SnakeYAML 时可被自动加载 |
+| JDBC Driver JAR | 适用于驱动可上传 / 可加载的场景 |
+
+末端动作 5 种：`从 URL 下载并执行`、`执行命令`、`回连 HTTP 请求`、`从 URL 下载文件`、
+`DNSLog 探测`。**25 种组合全部实测构建成功，产物全部是合法 Zip（`PK\x03\x04` 魔数）**。
+
+链序固定为 **载体 → 包装 → 字节码转换 → 末端动作**：
+
+```
+otherpayload -> <kind> -> bytecodeconvert -> <action>
+```
+
+输入框跟随所选动作启用：界面按动作**声明的参数键**决定哪些输入可用（填一个永远不会被
+下发的字段比少一个输入框更糟）。空值一律不下发，因为下发空串会把上游默认值覆盖成空
+（实测表现为载荷里命令为空）。勾选「写入 `Main-Class`」后产物可直接执行。
+
+托管区给出 `启动托管` / `停止托管`：启动后在输出区给出**可直接复制的回连地址**，
+用浏览器或 `curl` 取回即可验证。托管**必须用同一个服务实例**——用另一个实例发布时上游
+虽然返回成功，地址却会回落到上游默认端口 50000，那个 URL 打不开；约束收在
+`src/service/OobJarService.java` 类内，调用方无法绕过。关闭主窗口会先停止托管再退出。
 
 ## 恶意服务器
 
@@ -534,11 +608,11 @@ E:\java\jdk17\bin\java.exe @opens -cp "target\tmp2;target\classes;lib\java-chain
 
 | 自检 | 覆盖范围 | 是否需要 `--add-opens` |
 | --- | --- | --- |
-| `UiNavigationCheck` | 侧边栏展开 / 收起、各页面控件与端到端流程，截图写入 `target/ui-check/` | 需要（预设链端到端生成） |
-| `UiSwitchEndToEndCheck` | 抓包头经真实 Python 引擎送入探测页 | 需要 |
+| `UiNavigationCheck` | 侧边栏展开 / 收起、各页面控件与端到端流程（含 toString 链页、带外 Jar 页与新增配置分组），截图写入 `target/ui-check/` | 需要（预设链端到端生成） |
+| `UiSwitchEndToEndCheck` | 抓包头经真实 Python 引擎送入探测页；带外 Jar 页真实托管 → HTTP 取回合法 Zip → 停止后端口可再次绑定 | 需要 |
 | `UiShiroCheck` | Shiro 页全流程 | 需要 |
 | `ShiroCheck` | Shiro 引擎（检测 / 爆破 / 链生成 / 回显） | 需要 |
-| `PayloadCheck` | 载荷生成引擎（目录、分组、导航、节点显示名、双形态、失败路径、安全） | 需要 |
+| `PayloadCheck` | 载荷生成引擎（目录、分组、导航、节点显示名、双形态、失败路径、安全），外加带外 Jar 25 种组合与 toString 触发节点归属（共 100 条断言） | 需要 |
 | `ProxyServerCheck` | 代理本身：明文抓包、404、`CONNECT` 隧道字节透传、回调与 `find` / `clear` | 不需要 |
 
 依赖边界自检与工具链自检：

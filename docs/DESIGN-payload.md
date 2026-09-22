@@ -490,3 +490,131 @@ static final double CONSOLE_WEIGHT =
 | `src/ui/ChainSelectorSizing.java` | 85 | 选链几何常量与纯算术 |
 | `src/ui/ChainColumnPanel.java` | 220 | 一列的面板（列头 + 过滤 + 列表） |
 | `src/ui/WrappedLabel.java` | 151 | 按宽度折行的标签（`getText()` 仍是原始文本） |
+
+## 十二、HTTP 带外 Jar（2026-09-22）
+
+`主页 → Payload → HTTP 带外 Jar` 把 java-chains 的 Jar 包装节点做成了两步式界面：
+先选「打成什么 Jar」，再选「Jar 落地后做什么」。模板集中在 `src/payload/JarPreset.java`，
+构建仍走 `PayloadEngine`，不引入第二套节点表。
+
+### 12.1 模板清单与实测矩阵
+
+包装类型 5 种（`JarPreset.kinds()`），末端动作 5 种（`JarPreset.actions()`），共 25 种组合。
+逐个组合实测（参数：`http://127.0.0.1:9/x.bin`、`whoami`、`/tmp/payload.bin`、
+`com.example.User`、写入 `Main-Class`），**25 种全部构建成功，产物全部是合法 Zip**：
+
+| 类型 \ 动作 | downloadexec | exec | httpreq | download | dnslog |
+| --- | --- | --- | --- | --- | --- |
+| `jar` | 1492 | 887 | 2329 | 1076 | 670 |
+| `charsetjarconvert2` | 1681 | 1094 | 2481 | 1302 | 891 |
+| `groovyjarconvert` | 1644 | 1042 | 2484 | 1236 | 825 |
+| `snakeyamljarconvert` | 1569 | 965 | 2401 | 1153 | 745 |
+| `jdbcdriverjarconvert` | 3023 | 2422 | 3862 | 2645 | 2252 |
+
+（表内为字节长度；`PK` 魔数校验由 `JarPreset.looksLikeJar` 与 `PayloadCheck` 共同断言。）
+
+链序固定为 **载体 → 包装 → 字节码转换 → 末端动作**：
+
+```
+otherpayload -> <kind> -> bytecodeconvert -> <action>
+```
+
+顺序不能颠倒：字节码转换要在包装之前产出类字节，末端动作是对已生成的类做的加工。
+
+### 12.2 参数键实测
+
+末端动作声明自己需要哪些输入，界面据此禁用无关输入框——让使用者填一个永远不会被下发的字段，
+比少一个输入框更糟：
+
+| 动作 | URL 键 | 命令 / 执行键 | 路径键 | 路径默认值 |
+| --- | --- | --- | --- | --- |
+| `downloadexec` | `DownloadExec.url` | `DownloadExec.params` | `DownloadExec.path` | `/tmp/payload.bin` |
+| `exec` | — | `Exec.cmd` | — | — |
+| `httpreq` | `HTTPReq.url` | — | — | — |
+| `download` | `Download.url` | — | `Download.path` | `/tmp/payload.bin` |
+| `dnslog` | `DNSLog.dnslog` | — | — | — |
+
+空值一律不下发（`JarPreset.params` 里的 `put()` 助手）：下发空串会把上游默认值覆盖成空，
+实测表现为载荷里命令为空。自定义目标类走 `BytecodeConvert.classNameMode=manual` +
+`BytecodeConvert.className`；`Jar.mainClass=true` 才写入 `Main-Class`，产物可直接执行。
+
+### 12.3 排除项
+
+- `CharsetJarConvert`（旧版 Charset 包装）：本机 JDK 17 下报
+  `ClassNotFoundException: sun.nio.cs.ext.MyExtendedCharsets`，只保留可用的 `CharsetJarConvert2`；
+- 高版本 JDK 的 toString 模板需要额外开放 `java.io` / `java.util`，在 `run.ps1` 的两个
+  `--add-opens` 下不可用，因此不带 `HighJDK` 后缀的模板才收录。
+
+### 12.4 带外托管必须用同一个 `ServiceManager` 实例
+
+**根因**（实测，不是猜测）：托管 Jar 时若另起一个 `ServiceManager` 实例发布，
+上游返回成功但回连地址会回落到**上游默认端口 50000**，与界面显示的端口不一致，
+拿那个 URL 去请求必然打不开——发布结果与地址来自两个不同的服务实例。
+
+**方案**：新增 `src/service/OobJarService.java`，把「HTTP 服务实例 + 发布 + 地址拼接 +
+停止」收在同一个类里，对外只暴露纯字符串接口。约束写在类内就不会再被调用方破坏。
+`WorkbenchPages.shutdown()` 先停带外 Jar 再停其余服务，避免端口泄漏。
+
+## 十三、toString 利用链（2026-09-22）
+
+`主页 → Payload → toString 链` 只做一件事：把「哪个类被 toString」与「toString 之后怎么走」
+拆成两组选择，支持自定义目标类。模板集中在 `src/payload/ToStringPreset.java`。
+
+### 13.1 模板清单与实测结果
+
+5 条模板全部被引擎认可且能构建出载荷（字节长度见括号）：
+
+| 模板标识 | 触发节点 | 中继 | 长度 | 依赖 |
+| --- | --- | --- | --- | --- |
+| `ts.cc3.jackson` | `caseinsensitivemap3tostring` | `jacksontostring` | 1555 | commons-collections:3.x |
+| `ts.cc4.jackson` | `caseinsensitivemap4tostring` | `jacksontostring` | 1552 | commons-collections4 |
+| `ts.cc3.fastjson` | `caseinsensitivemap3tostring` | `fastjsontostring1` | 1468 | fastjson + commons-collections:3.x |
+| `ts.eventlistener.jackson` | `eventlistenerlisttostring` | `jacksontostring` | 2031 | jackson-databind |
+| `ts.gstring.jackson` | `gstringcomparetotostring` | `jacksontostring` | 1819 | groovy + jackson-databind |
+
+链序固定为 **载体 → 触发节点 → 中继节点 → 字节码链路**：
+
+```
+javanativepayload -> <trigger> -> <relay> -> templatesimpl -> bytecodeconvert -> exec
+```
+
+### 13.2 根因：模板早期漏掉首个触发节点
+
+早期版本的 5 条模板从**中继节点**写起，漏掉了 toString 触发节点，因此全部报
+「链不被引擎认可」。补上触发节点作为链的第一个 gadget 后，5 条全部
+`valid=true build=true`（上表长度即补上之后的实测值）。
+
+因此 `ToStringPreset.Template` 显式持有 `trigger` 字段，`chain(trigger, relay)` 拼的是
+**完整序列含触发节点**；`gadgets` 也含触发节点，`tail()` 才返回触发之后的节点。
+
+### 13.3 触发/中继角色实测表
+
+| 角色 | 可用节点 | 说明 |
+| --- | --- | --- |
+| 载体 | `javanativepayload` | 实测其余载体接不上触发节点 |
+| 触发 | `caseinsensitivemap3tostring`、`caseinsensitivemap4tostring`、`eventlistenerlisttostring`、`gstringcomparetotostring` | 见 13.1；`GStringCompareToToString` 不以 `ToString` 结尾，只能显式登记 |
+| 中继 | `jacksontostring`、`fastjsontostring1` | 只有这两个能接上字节码链路 |
+| 字节码链路 | `templatesimpl -> bytecodeconvert -> exec` | 固定尾段 |
+
+### 13.4 排除项
+
+- 中继 `rometostringbean1` / `rometostringbean2` / `xbeantostring`：在本工具的运行方式下接不上字节码链路；
+- 触发 `xstringtostring1..3`、`xalanxstringtostring1..3`：在 `JreFilter` 下不构成合法链；
+- `badattributevalueexpexceptiontostring`：触发节点在运行时目录中存在，但接上中继后不被引擎认可；
+- 带 `HighJDK` 后缀的模板需要额外开放 `java.io` / `java.util`，在 `run.ps1` 的两个
+  `--add-opens` 下不可用。
+
+### 13.5 节点归属只有一份规则
+
+`src/payload/ChainScope.java` 登记了 23 个 toString 节点，是「一份规则两处用」：
+
+- toString 链页按它确定可用触发节点；
+- 通用 Payload 生成页按 `genericCandidates()` 把这些触发节点从候选里剔除，
+  避免同一批链在两个页面里重复出现。
+
+若两边各写一份清单，新增或改名触发节点时必然出现「一边有、一边没有」的漂移。
+`PayloadCheck` 断言这份清单与运行时目录**零偏差**，出现漏登记会直接失败。
+
+**过滤只放在候选层**（`PayloadColumns` 末列 + `PayloadController.candidates()`），
+不放 `ChainEditor`：编辑器被恶意服务器页共用，在编辑器过滤会越界砍掉服务页发布
+toString 载荷的能力。

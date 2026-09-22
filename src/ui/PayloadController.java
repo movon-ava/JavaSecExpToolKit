@@ -235,7 +235,7 @@ public final class PayloadController implements ActionListener, PayloadChainSele
             view.setStatus("已选载体 " + editor.head() + "，请在下方列中继续选择节点。");
         } else {
             view.setStatus("当前链：" + editor.nodeCount() + " 个节点，末端"
-                    + (editor.candidates().isEmpty() ? "没有可继续追加的节点。" : "还可继续选择。"));
+                    + (candidates().isEmpty() ? "没有可继续追加的节点。" : "还可继续选择。"));
         }
         if (widgets.autoBuild != null && widgets.autoBuild.isSelected() && editor.isBuildable()) {
             build(false);
@@ -293,6 +293,16 @@ public final class PayloadController implements ActionListener, PayloadChainSele
         view.setStatus("已退出编辑，当前正文已作为交付内容。");
     }
 
+    /**
+     * 本页可用的候选：与选链列同一份判据（见 {@link PayloadColumns}）。
+     *
+     * <p>状态栏与链信息行要跟着列里实际能点到的节点走：直接读编辑器会把已经挪到
+     * toString 页的触发节点也算进候选数，出现「写着还可选择、列里却没有」的自相矛盾。
+     */
+    private List<String> candidates() {
+        return payload.ChainScope.genericCandidates(editor.candidates());
+    }
+
     /** 链信息行：节点数、末端可否继续、每级候选数——网页版列头数字的等价物。 */
     private void updateChainMeta() {
         if (editor.isEmpty()) {
@@ -302,10 +312,10 @@ public final class PayloadController implements ActionListener, PayloadChainSele
         StringBuilder text = new StringBuilder();
         text.append("载体 ").append(PayloadColumns.label(editor.head()));
         if (editor.nodeCount() > 0) text.append("  ·  节点 ").append(editor.nodeCount()).append(" 个");
-        text.append("  ·  候选 ").append(editor.candidates().size()).append(" 个");
+        text.append("  ·  候选 ").append(candidates().size()).append(" 个");
         if (editor.atEnd()) {
             text.append("  ·  末端节点（END），无可接后续");
-        } else if (editor.nodeCount() > 0 && editor.candidates().isEmpty()) {
+        } else if (editor.nodeCount() > 0 && candidates().isEmpty()) {
             text.append("  ·  该节点之后没有可接的节点");
         }
         widgets.chainMeta.setText(text.toString());

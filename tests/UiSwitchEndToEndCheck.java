@@ -450,12 +450,143 @@ public final class UiSwitchEndToEndCheck {
             check("抓包头陷阱下仍能判定 Fastjson",
                     trapped.contains("是否 Fastjson: 是"));
             setText(main, "requestHeaders", "");
+
+            // HTTP 带外 Jar：真实托管后必须能从返回的地址上取回一个合法 Zip。
+            // 这条断言咬住的是「发布用的 ServiceManager 实例与启动服务的是同一个」——
+            // 换个实例发布时接口会返回成功，但地址回落到上游默认端口 50000，URL 打不开。
+            int oobPort = freePort();
+            // 必须先真正进一次页面：控制器是懒加载的，没进过页就没有按钮监听器，
+            // 点了也不会有反应；而进页会把配置里的默认端口写进控件，因此端口要在进页之后再填
+            selectNav(main, "payload.oobjar");
+            setText(main, "oobJarPort", String.valueOf(oobPort));
+            setCombo(main, "oobJarAction", "执行命令");
+            setText(main, "oobJarCommand", "whoami");
+            click(main, "oobJarHost");
+            String oobStatus = awaitStatus(main, "oobJarStatus", 90000);
+            String oobOutput = ((JTextArea) read(main, "oobJarOutput")).getText();
+            System.out.println("带外 Jar 托管状态: " + oobStatus);
+            check("带外 Jar 托管成功", oobStatus.startsWith("托管成功"));
+            check("带外 Jar 托管输出给出地址与监听端点",
+                    oobOutput.contains("地址：http://") && oobOutput.contains("监听：http://"));
+            check("带外 Jar 托管输出给出 Zip 魔数校验结论",
+                    oobOutput.contains("Zip 魔数校验通过"));
+            check("带外 Jar 地址端口就是配置里填的端口",
+                    oobStatus.contains(":" + oobPort + "/"));
+
+            String jarUrl = firstAddress(oobOutput);
+            byte[] jarBytes = httpGet(jarUrl);
+            System.out.println("带外 Jar 拉取: " + jarUrl + " -> " + jarBytes.length + " 字节");
+            check("按返回的地址能真正取到 Jar 字节", jarBytes.length > 0);
+            check("取回的字节以 PK 魔数开头（是合法 Zip）",
+                    jarBytes.length > 4 && jarBytes[0] == 0x50 && jarBytes[1] == 0x4B
+                            && jarBytes[2] == 0x03 && jarBytes[3] == 0x04);
+
+            // 停止后地址应立即失效：端口没释放出去会让下次启动撞上「端口被占用」
+            click(main, "oobJarStop");
+            String stopped = ((javax.swing.JLabel) read(main, "oobJarStatus")).getText();
+            System.out.println("带外 Jar 停止状态: " + stopped);
+            check("停止托管后状态栏报告已释放端口", stopped.contains("已停止托管"));
+            check("停止托管后端口可再次绑定", canBind(oobPort));
+
             System.out.println("端到端自检通过");
 
         } finally {
             server.stop(0);
             awaitCleanup();
         }
+    }
+
+    /**
+     * 取一个当前空闲的端口。
+     *
+     * <p>不能写死 50001：本机上可能已经跑着使用者的服务，碰撞会让自检在
+     * 「端口被占用」上失败，看起来像功能坏了。绑 0 让系统分配后再立刻释放，
+     * 保留「刚释放、大概率还空着」的窗口。
+     */
+    private static int freePort() throws Exception {
+        java.net.ServerSocket probe = new java.net.ServerSocket(0);
+        int port = probe.getLocalPort();
+        probe.close();
+        return port;
+    }
+
+    /** 端口能否再次绑定：用于断言托管停止后确实释放了监听。 */
+    private static boolean canBind(int port) {
+        java.net.ServerSocket probe = null;
+        try {
+            probe = new java.net.ServerSocket(port);
+            return true;
+        } catch (IOException error) {
+            return false;
+        } finally {
+            if (probe != null) {
+                try {
+                    probe.close();
+                } catch (IOException ignored) {
+                    // 关闭阶段的异常不该影响断言结论
+                }
+            }
+        }
+    }
+
+    /** 从托管输出里取第一行地址：格式固定为「地址：<url>」。 */
+    private static String firstAddress(String output) {
+        for (String line : output.split("\\R")) {
+            if (line.startsWith("地址：")) return line.substring("地址：".length()).trim();
+        }
+        return "";
+    }
+
+    /** 取一次 HTTP 响应的全部字节：不跟随跳转，失败时返回空数组由断言暴露。 */
+    private static byte[] httpGet(String url) throws Exception {
+        java.net.HttpURLConnection connection =
+                (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
+        connection.setRequestMethod("GET");
+        connection.setInstanceFollowRedirects(false);
+        connection.setConnectTimeout(5000);
+        connection.setReadTimeout(15000);
+        java.io.InputStream stream = null;
+        try {
+            int code = connection.getResponseCode();
+            stream = code >= 400 ? connection.getErrorStream() : connection.getInputStream();
+            if (stream == null) return new byte[0];
+            return readAll(stream);
+        } finally {
+            if (stream != null) {
+                try {
+                    stream.close();
+                } catch (IOException ignored) {
+                    // 关闭阶段的异常不该影响取回的字节
+                }
+            }
+            connection.disconnect();
+        }
+    }
+
+    /**
+     * 轮询状态标签，直到它给出一条结论。
+     *
+     * <p>判据是「非空且不含正在进行时的省略号」：点完按钮先读到的是「正在生成…」，
+     * 而进页前状态还是空串，只判「不等于进行中的那条」会在空串上立刻返回。
+     */
+    private static String awaitStatus(Object main, String field, long timeoutMs) throws Exception {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        String text = "";
+        while (System.currentTimeMillis() < deadline) {
+            text = String.valueOf(((javax.swing.JLabel) read(main, field)).getText());
+            if (!text.trim().isEmpty() && !text.endsWith("…")) return text;
+            Thread.sleep(150);
+        }
+        return text;
+    }
+
+    /** 在 EDT 上点击某个按钮：必须走真实点击路径，否则监听器不会触发。 */
+    private static void click(Object main, String name) throws Exception {
+        final javax.swing.AbstractButton button =
+                (javax.swing.AbstractButton) read(main, name);
+        javax.swing.SwingUtilities.invokeAndWait(new Runnable() {
+            public void run() { button.doClick(); }
+        });
     }
 
     /** Python 子进程句柄回收需要时间，脚本退出前留出缓冲时间。 */
@@ -848,6 +979,17 @@ public final class UiSwitchEndToEndCheck {
         try (OutputStream out = exchange.getResponseBody()) {
             out.write(payload);
         }
+    }
+
+    /** 读一个任意输入流到字节数组：托管取 Jar 与桩服务读取请求体共用同一套写法。 */
+    private static byte[] readAll(java.io.InputStream stream) throws IOException {
+        java.io.ByteArrayOutputStream buffer = new java.io.ByteArrayOutputStream();
+        byte[] chunk = new byte[4096];
+        int read;
+        while ((read = stream.read(chunk)) > 0) {
+            buffer.write(chunk, 0, read);
+        }
+        return buffer.toByteArray();
     }
 
     private static byte[] readAll(HttpExchange exchange) throws IOException {

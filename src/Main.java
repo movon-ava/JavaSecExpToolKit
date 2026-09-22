@@ -164,6 +164,8 @@ public final class Main implements UiHandle.Source {
         else if ("shiro.exploit".equals(key)) showShiro();
         else if ("payload.build".equals(key)) setContent(workbench.payload());
         else if ("payload.preset".equals(key)) setContent(workbench.preset());
+        else if ("payload.tostring".equals(key)) setContent(workbench.tostring());
+        else if ("payload.oobjar".equals(key)) setContent(workbench.oobJar());
         else if ("service.servers".equals(key)) setContent(workbench.servers());
         else if ("tools.upload".equals(key)) showToolsUpload();
         else showHome();
@@ -291,6 +293,8 @@ public final class Main implements UiHandle.Source {
         registry.payloadSelector = workbench.payloadSelector;
         registry.preset = workbench.presetWidgets;
         registry.service = workbench.serviceWidgets;
+        registry.tostring = workbench.tostringWidgets;
+        registry.oobJar = workbench.oobJarWidgets;
     }
 
     /** 登记需要随窗口缩放的字体；实现 {@link UiKit.FontSink}，供 UiKit 回调。 */

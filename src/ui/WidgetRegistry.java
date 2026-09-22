@@ -38,6 +38,8 @@ public final class WidgetRegistry {
     public PayloadChainSelector payloadSelector;
     public PresetPage.Widgets preset;
     public ServicePage.Widgets service;
+    public PayloadToStringPage.Widgets tostring;
+    public OobJarPage.Widgets oobJar;
 
     /** 构建登记表：名字与控件一一对应，顺序稳定，便于对照断言排查。 */
     public Map<String, Object> build() {
@@ -72,6 +74,37 @@ public final class WidgetRegistry {
         }
         entries.put("presetWidgets", preset);
         entries.put("serviceWidgets", service);
+        entries.put("tostringWidgets", tostring);
+        entries.put("tostringTemplateList", tostring.templateList);
+        entries.put("tostringTitle", tostring.title);
+        entries.put("tostringMeta", tostring.meta);
+        entries.put("tostringSummary", tostring.summary);
+        entries.put("tostringSteps", tostring.steps);
+        entries.put("tostringTargetClass", tostring.targetClass);
+        entries.put("tostringCommand", tostring.command);
+        entries.put("tostringBuild", tostring.build);
+        entries.put("tostringCopyTemplate", tostring.copyTemplate);
+        entries.put("tostringCopy", tostring.copy);
+        entries.put("tostringToCapture", tostring.toCapture);
+        entries.put("tostringStatus", tostring.status);
+        entries.put("tostringOutput", tostring.output);
+        entries.put("oobJarWidgets", oobJar);
+        entries.put("oobJarKind", oobJar.kindCombo);
+        entries.put("oobJarAction", oobJar.actionCombo);
+        entries.put("oobJarActionHint", oobJar.actionHint);
+        entries.put("oobJarUrl", oobJar.url);
+        entries.put("oobJarCommand", oobJar.command);
+        entries.put("oobJarPath", oobJar.path);
+        entries.put("oobJarTargetClass", oobJar.targetClass);
+        entries.put("oobJarClassNamePrefix", oobJar.classNamePrefix);
+        entries.put("oobJarBindHost", oobJar.bindHost);
+        entries.put("oobJarPort", oobJar.port);
+        entries.put("oobJarExecutable", oobJar.executable);
+        entries.put("oobJarHost", oobJar.host);
+        entries.put("oobJarStop", oobJar.stop);
+        entries.put("oobJarCopyUrl", oobJar.copyUrl);
+        entries.put("oobJarStatus", oobJar.status);
+        entries.put("oobJarOutput", oobJar.output);
 
         entries.put("target", probe.target);
         entries.put("timeout", probe.timeout);
@@ -188,6 +221,13 @@ public final class WidgetRegistry {
         entries.put("configPayloadAutoExpand", configForm.payloadAutoExpand);
         entries.put("configPayloadHoverSelect", configForm.payloadHoverSelect);
         entries.put("configPresetCategory", configForm.presetCategory);
+        entries.put("configTostringTemplate", configForm.tostringTemplate);
+        entries.put("configTostringCommand", configForm.tostringCommand);
+        entries.put("configOobJarBindHost", configForm.oobjarBindHost);
+        entries.put("configOobJarPort", configForm.oobjarPort);
+        entries.put("configOobJarDefaultUrl", configForm.oobjarDefaultUrl);
+        entries.put("configOobJarDefaultPath", configForm.oobjarDefaultPath);
+        entries.put("configOobJarDefaultCommand", configForm.oobjarDefaultCommand);
         entries.put("configUploadUrl", configForm.uploadUrl);
         entries.put("configUploadField", configForm.uploadField);
         entries.put("configUploadTimeout", configForm.uploadTimeout);

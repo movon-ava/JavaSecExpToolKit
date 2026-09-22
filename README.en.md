@@ -132,7 +132,8 @@ Python 3.10+ at runtime; set `FJ_PYTHON` when `python` is not on `PATH`.
 The sidebar is grouped by feature:
 
 - `主页` — workspace overview
-- `Payload` — first-level category; click it to expand / collapse `Payload 生成` and `预设链`
+- `Payload` — first-level category; click it to expand / collapse `Payload 生成`, `预设链`,
+  `toString 链` and `HTTP 带外 Jar`
 - `服务` — first-level category; click it to expand / collapse `恶意服务器` and `Shiro 漏洞利用`
 - `代理` — first-level category; click it to expand / collapse `代理抓包` (local HTTP proxy)
   and `抓包转换` (capture one request, inspect the raw response, convert formats)
@@ -173,6 +174,10 @@ The `配置` page stores fixed parameters in
 - `抓包转换配置` — default request method, default Content-Type, default convert target
 - `Shiro 配置` — default target URL, cookie name, key, AES-GCM, echo header, gadget chain, command, default request body
 - `Payload 生成配置` — default export directory for generated payloads (blank writes to the user home)
+- `toString 链配置` — default toString template (the choices come from the built-in templates
+  themselves) and the default payload command
+- `带外 Jar 配置` — default bind address, default port (50001), default download URL,
+  default on-disk path (`/tmp/payload.bin`) and default exec parameters
 - `恶意服务器配置` — default bind address, default advertised address, and the JNDI LDAP / RMI / HTTP
   ports plus the HTTP service, JRMP, FakeMySQL and TCP ports (blank or 0 keeps the default)
 - `预设链配置` — default category filter for the preset page (choices come from the built-in preset file itself)
@@ -180,7 +185,8 @@ The `配置` page stores fixed parameters in
   upload timeout (default 30 seconds)
 
 Saved values pre-fill **every feature page** (probe, proxy, capture, Shiro, Payload, presets,
-malicious servers) and are pushed to already-open pages right after saving, with no restart needed. After the proxy
+malicious servers, the toString page and the out-of-band Jar page) and are pushed to already-open
+pages right after saving, with no restart needed. After the proxy
 starts, the address and port actually used are written back into the settings, so the port shown
 on the settings page reflects real usage. The Python engine reads the same file, and explicit
 CLI arguments always win over stored values.
@@ -220,9 +226,9 @@ readable hint instead of an engine error — set CEYE Token on the settings page
 | Path | Purpose |
 | --- | --- |
 | `src/` | Composition root `Main.java` (301 lines: wiring and page switching only), `pom.xml`, the local proxy (`proxy/ProxyServer.java`), and the Shiro module (`shiro/`) |
-| `src/ui/` | Per-feature **views** and **behaviour** kept apart: views `*Page` / `*Form` (`HomePage` / `ProbePage` / `CapturePage` / `ProxyPage` / `ShiroPage` / `PayloadPage` / `PresetPage` / `ServicePage` / `ConfigPage` / `ConfigForm` / `ToolsUploadPage`), behaviour `*Controller` (`NavController` / `ProbeController` / `CaptureController` / `ProxyController` / `ShiroController` / `ConfigController` / `PayloadController` / `PresetController` / `ServiceController` / `ToolsUploadController` / `WorkbenchPages`), plus styling `UiKit`, the shared `ChainEditor`, startup warm-up `StartupWarmup` / splash `StartupSplash`, the column selector `PayloadChainSelector` (the payload page's chain picker, holding no chain state) with its collaborators `ChainSelectorSizing` (geometry) / `ChainColumn` / `ChainColumnState` / `ChainColumnPanel` (per-column panel and filter state) / `ChainResizeHandle` (vertical drag bar) / `ChainColumnFilter` (filter predicate) / `ChainNodeRenderer` (row rendering) / `ChainTagMenu` (tag menu), the payload page split-outs `PayloadPanels` (panel building) / `PayloadColumns` (column mapping) / `PayloadOutputText` (output text) / `PayloadExporter` (export to disk), and the self-check facade `UiHandle` + `WidgetRegistry` |
-| `src/payload/` | Generic payload generation (`PayloadEngine` / `PayloadCatalog` / `PayloadResult`), decoupled from concrete features such as Shiro |
-| `src/service/` | Malicious servers (`ServiceManager` / `ServiceSpec` / `ServiceEndpoint` / `ServiceDefaults`): the only package that talks to the java-chains server-side adapters |
+| `src/ui/` | Per-feature **views** and **behaviour** kept apart: views `*Page` / `*Form` (`HomePage` / `ProbePage` / `CapturePage` / `ProxyPage` / `ShiroPage` / `PayloadPage` / `PresetPage` / `ServicePage` / `ConfigPage` / `ConfigForm` / `ToolsUploadPage` / `PayloadToStringPage` / `OobJarPage`), behaviour `*Controller` (`NavController` / `ProbeController` / `CaptureController` / `ProxyController` / `ShiroController` / `ConfigController` / `PayloadController` / `PresetController` / `ServiceController` / `ToolsUploadController` / `PayloadToStringController` / `OobJarController` / `WorkbenchPages`), plus styling `UiKit`, the shared `ChainEditor`, startup warm-up `StartupWarmup` / splash `StartupSplash`, the column selector `PayloadChainSelector` (the payload page's chain picker, holding no chain state) with its collaborators `ChainSelectorSizing` (geometry) / `ChainColumn` / `ChainColumnState` / `ChainColumnPanel` (per-column panel and filter state) / `ChainResizeHandle` (vertical drag bar) / `ChainColumnFilter` (filter predicate) / `ChainNodeRenderer` (row rendering) / `ChainTagMenu` (tag menu), the payload page split-outs `PayloadPanels` (panel building) / `PayloadColumns` (column mapping) / `PayloadOutputText` (output text) / `PayloadExporter` (export to disk), and the self-check facade `UiHandle` + `WidgetRegistry` |
+| `src/payload/` | Generic payload generation (`PayloadEngine` / `PayloadCatalog` / `PayloadResult`), decoupled from concrete features such as Shiro; feature templates `JarPreset` (out-of-band Jar kinds × tail actions), `ToStringPreset` (toString chain templates) and the node-ownership rule `ChainScope` |
+| `src/service/` | Malicious servers (`ServiceManager` / `ServiceSpec` / `ServiceEndpoint` / `ServiceDefaults`) plus out-of-band Jar hosting (`OobJarService`): the only package that talks to the java-chains server-side adapters |
 | `src/preset/` | Built-in preset chains (`PresetCatalogService` / `PresetItem`): the only package that touches the upstream preset model, exposing plain data |
 | `src/probe/` | Engine invocation and command-line assembly (`ProbeEngine` / `ProbeCommand` / `CaptureBridge`) |
 | `src/config/` `src/util/` | `config.properties` read/write; message parsing and platform differences |
@@ -485,9 +491,9 @@ registration fails outright.
 
 The web UI's **surrounding features are deliberately not implemented**: brute-force matrix, stepped
 debug generate, chain sharing, usage statistics, saving presets, tag filtering with
-intersection/union, and output decompilation or serialization parsing. Preset chains stay a separate
-page (`Payload → 预设链`), and the malicious-server page keeps its own carrier-group dropdown
-(that one is a publishing flow).
+intersection/union, and output decompilation or serialization parsing. Preset chains, toString chains and the
+out-of-band Jar builder are separate pages (`Payload → 预设链` / `toString 链` / `HTTP 带外 Jar`),
+and the malicious-server page keeps its own carrier-group dropdown (that one is a publishing flow).
 
 The generic part lives in `src/payload/` (independent of any vulnerability type — the Shiro
 module is just one consumer), the UI wiring is in `src/ui/PayloadPage.java`,
@@ -513,6 +519,86 @@ Preset carrier and node names are written in upper camel case while the engine r
 lower case, so the page converts them automatically. Parameters are resolved through
 "step id → node name" before being assembled into the form the engine expects; using the step id
 directly would be rejected as an unknown parameter.
+
+## toString chains
+
+`主页 → Payload → toString 链` generates exploit chains that fire when some class is
+`toString()`-ed, with a customisable target class and copyable templates. The picker splits
+**trigger** from **tail**: choose the trigger node (which class gets toString-ed), then the relay
+node; the tail is fixed to bytecode execution.
+
+Five templates are shipped, all verified to build (`ToStringPreset`):
+
+| Template | Trigger node | Relay | Dependency |
+| --- | --- | --- | --- |
+| `CC3 toString + Jackson` | `CaseInsensitiveMap3.toString` | Jackson | commons-collections:3.x |
+| `CC4 toString + Jackson` | `CaseInsensitiveMap4.toString` | Jackson | commons-collections4 |
+| `CC3 toString + Fastjson` | `CaseInsensitiveMap3.toString` | Fastjson | fastjson + commons-collections:3.x |
+| `EventListenerList toString` | `EventListenerList.toString` | Jackson | jackson-databind |
+| `GString compareTo toString` | `GStringCompareTo.toString` | Jackson | groovy + jackson-databind |
+
+The chain order is always **carrier → trigger → relay → bytecode execution**:
+
+```
+javanativepayload -> <trigger> -> <relay> -> templatesimpl -> bytecodeconvert -> exec
+```
+
+The trigger node has to be the **first** gadget: an earlier version left it outside the template and
+all five templates failed with "chain not accepted by the engine". Only `JacksonToString` and
+`FastjsonToString1` can relay into a bytecode chain; `XString*` / `XalanXString*` do not form a valid
+chain under `JreFilter`, and templates with the `HighJDK` suffix need `java.io` / `java.util` opened
+up, so none of them are included. This is deliberately **not** every upstream toString node — only
+the ones measured to produce a payload.
+
+`自定义目标类` goes through `BytecodeConvert.classNameMode=manual` and
+`BytecodeConvert.className`: the tail still performs a real action, and the class name only decides
+the name of the class that lands, not how the chain fires. Blank keeps the engine's random name.
+Templates can be copied in one click for further editing elsewhere.
+
+Node ownership lives in exactly **one rule** (`src/payload/ChainScope.java`, 23 trigger nodes): the
+toString page reads it to decide which triggers are available, and the generic generation page reads
+it to remove those triggers from its candidates. The filter sits at the candidate layer and is not
+put into the shared `ChainEditor` — doing that would also strip the malicious-server page's ability
+to publish toString payloads.
+
+## Out-of-band HTTP Jar
+
+`主页 → Payload → HTTP 带外 Jar` builds a Jar that can be loaded and run once it
+lands, and hosts it from this machine for the target to pull. The page asks two things: what kind of
+Jar to build, and what that Jar should do once it runs.
+
+Five wrapper kinds:
+
+| Kind | Use case |
+| --- | --- |
+| Plain JAR | standard wrapper, loadable by the target ClassLoader directly |
+| Charset SPI JAR | for SpringBoot write-a-Jar-to-disk scenarios |
+| Groovy SPI JAR | auto-loaded when the target ships Groovy |
+| SnakeYAML SPI JAR | auto-loaded when the target ships SnakeYAML |
+| JDBC Driver JAR | for cases where a driver can be uploaded or loaded |
+
+Five tail actions: `download from URL and exec`, `exec a command`, `callback HTTP request`,
+`download a file from a URL`, and `DNSLog probe`. **All 25 kind × action combinations build, and
+every artifact is a valid Zip (`PK\x03\x04` magic).**
+
+The chain order is always **carrier → wrapper → bytecode convert → tail action**:
+
+```
+otherpayload -> <kind> -> bytecodeconvert -> <action>
+```
+
+Inputs follow the selected action: the page enables only the fields the action **declares**
+(letting someone fill in a field that is never sent is worse than not showing it). Blank values are
+never sent, because sending an empty string overwrites the upstream default — which in practice
+produced payloads with an empty command. Ticking "write `Main-Class`" makes the artifact directly
+executable.
+
+The hosting area offers `start` / `stop`: once started it prints a **copy-ready callback URL** in the
+output pane, so a browser or `curl` can pull the Jar back to verify it. Hosting **must use the same
+service instance** — publishing through another instance reports success but falls back to the
+upstream default port 50000, and that URL does not open. The constraint lives inside
+`src/service/OobJarService.java`, so callers cannot break it. Closing the main window stops hosting
+before exiting.
 
 ## Malicious servers
 
@@ -616,11 +702,11 @@ E:\java\jdk17\bin\java.exe @opens -cp "target\tmp2;target\classes;lib\java-chain
 
 | Self-check | Coverage | Needs `--add-opens` |
 | --- | --- | --- |
-| `UiNavigationCheck` | Sidebar expand / collapse, per-page widgets and end-to-end flows; screenshots go to `target/ui-check/` | Yes (preset end-to-end build) |
-| `UiSwitchEndToEndCheck` | Captured headers fed to the probe page through the real Python engine | Yes |
+| `UiNavigationCheck` | Sidebar expand / collapse, per-page widgets and end-to-end flows (including the toString page, the out-of-band Jar page and the new settings groups); screenshots go to `target/ui-check/` | Yes (preset end-to-end build) |
+| `UiSwitchEndToEndCheck` | Captured headers fed to the probe page through the real Python engine; the out-of-band Jar page really hosts a Jar, fetches it back over HTTP as a valid Zip, and the port can be bound again after stopping | Yes |
 | `UiShiroCheck` | Full Shiro page flow | Yes |
 | `ShiroCheck` | Shiro engine (detect / crack / chain build / echo) | Yes |
-| `PayloadCheck` | Payload engine (catalog, groups, navigation, node display names, dual form, failure paths, safety) | Yes |
+| `PayloadCheck` | Payload engine (catalog, groups, navigation, node display names, dual form, failure paths, safety) plus the 25 out-of-band Jar combinations and toString trigger ownership (100 assertions in total) | Yes |
 | `ProxyServerCheck` | The proxy itself: plain-HTTP capture, 404 handling, `CONNECT` tunneling with byte pass-through, callbacks, `find` / `clear` | No |
 
 Dependency-boundary and toolchain checks:
