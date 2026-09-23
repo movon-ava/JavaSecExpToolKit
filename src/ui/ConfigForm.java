@@ -118,6 +118,19 @@ public final class ConfigForm {
     public final JTextField serverMysql = new JTextField("3308", 8);
     public final JTextField serverTcp = new JTextField("11527", 8);
 
+    // 日志
+    /** 是否启用日志：默认开启，排错能力不该需要先手动打开。 */
+    public final JCheckBox logEnabled = new JCheckBox("启用日志记录", true);
+    /** 日志级别：配置里存英文标识，界面显示中文名。 */
+    public final JComboBox<String> logLevel = new JComboBox<String>(
+            new String[]{"仅错误", "警告与错误", "常规", "调试"});
+    /** 日志目录：留空写到用户目录下的默认位置。 */
+    public final JTextField logDir = new JTextField("", 32);
+    /** 保留天数（含今天）：超出的日志在启动与跨天时清理。 */
+    public final JTextField logKeepDays = new JTextField("7", 5);
+    /** 是否同时打印到控制台：从图形界面启动时通常没有控制台，默认关闭。 */
+    public final JCheckBox logConsole = new JCheckBox("日志同时打印到控制台", false);
+
     public final JLabel status = new JLabel("配置保存在用户目录下");
 
     /**
@@ -264,6 +277,20 @@ public final class ConfigForm {
                 new ConfigPage.Group("预设链配置",
                         "「预设链」页的默认分类筛选；链与参数每次都不同，故不保存。",
                         new ConfigPage.Row[]{
-                                new ConfigPage.Row("默认分类", presetCategory, "打开预设链页时预选的分类")})};
+                                new ConfigPage.Row("默认分类", presetCategory, "打开预设链页时预选的分类")}),
+                new ConfigPage.Group("日志配置",
+                        "按日期分文件记录运行期异常与关键动作，便于事后排错；"
+                                + "超期文件会在启动与跨天时清理。",
+                        new ConfigPage.Row[]{
+                                new ConfigPage.Row("启用日志", logEnabled,
+                                        "关闭后不再产生新日志文件，已有日志保留"),
+                                new ConfigPage.Row("日志级别", logLevel,
+                                        "「关闭」等价于不记录；线索不足时改「调试」"),
+                                new ConfigPage.Row("日志目录", logDir,
+                                        "留空写到用户目录；可用环境变量 JSETK_LOG_DIR 覆盖"),
+                                new ConfigPage.Row("保留天数", logKeepDays,
+                                        "含今天；填 1 表示只留当天"),
+                                new ConfigPage.Row("控制台回显", logConsole,
+                                        "从命令行启动时可直接看到")})};
     }
 }

@@ -194,6 +194,20 @@ public final class UiNavigationCheck {
         check("配置页含 Shiro 请求体输入框", fieldQuiet(main, "configShiroBody") instanceof JTextField);
         check("配置页含恶意服务器配置分组", configTexts.contains("恶意服务器配置"));
         check("配置页含预设链配置分组", configTexts.contains("预设链配置"));
+        // 日志是排错入口：开关、级别、目录、保留天数、控制台回显五项都要能在配置页改到，
+        // 否则「日志写去了哪、留了多久」只能靠翻代码
+        check("配置页含日志配置分组", configTexts.contains("日志配置"));
+        check("配置页含日志启用勾选框", fieldQuiet(main, "configLogEnabled") instanceof AbstractButton);
+        check("配置页含日志级别下拉框", fieldQuiet(main, "configLogLevel") instanceof JComboBox);
+        check("日志级别默认常规",
+                "常规".equals(String.valueOf(((JComboBox<?>) fieldQuiet(main, "configLogLevel"))
+                        .getSelectedItem())));
+        check("日志级别提供四档", ((JComboBox<?>) fieldQuiet(main, "configLogLevel")).getItemCount() == 4);
+        check("配置页含日志目录输入框", fieldQuiet(main, "configLogDir") instanceof JTextField);
+        check("配置页含保留天数输入框", fieldQuiet(main, "configLogKeepDays") instanceof JTextField);
+        check("保留天数默认为 7",
+                "7".equals(((JTextField) fieldQuiet(main, "configLogKeepDays")).getText()));
+        check("配置页含控制台回显勾选框", fieldQuiet(main, "configLogConsole") instanceof AbstractButton);
         check("配置页含恶意服务器绑定地址输入框",
                 fieldQuiet(main, "configServerBindHost") instanceof JTextField);
         check("配置页含恶意服务器公布地址输入框",

@@ -8,7 +8,7 @@ context: |
   能力：Fastjson 探测、代理抓包与格式转换、Shiro 漏洞利用、Payload 生成、
   恶意服务器与预设链、漏洞分析（本地依赖 + 调用链 + 反编译）、小工具。
   多 Agent 协同框架见 docs/DESIGN-agents.md，Java 模块化见 docs/DESIGN-modularization.md，
-  payload 生成见 docs/DESIGN-payload.md。
+  payload 生成见 docs/DESIGN-payload.md，日志记录见 docs/DESIGN-logging.md。
 
   ## 技术栈（锁死，不得变更）
   - Java 源码编译目标 release 8：禁用 List.of / var / record / switch 表达式等 9+ 语法。
@@ -20,7 +20,9 @@ context: |
   ## 架构约定
   - Java 代码按功能分包：src/config、probe、proxy、shiro、payload、service、preset、
     analyzer、analyze、ui、util，新功能按此新建包。
-  - 依赖方向单向且无环；analyzer 是叶子层（不依赖任何项目包），analyze 只依赖 analyzer。
+  - 依赖方向单向且无环；共享内核（config / util）可被任意包依赖，内核自身零出边。
+    功能层叶子（proxy / analyzer）只允许依赖共享内核，不得依赖任何功能包；
+    preset 是纯读取层（零出边，读取失败由 loadError 交给界面）；analyze 只依赖 analyzer。
   - 禁止把逻辑堆进单个文件；除根目录规定文件外，新文件必须落在对应功能目录内。
   - 界面视图与状态/行为分离：视图沿用 src/ui/*Page.java 的静态构建器 + Widgets 三段式。
   - 可持久化配置必须同时落到 src/config/AppConfig.java 的键与 src/ui/ConfigPage.java 的分组。
@@ -37,8 +39,8 @@ context: |
   - 禁止修改本次任务之外的功能与配置项；需要牵连其他文件时先说明方案再动手。
 
   ## 验证入口
-  - Python：python -m unittest discover -s tests（当前 130 项）
-  - Java：AnalyzeCheck、PayloadCheck、ShiroCheck、ProxyServerCheck、UiNavigationCheck、UiShiroCheck、UiSwitchEndToEndCheck
+  - Python：python -m unittest discover -s tests（当前 156 项）
+  - Java：AnalyzeCheck、LogCheck、PayloadCheck、ShiroCheck、ProxyServerCheck、UiNavigationCheck、UiShiroCheck、UiSwitchEndToEndCheck
   - 运行 Java 自检需 JDK17 并加 --add-opens java.xml/...xalan...=ALL-UNNAMED
   - 构建后必须校验 JAR 构建时间晚于 src/、python/、tests/ 下全部源文件
   - 角色化 agent 的启动与写入域校验由 tools/agent.ps1 提供，内置矩阵必须与 docs/AGENT-ROLES.md 一致

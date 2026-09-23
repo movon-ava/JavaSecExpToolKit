@@ -20,6 +20,7 @@ GUARD = os.path.join(TESTS, "TestProcessGuard.java")
 # 直接执行 java.exe 的自检入口：文件名 -> 必须出现 install 调用的方法名
 ENTRY_FILES = (
     "AnalyzeCheck.java",
+    "LogCheck.java",
     "PayloadCheck.java",
     "ProxyServerCheck.java",
     "ShiroCheck.java",

@@ -24,6 +24,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
 
+import util.Log;
+
 /**
  * 通用利用链构建引擎：把 java-chains 的能力暴露成与漏洞类型无关的形式。
  *
@@ -61,6 +63,7 @@ public final class PayloadEngine {
             initialized = false;
             initMessage = "java-chains 初始化失败：" + describe(error)
                     + "。若为模块访问异常，请使用 run.ps1 启动（已包含 --add-opens 参数）。";
+            Log.error("java-chains 初始化失败：" + initMessage, error);
         }
     }
 
@@ -123,8 +126,9 @@ public final class PayloadEngine {
                 }
             }
             Collections.sort(result);
-        } catch (Throwable ignored) {
-            // 节点无后续时返回空列表，不把「没有后续」当成错误
+        } catch (Throwable failed) {
+            // 节点无后续时返回空列表，不把「没有后续」当成错误；仅留调试级线索
+            Log.debug("查询节点 " + nodeId + " 的后续节点失败：" + failed);
         }
         return result;
     }
@@ -136,6 +140,7 @@ public final class PayloadEngine {
         try {
             return ExecutionEngine.getParamsFromGadget(nodeId.trim());
         } catch (Throwable error) {
+            Log.debug("读取节点 " + nodeId + " 的参数失败：" + error);
             return new ArrayList<GadgetParam>();
         }
     }
@@ -160,6 +165,7 @@ public final class PayloadEngine {
             String name = meta.getName();
             return name == null ? "" : name.trim();
         } catch (Throwable error) {
+            Log.debug("读取节点 " + nodeId + " 的显示名失败：" + error);
             return "";
         }
     }
@@ -172,6 +178,7 @@ public final class PayloadEngine {
             Result result = ExecutionEngine.validateChainTags(new ArrayList<String>(chain));
             return result != null && result.isSuccess();
         } catch (Throwable error) {
+            Log.debug("校验链合法性失败：" + error);
             return false;
         }
     }
@@ -236,6 +243,7 @@ public final class PayloadEngine {
                     safeList(meta.getTags()), safeList(meta.getAliases()), safeList(meta.getDependencies()),
                     safeList(meta.getModes()), meta.isPayload(), isEnd(meta.getTags()));
         } catch (Throwable error) {
+            Log.debug("读取节点 " + id + " 的元信息失败：" + error);
             return NodeInfo.unknown(id);
         }
     }
@@ -334,8 +342,9 @@ public final class PayloadEngine {
                     if (name != null && !name.trim().isEmpty()) return name.trim();
                 }
             }
-        } catch (Throwable ignored) {
+        } catch (Throwable failed) {
             // 元数据不可用时回退成类名，不影响构建本身
+            Log.debug("解析节点显示名失败，回落为类名 " + simple + "：" + failed);
         }
         return simple;
     }
@@ -445,6 +454,7 @@ public final class PayloadEngine {
             return run;
         } catch (Throwable error) {
             run.raw = RawPayload.fail(describe(error));
+            Log.error("构建载荷失败：" + describe(error), error);
             return run;
         }
     }
@@ -472,8 +482,9 @@ public final class PayloadEngine {
             run.durationMs = metrics.getDurationMs();
             if (metrics.getRawSizeBytes() != null) run.rawSize = metrics.getRawSizeBytes().longValue();
             run.md5 = metrics.getRawMd5() == null ? "" : metrics.getRawMd5();
-        } catch (Throwable ignored) {
+        } catch (Throwable failed) {
             // 指标只是旁证，取不到不影响载荷交付
+            Log.debug("读取构建指标失败：" + failed);
         }
     }
 
@@ -495,8 +506,9 @@ public final class PayloadEngine {
                         value instanceof byte[] ? (byte[]) value : null,
                         value instanceof byte[] ? "" : String.valueOf(value)));
             }
-        } catch (Throwable ignored) {
+        } catch (Throwable failed) {
             // 上下文同样只是旁证
+            Log.debug("读取构建上下文失败：" + failed);
         }
     }
 
@@ -518,8 +530,9 @@ public final class PayloadEngine {
                     String artifact = value == null ? "null" : value.getClass().getSimpleName();
                     int size = value instanceof byte[] ? ((byte[]) value).length : -1;
                     run.steps.add(new PayloadBuild.Step(index, node, artifact, size));
-                } catch (Throwable ignored) {
+                } catch (Throwable failed) {
                     // 记录失败不能影响构建：钩子抛异常会中断整条链
+                    Log.debug("记录构建步骤失败：" + failed);
                 }
                 return value;
             }

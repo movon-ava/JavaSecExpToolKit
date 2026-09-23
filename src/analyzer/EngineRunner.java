@@ -10,6 +10,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
+import util.Log;
+
 /**
  * 调用外部引擎（jar-analyzer-engine）构建分析数据库。
  *
@@ -113,8 +115,9 @@ public final class EngineRunner {
                                 output.append(line).append(System.lineSeparator());
                             }
                         }
-                    } catch (IOException ignored) {
+                    } catch (IOException closed) {
                         // 进程被终止时读流会抛异常，属正常收尾路径
+                        Log.debug("引擎输出流已结束：" + closed.getMessage());
                     }
                 }
             });
@@ -127,6 +130,8 @@ public final class EngineRunner {
                 // 超时必须连子进程一起收掉：引擎自己会再起 JVM 子任务，
                 // 只 destroy 父进程会留下孤儿进程继续吃 CPU
                 ProcessTree.kill(process);
+                Log.warn("引擎超时已终止（上限 " + timeoutSeconds + " 秒，目标 "
+                        + target + "）。");
                 return new Result(false, "引擎超时（超过 " + timeoutSeconds + " 秒）已终止。"
                         + "可在配置页提高超时，或改用快速模式先摸底。", null, millis);
             }
@@ -145,11 +150,13 @@ public final class EngineRunner {
                 return new Result(true, text, database, millis);
             }
         } catch (IOException error) {
+            Log.error("无法启动引擎：" + error.getMessage(), error);
             return new Result(false, "无法启动引擎：" + error.getMessage(), null,
                     System.currentTimeMillis() - started);
         } catch (InterruptedException interrupted) {
             ProcessTree.kill(process);
             Thread.currentThread().interrupt();
+            Log.warn("引擎调用被中断，已终止进程树。", interrupted);
             return new Result(false, "引擎调用被中断。", null, System.currentTimeMillis() - started);
         } finally {
             if (process != null && process.isAlive()) ProcessTree.kill(process);
@@ -167,15 +174,18 @@ public final class EngineRunner {
                 walk.sorted(java.util.Comparator.reverseOrder()).forEach(path -> {
                     try {
                         Files.deleteIfExists(path);
-                    } catch (IOException ignored) {
+                    } catch (IOException locked) {
                         // 占用中的文件删不掉：留给使用者手工清理
+                        Log.debug("临时文件删除失败，留给人工清理：" + path + "（"
+                                + locked.getMessage() + "）");
                     }
                 });
             } finally {
                 walk.close();
             }
-        } catch (IOException ignored) {
+        } catch (IOException failed) {
             // 清理失败不影响结论
+            Log.warn("清理引擎临时目录失败：" + temp + "（" + failed.getMessage() + "）", failed);
         }
     }
 

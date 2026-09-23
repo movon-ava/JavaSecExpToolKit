@@ -20,6 +20,8 @@ import java.util.jar.Manifest;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import util.Log;
+
 /**
  * C 方案的核心：只读依赖坐标，不执行任何目标代码。
  *
@@ -197,6 +199,7 @@ public final class DependencyScanner {
         try (InputStream input = file.getInputStream(entry)) {
             return new String(readAll(input), StandardCharsets.UTF_8);
         } catch (IOException error) {
+            Log.debug("读取 jar 条目 " + entryName + " 失败：" + error.getMessage());
             return "";
         }
     }

@@ -8,6 +8,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import util.Log;
+
 /**
  * 反编译：把 class 还原成 Java 源码，用于人工确认规则命中是否成立。
  *
@@ -60,6 +62,7 @@ public final class Decompiler {
         try {
             Files.createDirectories(output);
         } catch (IOException error) {
+            Log.error("无法创建反编译输出目录 " + output + "：" + error.getMessage(), error);
             return new Result(0, output, 0, "无法创建输出目录：" + error.getMessage());
         }
         try {
@@ -72,6 +75,7 @@ public final class Decompiler {
                     new org.benf.cfr.reader.api.CfrDriver.Builder().withOptions(options).build();
             driver.analyse(Collections.singletonList(target.toAbsolutePath().toString()));
         } catch (RuntimeException | LinkageError failure) {
+            Log.error("整包反编译失败：" + failure.getMessage(), failure);
             return new Result(0, output, System.currentTimeMillis() - started,
                     "反编译失败：" + failure.getMessage());
         }
@@ -80,6 +84,7 @@ public final class Decompiler {
         try {
             count = countJavaFiles(output);
         } catch (IOException error) {
+            Log.warn("统计反编译产物失败：" + error.getMessage(), error);
             return new Result(0, output, millis, "统计产物失败：" + error.getMessage());
         }
         if (count == 0) {
@@ -105,6 +110,7 @@ public final class Decompiler {
         try {
             Files.createDirectories(output);
         } catch (IOException error) {
+            Log.error("无法创建反编译输出目录 " + output + "：" + error.getMessage(), error);
             return new Result(0, output, 0, "无法创建输出目录：" + error.getMessage());
         }
         long started = System.currentTimeMillis();
@@ -121,6 +127,7 @@ public final class Decompiler {
             driver.analyse(Collections.singletonList(
                     className.trim().replace('/', '.').replace(".class", "")));
         } catch (RuntimeException | LinkageError failure) {
+            Log.error("反编译类 " + className + " 失败：" + failure.getMessage(), failure);
             return new Result(0, output, System.currentTimeMillis() - started,
                     "反编译失败：" + failure.getMessage());
         }
@@ -132,6 +139,7 @@ public final class Decompiler {
             }
             return new Result(count, output, millis, "");
         } catch (IOException error) {
+            Log.warn("统计反编译产物失败：" + error.getMessage(), error);
             return new Result(0, output, millis, "统计产物失败：" + error.getMessage());
         }
     }

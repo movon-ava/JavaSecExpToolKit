@@ -17,6 +17,7 @@ import ui.ConfigController;
 import ui.ConfigForm;
 import ui.ConfigPage;
 import ui.HomePage;
+import ui.LoggingBootstrap;
 import ui.NavController;
 import ui.NavItem;
 import ui.ProbeController;
@@ -87,9 +88,15 @@ public final class Main implements UiHandle.Source {
     private NavController navController;
 
     private Main() {
+        // 先按内建默认值开启日志，再读配置：这样「读配置本身失败」与随后的预热失败
+        // 都有记录可查。读到配置后会按使用者的设置再初始化一次（幂等，见 LoggingBootstrap）。
+        LoggingBootstrap.configure(new Properties());
+        LoggingBootstrap.logStartup(null);
         configController = new ConfigController(config, configForm, probeWidgets, proxyWidgets,
                 captureWidgets, shiroWidgets, null);
         configController.load();
+        LoggingBootstrap.configure(config);
+        LoggingBootstrap.logStartup(config);
         configureFrame();
         probeController = new ProbeController(probeWidgets, configController);
         configController.attachProbe(probeController);
@@ -341,6 +348,9 @@ public final class Main implements UiHandle.Source {
      * 等于没有启动画面。放到后台线程后，启动画面能边转边报进度，主窗口也能尽早出现。
      */
     public static void main(String[] args) {
+        // 未捕获异常处理器必须在任何后台线程启动之前装上：
+        // 代理、隧道、引擎读取线程都不在事件分发线程上，异常默认不会出现在任何界面里
+        util.Log.installUncaughtHandler();
         final StartupSplash splash = new StartupSplash();
         splash.show();
         Thread warmup = new Thread(() -> StartupWarmup.warmUp(splash), "startup-warmup");

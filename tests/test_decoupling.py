@@ -30,9 +30,9 @@ ALLOWED_EDGES = {
                   "analyzer", "analyze"},
     "ui": {"probe", "proxy", "shiro", "payload", "config", "util", "service", "preset",
            "analyzer", "analyze"},
-    # analyzer 是分析内核：只做「读文件 / 跑规则 / 调外部程序」，不依赖任何项目包，
+    # analyzer 是分析内核：只做「读文件 / 跑规则 / 调外部程序」，除共享内核外不依赖任何项目包，
     # 因此能被单测直接驱动，也能被界面之外的入口复用。
-    "analyzer": set(),
+    "analyzer": {"util"},
     # analyze 是编排层：把内核能力按使用场景串起来，因此允许依赖内核。
     "analyze": {"analyzer"},
     "probe": {"util"},
@@ -42,14 +42,21 @@ ALLOWED_EDGES = {
     # 反向依赖（payload -> service）会让你拿到载荷字节就必须连服务端适配器一起加载。
     "service": {"payload"},
     # preset 是纯读取层：只碰 java-chains 的预设模型与自己的数据类，不依赖任何项目包。
+    # 它读取失败时由 loadError() 把原因交给界面，因此不需要日志通道。
     "preset": set(),
-    "proxy": set(),
+    # proxy 只做转发，除共享内核（日志）外不依赖任何项目包。
+    "proxy": {"util"},
     "config": set(),
     "util": set(),
 }
 
-# 层内不允许反向依赖的包：它们必须是叶子，只能被依赖
-LEAF_PACKAGES = ("config", "proxy", "util", "preset", "analyzer")
+# 铁叶子：内核自身，不允许有任何项目内出边。
+LEAF_PACKAGES = ("config", "util", "preset")
+
+# 功能层叶子：除共享内核外不允许依赖任何项目包。
+# 它们需要记录失败原因（本仓库的日志通道在共享内核里），因此允许指向 util 与 config；
+# 指向任何功能层仍是越界。
+FEATURE_LEAF_PACKAGES = ("proxy", "analyzer")
 
 # 共享内核：被依赖方，不得依赖上层
 KERNEL_PACKAGES = ("util", "config")
@@ -237,12 +244,27 @@ class DependencyBoundaryTest(unittest.TestCase):
         self.assertEqual([], offenders, "依赖方向越界:\n" + "\n".join(offenders))
 
     def test_leaf_packages_have_no_outgoing_edges(self):
-        """叶子层不得依赖任何其它项目包。"""
+        """铁叶子（内核）不得依赖任何其它项目包。"""
         offenders = []
         for (source, target), evidence in sorted(package_edges().items()):
             if source in LEAF_PACKAGES:
                 offenders.append("%s -> %s (%s)" % (source, target, evidence[0]))
         self.assertEqual([], offenders, "叶子层出现了出边:\n" + "\n".join(offenders))
+
+    def test_feature_leaf_packages_only_depend_on_kernel(self):
+        """功能层叶子只允许依赖共享内核。
+
+        它们本身不做任何复用设计，唯一被允许的出边是「记录失败原因」——
+        日志通道位于共享内核，因此这条边不会引入环，也不会让它们获得反向感知能力。
+        指向任何功能层（载荷生成、Shiro、界面…）仍是越界：那会让「只做一件事」的包
+        被拖进功能依赖网。
+        """
+        offenders = []
+        for (source, target), evidence in sorted(package_edges().items()):
+            if source in FEATURE_LEAF_PACKAGES and target not in KERNEL_PACKAGES:
+                offenders.append("%s -> %s (%s)" % (source, target, evidence[0]))
+        self.assertEqual([], offenders,
+                         "功能层叶子依赖了非内核包:\n" + "\n".join(offenders))
 
     def test_shared_kernel_does_not_depend_on_layers_above(self):
         """共享内核只被依赖，不反向依赖上层。"""

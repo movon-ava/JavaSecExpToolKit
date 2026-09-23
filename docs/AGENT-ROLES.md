@@ -197,6 +197,10 @@
 | 可不改 | 单向依赖、不构成环、不阻碍复用 | `ui` 引用 `ShiroExploit.ChainKind`、`FlowRenderer` 引用 `ProxyServer.HttpFlow` |
 | 不做 | 职责本身要求依赖多方 | `Main` 对全部模块的装配依赖 |
 
+注：依赖边界在「共享内核」之外另设一档**功能层叶子**（`proxy` / `analyzer`）：
+只承载机制、不做复用设计的包允许依赖共享内核（日志通道在 `src/util/`），
+但不得依赖任何功能包。判定由 `tests/test_decoupling.py` 的两组常量分别咬住。
+
 复核方法（必须自己跑，不得引用执行者结论）：
 
 ```

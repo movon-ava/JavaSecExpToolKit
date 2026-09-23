@@ -25,8 +25,8 @@ ALLOWED_EDGES = {
                   "analyzer", "analyze"},
     "ui": {"probe", "proxy", "shiro", "payload", "config", "util", "service", "preset",
            "analyzer", "analyze"},
-    # analyzer 是分析内核（只读文件 + 规则判定 + 外部程序调用），不依赖任何项目包
-    "analyzer": set(),
+    # analyzer 是分析内核（只读文件 + 规则判定 + 外部程序调用），除共享内核外不依赖任何项目包
+    "analyzer": {"util"},
     # analyze 是编排层，允许依赖分析内核
     "analyze": {"analyzer"},
     "probe": {"util"},
@@ -36,13 +36,19 @@ ALLOWED_EDGES = {
     # 反向依赖（payload -> service）会让你拿到载荷字节就必须连服务端适配器一起加载。
     "service": {"payload"},
     # preset 是纯读取层：只碰 java-chains 的预设模型与自己的数据类，不依赖任何项目包。
+    # 它读取失败时由 loadError() 把原因交给界面，因此不需要日志通道。
     "preset": set(),
-    "proxy": set(),
+    # proxy 只做转发，除共享内核（日志）外不依赖任何项目包。
+    "proxy": {"util"},
     "config": set(),
     "util": set(),
 }
 
-LEAF_PACKAGES = ("config", "proxy", "util", "preset", "analyzer")
+# 铁叶子：内核自身，不允许有任何项目内出边。
+LEAF_PACKAGES = ("config", "util", "preset")
+
+# 功能层叶子：除共享内核外不允许依赖任何项目包。
+FEATURE_LEAF_PACKAGES = ("proxy", "analyzer")
 KERNEL_PACKAGES = ("util", "config")
 UP_LAYERS = ("probe", "proxy", "shiro", "payload", "ui", "config")
 
@@ -220,6 +226,10 @@ def main():
     leaf = ["%s -> %s" % (a, b) for (a, b) in sorted(edges) if a in LEAF_PACKAGES]
     print("  叶子层出边        : %s" % (leaf if leaf else "无"))
 
+    feature_leaf = ["%s -> %s" % (a, b) for (a, b) in sorted(edges)
+                    if a in FEATURE_LEAF_PACKAGES and b not in KERNEL_PACKAGES]
+    print("  功能层叶子越界    : %s" % (feature_leaf if feature_leaf else "无"))
+
     kernel = ["%s -> %s" % (a, b) for (a, b) in sorted(edges)
               if a in KERNEL_PACKAGES and b in UP_LAYERS]
     print("  共享内核反向依赖  : %s" % (kernel if kernel else "无"))
@@ -234,7 +244,7 @@ def main():
         hits = [name for name in forbidden if name in body]
         print("  通用组件 %s: %s" % (relative, "命中 %s" % hits if hits else "未引用具体功能模块"))
 
-    problems = bool(cycles or offenders or leaf or kernel)
+    problems = bool(cycles or offenders or leaf or feature_leaf or kernel)
     print()
     print("结论：%s" % ("存在违规" if problems else "全部通过"))
     return 1 if problems else 0

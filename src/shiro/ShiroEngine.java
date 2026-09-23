@@ -30,6 +30,8 @@ import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 
+import util.Log;
+
 /**
  * Shiro 检测 / 密钥识别 / 利用支撑引擎（能力来源于 ShiroExploit 1.0.2 的重构实现）。
  *
@@ -241,7 +243,8 @@ public final class ShiroEngine {
                 buffer.write(chunk, 0, read);
             }
             return new String(buffer.toByteArray(), StandardCharsets.UTF_8);
-        } catch (IOException ignored) {
+        } catch (IOException failed) {
+            Log.debug("读取探测响应体失败：" + failed.getMessage());
             return "";
         } finally {
             if (stream != null) {
@@ -387,8 +390,9 @@ public final class ShiroEngine {
             } else {
                 result.message = "未确认 Shiro：响应中没有针对 rememberMe 的清除行为。";
             }
-        } catch (IOException e) {
-            result.message = "请求失败：" + e.getMessage();
+        } catch (IOException failed) {
+            result.message = "请求失败：" + failed.getMessage();
+            Log.warn("Shiro 检测请求失败 " + options.url + "：" + failed.getMessage(), failed);
         }
         return result;
     }
@@ -442,8 +446,10 @@ public final class ShiroEngine {
                 String key = line.trim();
                 if (!key.isEmpty() && !keys.contains(key)) keys.add(key);
             }
-        } catch (IOException ignored) {
+        } catch (IOException failed) {
             // 读不到字典时返回已读取部分
+            Log.warn("读取 Shiro 密钥字典失败，已读取 " + keys.size() + " 条："
+                    + failed.getMessage(), failed);
         }
         return keys;
     }
@@ -494,8 +500,9 @@ public final class ShiroEngine {
             result.message = result.matched
                     ? "密钥正确：密文被成功解密（deleteMe 计数 " + baselineDeleteMe + " → " + counts + "）。"
                     : "密钥错误：目标解密失败并回写 deleteMe。";
-        } catch (IOException e) {
-            result.message = "请求失败：" + e.getMessage();
+        } catch (IOException failed) {
+            result.message = "请求失败：" + failed.getMessage();
+            Log.warn("Shiro 密钥确认请求失败：" + failed.getMessage(), failed);
         }
         return result;
     }
@@ -551,8 +558,9 @@ public final class ShiroEngine {
         for (Thread thread : workers) {
             try {
                 thread.join();
-            } catch (InterruptedException e) {
+            } catch (InterruptedException interrupted) {
                 Thread.currentThread().interrupt();
+                Log.debug("密钥爆破等待被中断，停止等待剩余线程。");
                 break;
             }
         }
@@ -578,7 +586,8 @@ public final class ShiroEngine {
             output.flush();
             output.close();
             return buffer.toByteArray();
-        } catch (IOException e) {
+        } catch (IOException failed) {
+            Log.warn("序列化空 principal 失败：" + failed.getMessage(), failed);
             return new byte[0];
         }
     }
@@ -607,7 +616,8 @@ public final class ShiroEngine {
             Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
             cipher.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(key, "AES"), new IvParameterSpec(key));
             return cipher.doFinal(plain);
-        } catch (Exception e) {
+        } catch (Exception failed) {
+            Log.debug("Shiro 加密失败：" + failed);
             return null;
         }
     }
@@ -629,7 +639,8 @@ public final class ShiroEngine {
             Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
             cipher.init(Cipher.DECRYPT_MODE, new SecretKeySpec(key, "AES"), new IvParameterSpec(key));
             return cipher.doFinal(cipherText);
-        } catch (Exception e) {
+        } catch (Exception failed) {
+            Log.debug("Shiro 解密失败：" + failed);
             return null;
         }
     }
@@ -643,7 +654,9 @@ public final class ShiroEngine {
     private static Cipher gcmCipher() throws java.security.GeneralSecurityException {
         try {
             return Cipher.getInstance("AES/GCM/NoPadding");
-        } catch (java.security.NoSuchAlgorithmException ignored) {
+        } catch (java.security.NoSuchAlgorithmException unsupported) {
+            // 部分 JDK 实现只认别名写法，回退是预期路径，故只留调试级
+            Log.debug("AES/GCM/NoPadding 不可用，回退 PKCS5Padding 别名：" + unsupported.getMessage());
             return Cipher.getInstance("AES/GCM/PKCS5Padding");
         }
     }
@@ -688,8 +701,9 @@ public final class ShiroEngine {
             socket.close();
             HttpResult result = send(options, null);
             return "可达：HTTP " + result.status + "（" + result.elapsedMs + " ms）";
-        } catch (Exception e) {
-            return "不可达：" + e.getMessage();
+        } catch (Exception failed) {
+            Log.debug("目标连通性检查失败 " + options.url + "：" + failed);
+            return "不可达：" + failed.getMessage();
         }
     }
 

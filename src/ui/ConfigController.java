@@ -28,6 +28,15 @@ public final class ConfigController {
     private static final String[] REPORT_VALUES = {"brief", "detail"};
     private static final String[] REPORT_LABELS = {"精简", "详细"};
 
+    /**
+     * 日志级别的配置值 / 显示文本，一一对应。
+     *
+     * <p>与级别枚举里的「关闭」档不同：关闭由独立的启用开关承担，
+     * 这里只提供四档「记录多少」，避免出现「关了开关又选了级别」的两处矛盾状态。
+     */
+    private static final String[] LOG_VALUES = {"error", "warn", "info", "debug"};
+    private static final String[] LOG_LABELS = {"仅错误", "警告与错误", "常规", "调试"};
+
     /** 页面回写与跨页联动：界面层实现，控制器不直接持有任何页面对象。 */
     public interface View {
         /** 把配置里的监听参数下发到已创建的恶意服务器页。 */
@@ -248,6 +257,13 @@ public final class ConfigController {
         form.uploadUrl.setText(config.getProperty("upload_url", ""));
         form.uploadField.setText(config.getProperty("upload_field", "file"));
         form.uploadTimeout.setText(config.getProperty("upload_timeout", "30"));
+        form.logEnabled.setSelected(flagFrom(LoggingBootstrap.KEY_ENABLED, true));
+        setComboByValue(form.logLevel, LOG_VALUES, LOG_LABELS,
+                config.getProperty(LoggingBootstrap.KEY_LEVEL, LoggingBootstrap.DEFAULT_LEVEL));
+        form.logDir.setText(config.getProperty(LoggingBootstrap.KEY_DIR, ""));
+        form.logKeepDays.setText(config.getProperty(LoggingBootstrap.KEY_KEEP_DAYS,
+                LoggingBootstrap.DEFAULT_KEEP_DAYS));
+        form.logConsole.setSelected(flagFrom(LoggingBootstrap.KEY_CONSOLE, false));
         form.status.setText("已载入当前配置");
     }
 
@@ -289,6 +305,14 @@ public final class ConfigController {
         config.setProperty("upload_url", form.uploadUrl.getText().trim());
         config.setProperty("upload_field", Platform.valueOr(form.uploadField.getText(), "file"));
         config.setProperty("upload_timeout", Platform.valueOr(form.uploadTimeout.getText(), "30"));
+        config.setProperty(LoggingBootstrap.KEY_ENABLED, String.valueOf(form.logEnabled.isSelected()));
+        config.setProperty(LoggingBootstrap.KEY_LEVEL,
+                LOG_VALUES[Math.max(0, Math.min(LOG_VALUES.length - 1,
+                        form.logLevel.getSelectedIndex()))]);
+        config.setProperty(LoggingBootstrap.KEY_DIR, form.logDir.getText().trim());
+        config.setProperty(LoggingBootstrap.KEY_KEEP_DAYS,
+                Platform.valueOr(form.logKeepDays.getText(), LoggingBootstrap.DEFAULT_KEEP_DAYS));
+        config.setProperty(LoggingBootstrap.KEY_CONSOLE, String.valueOf(form.logConsole.isSelected()));
         config.setProperty("payload_export_dir", form.payloadExportDir.getText().trim());
         config.setProperty("payload_encode", encodeId(String.valueOf(form.payloadEncode.getSelectedItem())));
         config.setProperty("payload_url_encode", String.valueOf(form.payloadUrlEncode.isSelected()));
@@ -325,7 +349,9 @@ public final class ConfigController {
         try {
             AppConfig.save(config);
             applyToForms();
-            form.status.setText("已保存到 " + AppConfig.FILE);
+            // 保存后立刻按新设置重开日志：使用者改完目录或级别，无需重启即生效
+            LoggingBootstrap.configure(config);
+            form.status.setText("已保存到 " + AppConfig.FILE + "；" + LoggingBootstrap.summary());
         } catch (IOException e) {
             form.status.setText("保存失败：" + e.getMessage());
         }

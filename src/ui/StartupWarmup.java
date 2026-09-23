@@ -3,6 +3,8 @@ package ui;
 import java.util.ArrayList;
 import java.util.List;
 
+import util.Log;
+
 /**
  * 启动期一次性初始化：把「第一次进某个页面才付的代价」提前到启动时付完。
  *
@@ -96,6 +98,7 @@ public final class StartupWarmup {
             done = true;
             summary = "启动初始化完成，用时 " + (System.currentTimeMillis() - startedAt)
                     + " ms（" + join(STEPS) + "）。";
+            Log.info(summary);
         }
     }
 
@@ -120,6 +123,7 @@ public final class StartupWarmup {
         } catch (Exception error) {
             // 预热失败不能让程序起不来：进页时引擎自己会给出可读原因
             STEPS.add(name + " 失败：" + error.getClass().getSimpleName());
+            Log.error("启动初始化步骤失败：" + name, error);
         }
     }
 

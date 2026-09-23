@@ -256,6 +256,11 @@ public final class WidgetRegistry {
         entries.put("configAnalyzeWorkDir", configForm.analyzeWorkDir);
         entries.put("configAnalyzeTimeout", configForm.analyzeTimeout);
         entries.put("configAnalyzeDecompileDir", configForm.analyzeDecompileDir);
+        entries.put("configLogEnabled", configForm.logEnabled);
+        entries.put("configLogLevel", configForm.logLevel);
+        entries.put("configLogDir", configForm.logDir);
+        entries.put("configLogKeepDays", configForm.logKeepDays);
+        entries.put("configLogConsole", configForm.logConsole);
         entries.put("configUploadUrl", configForm.uploadUrl);
         entries.put("configUploadField", configForm.uploadField);
         entries.put("configUploadTimeout", configForm.uploadTimeout);

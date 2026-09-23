@@ -12,7 +12,7 @@
 | 抓包转换与一键发送 | 可用 | 支持导出多种 Cookie / 请求格式，请求体一并带过去 |
 | Shiro 漏洞利用（检测 / 爆破 / 生成链 / 命令回显） | 可用 | 具备利用性质，仅限授权目标 |
 | 抓包格式直接探测 | 可用 | 裸 Cookie / Key: Value / JSON 均可；自动剔除 Content-Length 与 gzip |
-| 配置页 | 可用 | 十三个分组覆盖全部可持久化参数 |
+| 配置页 | 可用 | 十四个分组覆盖全部可持久化参数 |
 | 规格驱动开发（OpenSpec） | 可用 | `openspec/specs/traffic/capture-bridge` 已建立；`config.yaml` 承载跨角色约束 |
 | 多 Agent 协同框架 | 可用 | `tools/agent.ps1` 可启动角色化 agent；隔离与并发已实测，详见 `docs/AGENT-RUNBOOK.md` |
 | 多 Agent 职责说明 | 已建立 | `docs/AGENT-ROLES.md` 定义八个角色的职责、边界与协作顺序 |
@@ -24,7 +24,7 @@
 | 单条派发 | 可用 | `tools/dispatch.ps1` 由任务推断角色（无命中/多命中直接报错），跑完自动合并并清理；越界/超时/卡死一律不合并、保留现场 |
 | 任务自动拆解编排 | 可用 | `tools/orchestrate.ps1 -Goal "..."` 一句话目标：只读会话拆解成 JSON 计划 → 机械校验 → 按依赖与写入域分批派发 → 按结果自动合并 → 逐步汇报；端到端实测 4 步 3 批全绿 |
 | 派发汇报（角色与产出） | 可用 | 每次派发结束按角色聚合汇报：调用了哪些角色、各自几步、主要工作与产出文件；产出文件区间取 `<合并提交>^1..<合并提交>`，并行批次互不串号 |
-| 依赖边界（解耦） | 可用 | 通用链引擎已与 Shiro 解耦；边界规则由 `tests/test_decoupling.py` 机械校验 |
+| 依赖边界（解耦） | 可用 | 通用链引擎已与 Shiro 解耦；边界规则由 `tests/test_decoupling.py` 机械校验；新增「功能层叶子」档（`proxy` / `analyzer` 只可依赖共享内核） |
 | Payload 生成（JavaChains Generate） | 可用 | `主页 → Payload → Payload 生成`：列式选链（点候选即追加并展开下一列，点回前面某列即从那里重开链）、列内关键字过滤、参数侧栏、生成 / 复制 / 导出 / 填入抓包页；429 节点、28 载体，仅本地内存构建 |
 | 汇报角色中文名 | 可用 | 派发与编排汇报显示「主 agent / 探测 agent / 测试 agent」等；标识仍用于分支名、写入域与 `-Role` 参数 |
 | 载荷生成自检 | 可用 | `tests/PayloadCheck.java` 100 条断言：目录 / 分组 / 导航 / 节点显示名 / 逐个载体 / 失败路径 / 双形态 / 安全，外加带外 Jar 25 种组合与 toString 触发节点归属 |
@@ -38,7 +38,7 @@
 | 配置页（toString 链 / 带外 Jar） | 可用 | 新增「toString 链配置」（默认模板 / 默认命令）与「带外 Jar 配置」（绑定地址 / 端口 50001 / 默认 URL / 默认路径 / 默认执行参数），共 7 个配置键 |
 | `Main.java` 模块化 | 已完成 | 1757 → 327 行，仅剩装配与切页；六套 Java 自检与 106 项 Python 测试全绿，断言一条未改 |
 | 界面自检稳定门面 | 可用 | `ui/UiHandle` 按名字取控件、`ui/WidgetRegistry` 登记清单；自检不再依赖控件声明在哪个类 |
-| 自检副作用清理 | 可用 | `tests/TestProcessGuard.java` 六套入口全接入：启动时给现存计算器进程拍快照，退出钩子只强制结束快照之后新起的进程；`tests/test_selfcheck_hygiene.py` 5 项断言守住接入与顺序 |
+| 自检副作用清理 | 可用 | `tests/TestProcessGuard.java` 八套入口全接入：启动时给现存计算器进程拍快照，退出钩子只强制结束快照之后新起的进程；`tests/test_selfcheck_hygiene.py` 5 项断言守住接入与顺序 |
 | 界面层解耦（已完成） | 已完成 | `PayloadPage` 787→252、`PayloadController` 739→546 行；拆出 `PayloadPanels` / `PayloadColumns` / `PayloadOutputText` / `PayloadExporter` / `ChainColumnFilter` / `ChainNodeRenderer` 等协作类，界面文件全部 ≤600 行 |
 | 启动预热 | 可用 | `src/ui/StartupWarmup.java`：引擎 / 预设链 / 服务适配器一次性预热（实测首次 1263 ms，二次 0 ms，预设 52 条），幂等且不阻塞事件分发线程；配无边框启动画面 |
 | 选链区比例对齐网页版 | 可用 | 用 CDP 实测上游 `#/Generate/<payload>`：控制台 360px、选链区 486px；`CONSOLE_WEIGHT` 由实测常量算出，选链区占两块之和约 57% |
@@ -52,6 +52,7 @@
 | 漏洞分析（调用链查询） | 可用 | `主页 → 漏洞分析 → 调用链查询`：外部 `jar-analyzer-engine` 建库后按 Sink 命中 / 入口点 / 字符串常量 / 组件清单 / 总览查询；超时终止进程树并清临时目录 |
 | 漏洞分析（反编译） | 可用 | 用运行期依赖自带的 CFR 反编译，零新增依赖、无需 Node；实测 84 个类 3.5 秒；产物只写不读 |
 | 源码级别门禁 | 可用 | `tests/test_java8_source_level.py`：src/ 不得出现 Java 9+ API 与语法。此前自检用的 `javac` 不带 `--release 8`，9+ API 只在 Maven 构建时才报错（本轮踩到 `Process#descendants`），现改为机械断言并可被变体验证 |
+| 日志记录 | 可用 | `src/util/Log.java`（记录通道）+ `src/util/LogFiles.java`（文件名与保留策略）：按日期分文件 `app-YYYY-MM-DD.log`，默认保留 7 天（含今天），启动与跨天各清理一次；级别四档、默认开启、目录可由环境变量 `JSETK_LOG_DIR` 覆盖；新增「日志配置」分组；未捕获异常统一入库 |
 
 ## 已完成阶段
 
@@ -87,6 +88,7 @@
 - 2026-09-22 — 启动预热与版面比例对齐：一次性初始化挪到启动阶段（幂等，二次 0 ms）；用 CDP 实测网页版比例对齐选链区；修掉分割线靠异步事件补算留下的空窗
 - 2026-09-22 — 漏洞分析一级目录：本地依赖坐标（`pom.properties > pom.xml > MANIFEST > 文件名`）打底 + 25 条内置规则判定，外部引擎调用链查询深挖，内置 CFR 反编译定点确认；新增 `src/analyzer/`（叶子层）与 `src/analyze/`（编排层）两个包、`python/jar_report.py` 与「漏洞分析配置」分组；修掉 `pom.properties` 键大小写与小写常量不匹配导致整份清单静默退化、版本比较缺段语义让预发布版倒挂两个真实缺陷
 - 2026-09-22 — 本构建暴露并修掉第四个缺陷（只在 Maven 构建下现形）：`src/` 用了 Java 9 的 `Process#descendants()` 而源码级别锁在 release 8，七套自检因 `javac` 不带 `--release 8` 而全绿；抽出反射降级的 `ProcessTree` 并新增 Java 8 源码级别门禁，已用变体验证门禁能抓到原缺陷
+- 2026-09-23 — 日志记录：`src/util/Log`（记录通道）+ `src/util/LogFiles`（文件名解析与保留策略）+ `src/ui/LoggingBootstrap`（配置语义）落地，按日期分文件、默认保留 7 天、启动与跨天各清理一次；代理 / 探测 / 引擎 / 分析 / 预热等静默失败路径全部接入；新增「日志配置」分组 5 键与 `LogCheck` 79 条断言；已归档三个 change（`logging-core` / `logging-integration` / `ui-logging-config`）并落地三份主 spec
 
 ## 后续可做
 
@@ -123,3 +125,10 @@
 - 源码级别门禁（`tests/test_java8_source_level.py`）用的是显式黑名单，不是全量 API 比对；
   能挡住已知的高频 Java 9+ API，但不保证穷尽。
 - `ProcessTree` 在 Java 8 运行时只能强杀父进程，收不掉孙进程（Java 8 无等价能力）。
+- 日志只记录事件与结论，**不含请求体、响应体、密钥与令牌**；需要看报文原文时仍要看抓包页。
+- 日志清理只认「本工具命名的文件」（`app-YYYY-MM-DD.log` 且位于日志目录下），
+  因此同目录里手工放的其它文件不会被删；反过来说，手工改名的旧日志不会被自动清掉。
+- 日志目录不可写时**静默失败**（记录动作全部生效但落不了盘），不影响任何功能；
+  需要日志时用环境变量 `JSETK_LOG_DIR` 指向可写目录。
+- `preset` 包保持零出边：读取内置预设失败时不做任何记录，只把失败交给界面 `loadError()` 展示。
+- 尚未归档的 change：`analyze-local-deps`、`payload-generation`、`java-chains-workbench`。

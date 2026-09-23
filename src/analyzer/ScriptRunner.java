@@ -12,6 +12,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
+import util.Log;
+
 /**
  * 运行 Python 辅助脚本并回收输出。
  *
@@ -87,8 +89,9 @@ public final class ScriptRunner {
                                 sink.append(line).append(System.lineSeparator());
                             }
                         }
-                    } catch (IOException ignored) {
+                    } catch (IOException closed) {
                         // 进程结束时读流中断属正常路径
+                        Log.debug("脚本输出流已结束：" + closed.getMessage());
                     }
                 }
             });
@@ -99,6 +102,7 @@ public final class ScriptRunner {
                     ? waitForever(process) : process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
             if (!finished) {
                 ProcessTree.kill(process);
+                Log.warn("脚本超时已终止（上限 " + timeoutSeconds + " 秒）。");
                 synchronized (output) {
                     return output + System.lineSeparator() + "命令超时（超过 " + timeoutSeconds + " 秒）已终止。";
                 }
@@ -108,10 +112,12 @@ public final class ScriptRunner {
                 return output.toString();
             }
         } catch (IOException error) {
+            Log.error("无法启动命令：" + error.getMessage(), error);
             return "无法启动命令：" + error.getMessage();
         } catch (InterruptedException interrupted) {
             ProcessTree.kill(process);
             Thread.currentThread().interrupt();
+            Log.warn("命令被中断，已终止进程树。", interrupted);
             return "命令被中断。";
         } finally {
             if (process != null && process.isAlive()) ProcessTree.kill(process);

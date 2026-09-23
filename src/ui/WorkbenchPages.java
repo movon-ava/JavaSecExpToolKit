@@ -251,8 +251,9 @@ public final class WorkbenchPages implements ConfigController.View {
         if (serviceController == null) return;
         try {
             serviceController.shutdown();
-        } catch (RuntimeException ignored) {
-            // 关闭阶段的异常不该拦住退出
+        } catch (RuntimeException failed) {
+            // 关闭阶段的异常不该拦住退出，但要留痕：否则表现为「端口没释放」
+            util.Log.warn("关闭恶意服务器失败：" + failed.getMessage(), failed);
         }
     }
 

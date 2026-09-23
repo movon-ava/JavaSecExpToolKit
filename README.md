@@ -163,6 +163,9 @@ Maven 的 POM 位于 Java 工作区（`src/pom.xml`，与源码同级），产�
   HTTP 服务端口、JRMP 端口、FakeMySQL 端口、TCP 端口（留空或填 0 表示沿用默认值）
 - `预设链配置` — 预设链页的默认分类筛选（候选值来自内置预设文件本身）
 - `小工具配置` — 文件上传页的默认上传 URL、默认表单字段名（默认 `file`）、上传超时（默认 30 秒）
+- `日志配置` — 是否启用（默认启用）、日志级别（`仅错误` / `警告与错误` / `常规` / `调试`，默认 `常规`）、
+  日志目录（留空写到用户目录，可用环境变量 `JSETK_LOG_DIR` 覆盖）、保留天数（默认 7，含今天）、
+  是否回显到控制台（默认关闭）
 - `漏洞分析配置` — 默认扫描目标（jar / 依赖目录）、外部引擎 JAR（`jar-analyzer-engine`，
   留空则只跑本地分析）、引擎工作目录（引擎固定把 `jar-analyzer.db` 写到工作目录）、
   分析超时（默认 300 秒）、反编译输出目录（留空则输出到工作目录下的 `decompiled`）
@@ -208,7 +211,7 @@ CEYE 确认作为附属阶段时仍依赖 DNS 阶段。未填 Token 就执行 `C
 | `src/probe/` | 引擎调用与命令行拼装（`ProbeEngine` / `ProbeCommand` / `CaptureBridge`） |
 | `src/analyzer/` | 漏洞分析内核（叶子层，不依赖任何项目包）：依赖坐标读取 `Dependency` / `DependencyScanner` / `PomScanner`、版本比较 `Version`、规则表 `VulnerabilityRules`、结论 `Finding` / `VulnerabilityAnalyzer`、外部引擎调用 `EngineRunner`、查询枚举 `ReportReader`、脚本执行 `ScriptRunner`、反编译 `Decompiler` |
 | `src/analyze/` | 漏洞分析编排层（只依赖 `analyzer`）：`AnalyzeEngine`（本地分析 / 调引擎 / 查询 / 反编译）、`AnalyzeReport`、`AnalyzeCommand`（命令行是唯一契约，集中一处便于比对） |
-| `src/config/` `src/util/` | `config.properties` 读写；报文解析与平台差异 |
+| `src/config/` `src/util/` | `config.properties` 读写；报文解析与平台差异；日志内核 `Log`（记录通道）与 `LogFiles`（文件名与保留策略） |
 | `python/` | 探测引擎（`fj_probe.py`）与调用链数据库查询脚本（`jar_report.py`），打进 JAR |
 | `tests/` | Python 单元测试与 Java 界面自检；`TestProcessGuard.java` 在自检退出时清理构建期弹出的计算器进程 |
 | `tools/` | 维护辅助脚本：`agent.ps1`（启动角色化 agent）、`dispatch.ps1`（单条派发并自动合并）、`orchestrate.ps1`（一句话目标自动拆解编排）、`watchdog.ps1`（会话停滞看护）、`lib/`（角色矩阵与执行原语）、`audit_boundary.py`（依赖边界审计）、`apply_patch.py` |
@@ -660,6 +663,29 @@ python .\python\fj_probe.py --mode upload --upload-url http://127.0.0.1:8080/upl
 
 `CEYE_TOKEN` / `CEYE_DOMAIN` / `CEYE_API` 环境变量同样可用。
 
+## 日志记录
+
+运行期的异常与关键动作会按日期写入 `%USERPROFILE%\.JavaSecExpToolKit\logs\app-YYYY-MM-DD.log`，
+用于事后排查「点了按钮没反应」这类问题。设计取舍见 `docs/DESIGN-logging.md`。
+
+- **按日期分文件** — 每行带时间戳、级别与线程名；记录异常时附完整堆栈。
+  跨天写入时自动切到新文件，长时间开着程序不会把日志堆进同一个文件。
+- **默认开启** — 排错能力不该需要先手动打开。关掉后不再产生新文件，已有日志保留。
+- **定期清理** — 默认保留最近 7 天（含今天），在启动时与跨天切换文件时各清理一次。
+  清理只认本工具自己命名的文件，目录里其它文件一律不动。
+- **绝不拖累主线** — 磁盘满、目录不可写、文件被占用都只丢弃这一条记录，
+  不影响任何功能；日志内容也不含请求体、响应体、密钥与令牌。
+
+日志级别四档：`仅错误` / `警告与错误` / `常规`（默认）/ `调试`。线索不足时改「调试」，
+它会额外记录隧道断开、流已关闭、节点无后继这类正常收尾路径。
+
+后台线程（代理接受循环、隧道泵、引擎输出读取）的异常由未捕获异常处理器写入日志：
+这些异常不在界面线程上，默认既不会弹窗也不会留在任何界面里。
+
+日志目录按「环境变量 `JSETK_LOG_DIR` > 配置页填写值 > 用户目录默认值」解析。
+保存配置后立即生效，无需重启；配置页状态行会显示最终生效的绝对路径与本次启动清理掉的
+文件数，便于确认设置是否真的生效。
+
 ## 测试
 
 ```powershell
@@ -673,13 +699,14 @@ Java 界面自检针对已编译的 class 运行，并自行打印断言：
 .\build.ps1
 E:\java\jdk17\bin\javac.exe -encoding UTF-8 -cp "target\classes;lib\java-chains-cli-2.0.0-beta4.jar" -d target\tmp2 tests\*.java
 
-# 七套自检（--add-opens 用于字节码类 gadget 访问 JDK 内部 xalan 实现，run.ps1 已内置）
+# 八套自检（--add-opens 用于字节码类 gadget 访问 JDK 内部 xalan 实现，run.ps1 已内置）
 $opens = @('--add-opens', 'java.xml/com.sun.org.apache.xalan.internal.xsltc.trax=ALL-UNNAMED',
            '--add-opens', 'java.xml/com.sun.org.apache.xalan.internal.xsltc.runtime=ALL-UNNAMED')
 E:\java\jdk17\bin\java.exe @opens -cp "target\tmp2;target\classes;lib\java-chains-cli-2.0.0-beta4.jar" UiNavigationCheck
 E:\java\jdk17\bin\java.exe @opens -cp "target\tmp2;target\classes;lib\java-chains-cli-2.0.0-beta4.jar" UiSwitchEndToEndCheck
 E:\java\jdk17\bin\java.exe @opens -cp "target\tmp2;target\classes;lib\java-chains-cli-2.0.0-beta4.jar" ProxyServerCheck
 E:\java\jdk17\bin\java.exe @opens -cp "target\tmp2;target\classes;lib\java-chains-cli-2.0.0-beta4.jar" AnalyzeCheck
+E:\java\jdk17\bin\java.exe @opens -cp "target\tmp2;target\classes;lib\java-chains-cli-2.0.0-beta4.jar" LogCheck
 ```
 
 | 自检 | 覆盖范围 | 是否需要 `--add-opens` |
@@ -690,6 +717,7 @@ E:\java\jdk17\bin\java.exe @opens -cp "target\tmp2;target\classes;lib\java-chain
 | `ShiroCheck` | Shiro 引擎（检测 / 爆破 / 链生成 / 回显） | 需要 |
 | `PayloadCheck` | 载荷生成引擎（目录、分组、导航、节点显示名、双形态、失败路径、安全），外加带外 Jar 25 种组合与 toString 触发节点归属（共 100 条断言） | 需要 |
 | `ProxyServerCheck` | 代理本身：明文抓包、404、`CONNECT` 隧道字节透传、回调与 `find` / `clear` | 不需要 |
+| `LogCheck` | 日志内核（79 条断言）：文件名解析（含月份不补零、二月三十这类非法日期）、保留天数边界（跨月 / 跨年 / 闰年 / 填 0 按 1 处理）、目录解析优先级、级别过滤、按日期分文件与跨天切换、异常栈展开、清理只认本工具命名的文件、写入失败静默、未捕获异常入库 | 不需要 |
 | `AnalyzeCheck` | 漏洞分析内核（61 条断言）：版本比较语义（含 `1.2.80 > 1.2.9`、预发布小于正式发布）、四类坐标来源与优先级、规则命中与不命中、group 不符时不误报、端到端分析与跳转建议、外部引擎与数据库的失败路径 | 不需要 |
 
 依赖边界自检、源码级别门禁与工具链自检：
@@ -704,6 +732,7 @@ powershell -File tools\check_agent_tools.ps1  # 多 Agent 工具链 91 项机械
 `javac` 命令**不带 `--release 8`**，所以 `src/` 里混进 Java 9+ 的 API 时自检照样全绿，
 只有 `build.ps1` 才会报「找不到符号」。这道断言把该约束变成可秒级跑完的检查。
 
-自检会在构建期执行 gadget 参数里的命令（上游 `Clojure` / `Exec` 节点的默认参数值是 `calc`），因此七套入口都会在启动时由 `tests/TestProcessGuard.java` 给现存 `CalculatorApp` 进程拍快照并注册退出钩子，退出时只强制结束快照之后新起的计算器进程，日志里会打印 `[calc-guard]` 一行。若自检结束后仍有残留，说明该入口没有接入守卫。
+自检会在构建期执行 gadget 参数里的命令（上游 `Clojure` / `Exec` 节点的默认参数值是 `calc`），因此八套入口都会在启动时由 `tests/TestProcessGuard.java` 给现存 `CalculatorApp` 进程拍快照并注册退出钩子，退出时只强制结束快照之后新起的计算器进程，日志里会打印 `[calc-guard]` 一行。若自检结束后仍有残留，说明该入口没有接入守卫。
 
 **请仅在获得明确测试授权的系统上运行。**
+

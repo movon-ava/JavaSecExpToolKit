@@ -186,6 +186,10 @@ The `配置` page stores fixed parameters in
 - `预设链配置` — default category filter for the preset page (choices come from the built-in preset file itself)
 - `小工具配置` — the file-upload page defaults: upload URL, form field name (default `file`) and
   upload timeout (default 30 seconds)
+- `日志配置` — whether logging is on (on by default), the log level (`仅错误` / `警告与错误` / `常规` /
+  `调试`, default `常规`), the log directory (blank writes under the user home; the `JSETK_LOG_DIR`
+  env var overrides it), the retention window in days (default 7, today included) and whether to
+  echo records to the console (off by default)
 - `漏洞分析配置` — default scan target (jar / dependency directory), external engine JAR
   (`jar-analyzer-engine`; blank means local analysis only), engine working directory (the engine
   always writes `jar-analyzer.db` there), analysis timeout (default 300 seconds) and the
@@ -240,7 +244,7 @@ readable hint instead of an engine error — set CEYE Token on the settings page
 | `src/probe/` | Engine invocation and command-line assembly (`ProbeEngine` / `ProbeCommand` / `CaptureBridge`) |
 | `src/analyzer/` | Vulnerability-analysis kernel (a leaf package that depends on no project package): dependency coordinates `Dependency` / `DependencyScanner` / `PomScanner`, version comparison `Version`, rule table `VulnerabilityRules`, findings `Finding` / `VulnerabilityAnalyzer`, external engine `EngineRunner`, query enum `ReportReader`, script execution `ScriptRunner`, decompilation `Decompiler` |
 | `src/analyze/` | Vulnerability-analysis orchestration (depends on `analyzer` only): `AnalyzeEngine` (local analysis / engine run / query / decompile), `AnalyzeReport`, `AnalyzeCommand` (the command line is the single contract, kept in one place so it can be diffed against upstream docs) |
-| `src/config/` `src/util/` | `config.properties` read/write; message parsing and platform differences |
+| `src/config/` `src/util/` | `config.properties` read/write; message parsing and platform differences; the logging kernel `Log` (record channel) and `LogFiles` (file names and retention) |
 | `python/` | probe engine (`fj_probe.py`) and the call-graph database query script (`jar_report.py`), packaged into the JAR |
 | `tests/` | Python unit tests and Java UI self-checks; `TestProcessGuard.java` kills calculator processes spawned during a self-check run |
 | `tools/` | maintenance helpers: `agent.ps1` (launch a role-scoped agent), `dispatch.ps1` (dispatch one role and auto-merge), `orchestrate.ps1` (one-sentence goal, automatic decomposition and orchestration), `watchdog.ps1` (stall watchdog), `lib/` (role matrix and execution primitives), `audit_boundary.py` (dependency audit), `apply_patch.py` |
@@ -766,6 +770,37 @@ python .\python\fj_probe.py --mode upload --upload-url http://127.0.0.1:8080/upl
 
 `CEYE_TOKEN` / `CEYE_DOMAIN` / `CEYE_API` environment variables work as well.
 
+## Logging
+
+Runtime exceptions and key actions are written per day to
+`%USERPROFILE%\.JavaSecExpToolKit\logs\app-YYYY-MM-DD.log`, so that "the button
+did nothing" can be investigated afterwards. Design tradeoffs are in `docs/DESIGN-logging.md`.
+
+- **One file per day** — every line carries a timestamp, a level and the thread name; exceptions
+  are recorded with their full stack. The writer switches to a new file when the date rolls over,
+  so a long-running session does not pile everything into one file.
+- **On by default** — troubleshooting should not require turning it on first. Once disabled, no new
+  files are created and existing logs are kept.
+- **Scheduled cleanup** — the last 7 days (today included) are kept by default; cleanup runs at
+  startup and whenever the file rolls over to a new day. Cleanup only considers files this tool
+  named, so anything else in that directory is left alone.
+- **Never blocks the main path** — a full disk, an unwritable directory or a locked file only drops
+  that single record and never affects any feature. The log contains no request bodies, response
+  bodies, keys or tokens.
+
+Four levels are available: `仅错误` / `警告与错误` / `常规` (default) / `调试`. Switch to `调试`
+when the usual records are not enough — it also logs normal wind-down paths such as tunnels
+closing, streams ending and nodes having no successors.
+
+Exceptions from background threads (the proxy accept loop, tunnel pumps, engine output readers) are
+captured by the default uncaught-exception handler: those threads are not on the event dispatch
+thread, so by default their failures appear neither in a dialog nor anywhere in the UI.
+
+The log directory is resolved as "env var `JSETK_LOG_DIR` > value in the settings page > default
+under the user home". Changes take effect on save with no restart; the settings status line shows
+the effective absolute path and how many files this startup cleaned up, so it is easy to confirm
+that the setting really took effect.
+
 ## Tests
 
 ```powershell
@@ -779,13 +814,14 @@ The Java self-checks run against the compiled classes and print their own assert
 .\build.ps1
 E:\java\jdk17\bin\javac.exe -encoding UTF-8 -cp "target\classes;lib\java-chains-cli-2.0.0-beta4.jar" -d target\tmp2 tests\*.java
 
-# all seven checks (--add-opens lets bytecode gadgets reach the JDK-internal xalan classes; run.ps1 already adds them)
+# all eight checks (--add-opens lets bytecode gadgets reach the JDK-internal xalan classes; run.ps1 already adds them)
 $opens = @('--add-opens', 'java.xml/com.sun.org.apache.xalan.internal.xsltc.trax=ALL-UNNAMED',
            '--add-opens', 'java.xml/com.sun.org.apache.xalan.internal.xsltc.runtime=ALL-UNNAMED')
 E:\java\jdk17\bin\java.exe @opens -cp "target\tmp2;target\classes;lib\java-chains-cli-2.0.0-beta4.jar" UiNavigationCheck
 E:\java\jdk17\bin\java.exe @opens -cp "target\tmp2;target\classes;lib\java-chains-cli-2.0.0-beta4.jar" UiSwitchEndToEndCheck
 E:\java\jdk17\bin\java.exe @opens -cp "target\tmp2;target\classes;lib\java-chains-cli-2.0.0-beta4.jar" ProxyServerCheck
 E:\java\jdk17\bin\java.exe @opens -cp "target\tmp2;target\classes;lib\java-chains-cli-2.0.0-beta4.jar" AnalyzeCheck
+E:\java\jdk17\bin\java.exe @opens -cp "target\tmp2;target\classes;lib\java-chains-cli-2.0.0-beta4.jar" LogCheck
 ```
 
 | Self-check | Coverage | Needs `--add-opens` |
@@ -796,6 +832,7 @@ E:\java\jdk17\bin\java.exe @opens -cp "target\tmp2;target\classes;lib\java-chain
 | `ShiroCheck` | Shiro engine (detect / crack / chain build / echo) | Yes |
 | `PayloadCheck` | Payload engine (catalog, groups, navigation, node display names, dual form, failure paths, safety) plus the 25 out-of-band Jar combinations and toString trigger ownership (100 assertions in total) | Yes |
 | `ProxyServerCheck` | The proxy itself: plain-HTTP capture, 404 handling, `CONNECT` tunneling with byte pass-through, callbacks, `find` / `clear` | No |
+| `LogCheck` | The logging kernel (79 assertions): file-name parsing (including unpadded months and impossible dates such as 30 February), retention boundaries (month / year / leap-year crossings, 0 treated as 1), directory resolution priority, level filtering, per-day files with day rollover, stack expansion, cleanup restricted to files this tool named, silent failure when writing is impossible, and uncaught exceptions reaching the log | No |
 | `AnalyzeCheck` | The analysis kernel (61 assertions): version-comparison semantics (including `1.2.80 > 1.2.9` and pre-releases sorting below releases), the four coordinate sources and their priority, rule hits and misses, no false positives when the group differs, end-to-end analysis with jump suggestions, and the failure paths of the external engine and the database | No |
 
 Dependency-boundary, source-level and toolchain checks:
@@ -811,6 +848,6 @@ hand-written `javac` commands above **do not pass `--release 8`**. A Java 9+ API
 therefore passes every self-check and only fails inside `build.ps1` with "cannot find symbol".
 This assertion turns that constraint into a check that runs in seconds.
 
-Self-checks execute the command embedded in gadget parameters while building chains (the upstream `Clojure` / `Exec` nodes default to `calc`), so all six entry points call `tests/TestProcessGuard.java` on startup: it snapshots the existing `CalculatorApp` processes and installs a JVM shutdown hook that force-kills only the ones started after the snapshot, logging a `[calc-guard]` line. A leftover calculator after a run means that entry point is missing the guard.
+Self-checks execute the command embedded in gadget parameters while building chains (the upstream `Clojure` / `Exec` nodes default to `calc`), so all eight entry points call `tests/TestProcessGuard.java` on startup: it snapshots the existing `CalculatorApp` processes and installs a JVM shutdown hook that force-kills only the ones started after the snapshot, logging a `[calc-guard]` line. A leftover calculator after a run means that entry point is missing the guard.
 
 Only run this against systems where testing is explicitly authorized.

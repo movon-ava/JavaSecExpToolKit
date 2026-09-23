@@ -1,5 +1,7 @@
 package proxy;
 
+import util.Log;
+
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -233,19 +235,23 @@ public final class ProxyServer {
         Thread thread = new Thread(this::acceptLoop, "proxy-accept");
         thread.setDaemon(true);
         thread.start();
+        Log.info("代理已启动，监听 " + resolved + ":" + this.port);
     }
 
     public synchronized void stop() {
+        boolean wasRunning = running;
         running = false;
         ServerSocket socket = serverSocket;
         serverSocket = null;
         if (socket != null) {
             try {
                 socket.close();
-            } catch (IOException ignored) {
-                // 监听已关闭
+            } catch (IOException closed) {
+                // 监听已关闭：属正常收尾
+                Log.debug("关闭代理监听端口：" + closed.getMessage());
             }
         }
+        if (wasRunning) Log.info("代理已停止，释放端口 " + this.port);
     }
 
     public List<HttpFlow> snapshot() {
@@ -279,7 +285,9 @@ public final class ProxyServer {
                 worker.setDaemon(true);
                 worker.start();
             } catch (IOException e) {
+                // 停止时 accept 必然抛异常，属正常收尾；运行中失败才需要留痕
                 if (!running) return;
+                Log.warn("代理接受连接失败：" + e.getClass().getSimpleName() + ": " + e.getMessage(), e);
             }
         }
     }
@@ -300,8 +308,10 @@ public final class ProxyServer {
             } else {
                 handlePlain(client, request, head);
             }
-        } catch (Exception ignored) {
-            // 单条连接异常不影响代理整体
+        } catch (Exception error) {
+            // 单条连接异常不影响代理整体，但必须留痕：否则表现为「代理没反应」
+            Log.warn("代理处理连接异常：" + error.getClass().getSimpleName() + ": " + error.getMessage(),
+                    error);
         } finally {
             try {
                 client.close();
@@ -345,20 +355,24 @@ public final class ProxyServer {
             Thread pump = new Thread(() -> {
                 try {
                     pumpBytes(client, upstreamRef, flow);
-                } catch (IOException ignored) {
-                    // 任一方向断开即结束隧道
+                } catch (IOException ended) {
+                    // 任一方向断开即结束隧道；连接正常关闭也会走到这里，故用调试级
+                    Log.debug("隧道方向 客户端→上游 结束：" + ended.getMessage());
                 }
             }, "proxy-tunnel");
             pump.setDaemon(true);
             pump.start();
             try {
                 pumpBytes(upstream, client, flow);
-            } catch (IOException ignored) {
-                // 客户端断开
+            } catch (IOException ended) {
+                // 客户端断开属常见情况，故用调试级
+                Log.debug("隧道方向 上游→客户端 结束：" + ended.getMessage());
             }
             pump.join(1000);
-        } catch (Exception e) {
-            flow.error = e.getClass().getSimpleName() + ": " + e.getMessage();
+        } catch (Exception error) {
+            flow.error = error.getClass().getSimpleName() + ": " + error.getMessage();
+            Log.warn("HTTPS 隧道无法连接上游 " + flow.host + ":" + flow.port + "："
+                    + flow.error, error);
         } finally {
             flow.elapsedMs = (System.nanoTime() - started) / 1000000;
             if (!recorded) record(flow);
@@ -495,10 +509,12 @@ public final class ProxyServer {
             record(flow);
             if (bodyless) return true;
             return isKeepAlive(request.version, request.headers, status.code, status.headers);
-        } catch (Exception e) {
-            flow.error = e.getClass().getSimpleName() + ": " + e.getMessage();
+        } catch (Exception error) {
+            flow.error = error.getClass().getSimpleName() + ": " + error.getMessage();
             record(flow);
-            throw new IOException(flow.error, e);
+            Log.warn("转发到上游失败 " + flow.method + " " + flow.host + ":" + flow.port
+                    + "：" + flow.error, error);
+            throw new IOException(flow.error, error);
         } finally {
             flow.elapsedMs = flow.elapsedMs == 0 ? (System.nanoTime() - started) / 1000000 : flow.elapsedMs;
             if (upstream != null) {
@@ -546,8 +562,10 @@ public final class ProxyServer {
         for (FlowListener listener : copy) {
             try {
                 listener.onFlow(flow);
-            } catch (RuntimeException ignored) {
-                // 界面回调异常不应影响转发
+            } catch (RuntimeException failed) {
+                // 界面回调异常不应影响转发，但要留痕：否则表现为「抓包列表不更新」
+                Log.warn("抓包回调异常：" + failed.getClass().getSimpleName() + ": " + failed.getMessage(),
+                        failed);
             }
         }
     }

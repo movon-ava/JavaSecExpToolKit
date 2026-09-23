@@ -3,6 +3,8 @@ package analyzer;
 import java.lang.reflect.Method;
 import java.util.Iterator;
 
+import util.Log;
+
 /**
  * 终止进程及其全部子进程。
  *
@@ -39,8 +41,9 @@ public final class ProcessTree {
         killDescendants(process);
         try {
             process.destroyForcibly();
-        } catch (RuntimeException ignored) {
+        } catch (RuntimeException ended) {
             // 已退出：无需处理
+            Log.debug("进程已退出，无需强杀：" + ended.getMessage());
         }
     }
 
@@ -66,10 +69,12 @@ public final class ProcessTree {
         if (handle == null || HANDLE_DESTROY == null) return;
         try {
             HANDLE_DESTROY.invoke(handle);
-        } catch (ReflectiveOperationException ignored) {
+        } catch (ReflectiveOperationException ended) {
             // 子进程已退出，或该实现不支持强杀
-        } catch (RuntimeException ignored) {
+            Log.debug("子进程强杀失败：" + ended);
+        } catch (RuntimeException ended) {
             // 同上：终止路径不抛出
+            Log.debug("子进程强杀异常：" + ended);
         }
     }
 
