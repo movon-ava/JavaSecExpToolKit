@@ -1,5 +1,176 @@
 # AI 工作报告
 
+## 2026-09-23（本轮：分析证据模型 - 按 astra 建议落地）
+
+### 一、需求
+
+> 根据 astra 目录中的建议进行开发和优化
+
+建议源文件：`astra/漏洞分析模块设计建议.md`（本轮一并入库）。它对模块定位给出的核心口径是：
+
+> 外部分析器负责尽可能完整地提取事实；本项目负责把事实转成**有证据、有边界、可验证的安全假设**。
+
+同时给出了 P0/P1/P2 优先级：**P0 真实端到端验证**、**P1 结果状态与证据来源**、
+**P1 规则知识库治理**、**P1 证据关联与可达性表达**、**P2 可复现**、**P2 交互与报告导出**。
+本轮按这六项逐条落地，不新增分析方法（建议里明确「不要重写基础扫描器」）。
+
+### 二、根因分析（改代码之前先定位成因）
+
+**根因 1：结论只有「可信度」一个维度，方向可能被读反。**
+`Finding.Confidence` 说的是「来源有多可靠」，不是「验证走到哪一步」。于是
+「来自 `pom.properties` 的高可信度」在界面上与「漏洞已确认」看起来一样。建议文件明确要求区分
+`observed` / `suspected` / `confirmed` / `not-reproduced` / `unknown`，并规定
+「静态特征命中不得标 confirmed；扫描失败不得标 clean」。
+
+**根因 2：`python/jar_signatures.py` 里有一段永远执行不到的死代码。**
+`load_signatures` 在 `return` 之后才写「前提 / 反证字段校验」，因此**校验从未生效**：
+签名库缺 `applicable` / `references` 也不会报错，只会让结论里少一栏。这是本轮实测查出的真实缺陷，
+不是推测——补上断言后即可复现。
+
+**根因 3：引擎调用丢弃子进程退出码，失败与成功长得一样。**
+`ScriptRunner.run` 只返回输出文本，退出码被丢掉。后果是「查询没跑成」（脚本参数错误、库损坏、
+超时）与「目标干净」（查询跑了但没有命中）在界面上都表现为「一段没有命中的报告」。
+建议文件把这条列为 P1 的核心：**0 命中不得掩盖查询没执行成功**。
+
+**根因 4：规则库没有来源与版本。**
+`VulnerabilityRules` 的 25 条规则只有 id、组件、区间与结论，答不出「这条判定依据哪份公告」
+「这是哪一版规则」；签名库同样没有来源字段。规则一改，使用者无从判断结论为何变了。
+
+**根因 5：利用路径只有一个扁平集合。**
+`query_paths` 输出「某个调用者」与「某个入口」的集合，读的人无法判断两者是不是同一条链上的两跳，
+也无法判断「没找到入口」是不是因为回溯深度不够。建议文件要求展示完整链路与路径长度 / 断点。
+
+**根因 6：绕过手法按漏洞大类整段贴出。**
+签名库里 `bypasses` 是字符串数组，报告把一整类的手法全列出来。技巧清单里多数条目依赖的组件
+根本不在目标里，会把「某版本才成立的手法」说成通用结论——建议文件明确反对这一点。
+
+**改动原则**：判定口径一行未改。`VulnerabilityRules` 的 25 条规则区间、`GadgetRule` 的坐标与
+版本区间判定、`VulnerabilityAnalyzer` 的排序语义全部保持原样；本轮只改
+「结论怎么被看到」「依据从哪来」「失败怎么被表达」。
+
+### 三、改动清单
+
+| 文件 | 写入域 | 动作 |
+| --- | --- | --- |
+| `astra/漏洞分析模块设计建议.md` | 文档 | 新增：本轮需求的来源文件，一并入库 |
+| `src/analyzer/Finding.java` | 利用链 | 改：新增 `Status` 五档与 `missingEvidence`，`line()` 同时给可信度与状态 |
+| `src/analyzer/VulnerabilityRules.java` | 利用链 | 改：25 条规则登记判定来源（漏填构造期抛异常）、规则库版本 `2026.09.1` 与维护日期、`of(id)` |
+| `src/analyzer/VulnerabilityAnalyzer.java` | 利用链 | 改：渲染状态、缺失证据、规则来源与规则库版本 |
+| `src/analyzer/ScriptRunner.java` | 利用链 | 改：新增 `Outcome`（退出码 / 输出 / 是否超时）与 `runDetailed`，`run` 保持原签名 |
+| `src/analyzer/ToolkitLocator.java` | 利用链 | 新增：按「配置页 > 环境变量 > 约定位置」定位外部引擎，并报出找到的形态 |
+| `src/analyze/AnalysisContext.java` | 编排 | 新增：分析上下文模型（来源 / 目标 / 证据 / 数据源 / 局限 / 来源页 / 时间） |
+| `src/analyze/AnalyzeReport.java` | 编排 | 改：可挂载上下文与来源页 |
+| `src/analyze/AnalyzeEngine.java` | 编排 | 改：按真实退出码判定成败、失败横幅、上下文构建、证据摘取上限、筛选取值查询 |
+| `src/analyze/AnalyzeCommand.java` | 编排 | 改：筛选（`--only-section` / `--only-type`）、`--baseline`、`--tool-version`、`--list-filters`、工具版本常量 |
+| `python/jar_report.py` | 分析 | 改：`paths` 输出完整链路序列、路径长度与断点 |
+| `python/jar_signatures.py` | 分析 | 改：**修掉 `return` 之后的死代码**、筛选与未知取值报错、基线比对、任务元数据导出、`--list-filters` 不连库 |
+| `python/vuln_signatures.json` | 分析 | 改：65 条特征补 `source` / `tag`，14 种类型补 `applicable` / `references`，绕过手法结构化，新增 `ruleVersion` / `maintained` / `governance` |
+| `src/ui/AnalysisContextBar.java` | 界面 | 新增：交接条（只展示、不预填；超过 30 分钟追加过期提醒） |
+| `src/ui/AnalyzeChainPage.java` | 界面 | 改：新增证据来源、漏洞类型下拉框与「与上次比对」开关 |
+| `src/ui/AnalyzeController.java` | 界面 | 改：筛选与比对接线；类型下拉在后台线程补全，取不到回落不筛选 |
+| `src/ui/AnalyzeWorker.java`、`WorkbenchPages.java`、`WidgetRegistry.java`、`src/Main.java` | 界面 | 改：交接条接线、换页刷新、控件登记 |
+| `src/ui/ConfigForm.java`、`ConfigController.java` | 界面 | 改：新增「导出机器可读报告」开关与目录（默认开启） |
+| `tests/AnalyzeCheck.java` | 测试 | 改：**85 → 134 条断言**（状态 / 来源 / 上下文 / 证据上限 / 筛选拼装 / 类型下拉映射） |
+| `tests/UiNavigationCheck.java` | 测试 | 改：新增筛选控件与交接条断言 |
+| `tests/test_signatures.py` | 测试 | 改：**16 → 37 项**（治理字段、筛选、导出元数据、基线比对与回落、死代码回归） |
+| `tests/test_jar_report.py` | 测试 | 改：完整链路、路径长度与断点断言 |
+| `tests/test_backend_e2e.py` | 测试 | 新增：**P0 真实端到端**（真建库 → 表结构 → 查询 → 判定），后端缺席时跳过并写明「未验证」 |
+| `openspec/changes/analyze-evidence-model/**` | 主 agent | 新增：本轮的规格变更（proposal / tasks / spec delta） |
+| `README.md`、`README.en.md`、`PROGRESS.md`、`docs/DESIGN-analyze.md` | 主 agent | 改：文档同步 |
+
+### 四、功能行为
+
+**结论状态与缺失证据。** 每条结论的行首同时给可信度与状态，正文有一段
+「成立还需要（缺一不可）」与「反证条件」，并给出该判定的规则来源。静态规则命中一律记疑似。
+
+**规则库治理。** 规则表 25 条全部登记来源，漏填在构造期抛异常（不是运行时才发现）；
+规则库带版本号与维护日期，报告头印出。签名库的每条特征补 `source` / `tag`，
+每种漏洞类型补 `applicable` / `references`，绕过手法从字符串升级为结构化对象。
+
+**失败与成功可分辨。** 引擎调用按子进程真实退出码判定：非零退出码或超时都会在报告前冠一段
+失败横幅，写明「这不是结论、也不代表目标干净」，状态行不显示为完成。
+
+**筛选。** 特征匹配按钮右侧三个控件：严重度、证据来源、漏洞类型。筛选在脚本侧执行，
+报告头写明本次筛选与「未命中清单只覆盖筛选后的特征」；未知取值报错并列出可选值；
+筛空时明确「不代表目标干净」。漏洞类型候选由签名库 `--list-filters` 给出（只读库、不连数据库，
+实测约 90 ms），进页后在后台线程补全，取不到回落为不筛选。
+
+**同输入比对。** 「与上次比对」默认开启：以上一份机器可读导出为基线给出新增 / 不再命中 /
+命中数变化。基线缺失、损坏或 schema 不同时回落为不做比对，本次分析照常成功。
+
+**机器可读导出。** schema `jsetk.analyze.signatures/1`，含数据源状态、维度说明、局限列表，
+以及任务元数据（工具版本、数据库路径与 SHA-256、大小与修改时间、生成时间、本次筛选）。
+导出失败如实写「未写出」并给出路径。
+
+**上下文交接。** 结论产生后内容区顶部出现交接条，写明来源、目标、命中证据与局限并可回跳；
+**只展示、不预填**高风险参数；结论超过 30 分钟追加过期提醒。
+
+### 五、验证记录
+
+| 验证项 | 命令 | 结果 |
+| --- | --- | --- |
+| Java 源码编译（release 8） | `javac --release 8 -nowarn -d target\checkclasses src\**\*.java` | 通过（退出码 0） |
+| 自检编译 | `javac -cp target\checkclasses;lib\... -d target\tmp2 tests\*.java` | 通过（退出码 0） |
+| 漏洞分析自检 | `AnalyzeCheck` | **134 条断言，失败 0**（原 85 条） |
+| 界面自检 | `UiNavigationCheck` | 全部通过（含筛选控件与交接条断言，截图 `target/ui-check/11-analyze.png`） |
+| 日志内核自检 | `LogCheck` | 79 条断言，失败 0 |
+| 载荷生成自检 | `PayloadCheck` | 100 条断言，失败 0 |
+| Shiro 自检 | `ShiroCheck` | 通过 |
+| 代理自检 | `ProxyServerCheck` | 通过 |
+| Python 单测 | `python -X utf8 -m unittest discover -s tests` | **219 项通过**（原 206 项） |
+| 真实后端端到端（P0） | `python -X utf8 -m unittest tests.test_backend_e2e -v` | **4 项通过（真实建库，非跳过）** |
+| 依赖边界审计 | `python -X utf8 tools\audit_boundary.py` | 全部通过（无环 / 无越界 / 叶子层无出边 / 通用组件未引用功能模块） |
+| 筛选取值查询 | `python -X utf8 python\jar_signatures.py --list-filters` | 31 行，耗时约 90 ms |
+| OpenSpec 校验 | `openspec validate --all --strict` | **17 passed, 0 failed** |
+
+### 六、多 Agent 协作
+
+本轮由主 agent 串行完成，按下表职责归类（写入域互不重叠）：
+
+| 角色 | 主要工作 |
+| --- | --- |
+| 主 agent | 需求拆解（按 astra 的 P0–P2 六项）、根因定位、共享内核与 `src/pom.xml` 不动的边界决策、OpenSpec change 与严格校验、README 中英同步、AI 报告与进度文档、备份与门禁总控 |
+| 利用链 agent | `Finding` 状态模型、`VulnerabilityRules` 来源与版本、`ScriptRunner.Outcome`、`ToolkitLocator`、`jar_report.py` 可达性表达 |
+| 界面 agent | 交接条、筛选控件与后台补全、配置页导出开关、换页刷新与控件登记 |
+| 探测 agent | `jar_signatures.py` 死代码修复与筛选 / 比对 / 导出、`vuln_signatures.json` 治理字段与结构化绕过 |
+| 测试 agent | `AnalyzeCheck` 85 → 134 条、`UiNavigationCheck` 筛选控件与交接条、`test_signatures.py` 16 → 37 项、新增 `test_backend_e2e.py` |
+| 监督 agent | 逐文件比对写入域；核对 `analyzer` 仍为零项目依赖叶子、`analyze` 只依赖 `analyzer`、`ui` 不反向依赖；核对界面文件规模上限；确认断言只增不减 |
+| 看护 agent | 盯长任务（Python 单测约 60 秒、`UiNavigationCheck` 约 14 秒）判定「在做 / 等待 / 卡死」，本轮无真卡死 |
+
+### 七、备份与 Git
+
+- 改动前快照 `.backups/20260923-173413`；收尾时轮转，只保留最近三份。
+- `.backups/`、`target/`、`JavaSecExpToolKit.jar` 由 `.gitignore` 忽略。
+- `astra/` 随本轮一并入库（来源见第一节）。
+
+构建实测（`build.ps1`）：
+
+```
+Maven build complete: G:\java\JavaSecExpToolKit\JavaSecExpToolKit.jar
+JAR build time: 2026-09-23 18:27:43
+JAR size: 654617 bytes
+Source freshness checked: 133 file(s) under src / python / tests
+Runtime dependency: lib\java-chains-cli-2.0.0-beta4.jar (184569201 bytes)
+```
+
+### 八、如实说明的局限
+
+1. **`observed` / `confirmed` / `not-reproduced` 三档目前没有产出路径**：本引擎只做静态判定，
+   这三档是给将来接入真实验证动作预留的。现状下所有结论都是 `suspected` 或 `unknown`。
+2. **真实端到端是环境相关的**：`tests/test_backend_e2e.py` 在能定位到后端时真建库并通过，
+   后端缺席时**跳过并写明「未验证」**。跳过不是通过，CI 上不等于每次都验证过。
+3. **同输入比对依赖「上一次导出」这一个基线**：没有历史列表，也没有多基线对比；
+   基线被覆盖后无法回到更早的一次。
+4. **筛选口径与「未命中清单」的关系仍是近似的**：报告写明「未命中清单只覆盖筛选后的特征」，
+   但不给出「如果不过滤会多命中哪些」。这一条需要额外跑一次对照，本轮未做。
+5. **绕过手法的结构化是人工整理的**：`text` / `source` / `appliesTo` / `requires` / `tags`
+   由签名库作者填写，不是自动抽取；标签写错会让手法在报告里消失（表现为「少了一栏」），
+   目前靠人工复核而不是机械断言守住。
+6. **规则来源是公告级引用，不是逐条核对**：`VulnerabilityRules.SOURCES` 记录的是判定依据的
+   公开来源（如各组件的安全公告），未逐条验证区间端点的准确性。
+7. **`astra/` 是外部建议文档**：内容按原文入库，不代表本仓库已全部落实；其中
+   「污点分析」被明确列为 non-goal，数据脱敏与保留策略（P2）留到下一轮。
+
 ## 2026-09-23（本轮：漏洞分析拆页 + 漏洞特征匹配 + gadget 规则表）
 
 ### 一、需求

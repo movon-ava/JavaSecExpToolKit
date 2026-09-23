@@ -45,6 +45,13 @@ public final class WorkbenchPages implements ConfigController.View {
      */
     public final AnalyzeScanPage.Widgets analyzeScanWidgets = AnalyzeScanPage.defaults();
     public final AnalyzeChainPage.Widgets analyzeChainWidgets = AnalyzeChainPage.defaults();
+    /**
+     * 「由分析结论带入」交接条：显示当前结论是顺着哪条分析建议来的。
+     *
+     * <p>放在内容区顶部而不是某一页内部：分析结论可能指向载荷、Shiro、服务等任意页面，
+     * 交接条必须跟着结论走，而不是留在分析页上——使用者在目标页才需要知道「为什么带我到这」。
+     */
+    public final AnalysisContextBar contextBar;
 
     private PayloadController payloadController;
     private PresetController presetController;
@@ -61,6 +68,8 @@ public final class WorkbenchPages implements ConfigController.View {
         this.capture = capture;
         this.navigator = navigator;
         payloadSelector = new PayloadChainSelector(fonts);
+        contextBar = new AnalysisContextBar(fonts);
+        contextBar.setNavigator(navigator);
         payloadWidgets.selector = payloadSelector;
         payloadWidgets.onSendToCapture = payload -> {
             capture.body.setText(payload);
@@ -194,6 +203,10 @@ public final class WorkbenchPages implements ConfigController.View {
                                                     java.util.function.Consumer<String> onJump) {
                         AnalyzeScanController.fillJumps(analyzeScanWidgets, jumps, onJump, fonts);
                     }
+
+                    @Override public void showContext(analyze.AnalysisContext context, String originKey) {
+                        contextBar.show(context, originKey);
+                    }
                 }, navigator, config);
         analyzeScanController.bind();
     }
@@ -228,6 +241,10 @@ public final class WorkbenchPages implements ConfigController.View {
                     @Override public void showJumps(java.util.Map<String, String> jumps,
                                                     java.util.function.Consumer<String> onJump) {
                         AnalyzeController.fillJumps(analyzeChainWidgets, jumps, onJump, fonts);
+                    }
+
+                    @Override public void showContext(analyze.AnalysisContext context, String originKey) {
+                        contextBar.show(context, originKey);
                     }
                 }, navigator, config);
         analyzeChainController.bind();

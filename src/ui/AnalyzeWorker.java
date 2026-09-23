@@ -26,6 +26,15 @@ final class AnalyzeWorker {
         void setBusy(boolean busy);
         /** 按报告里的建议渲染跳转按钮。 */
         void showJumps(Map<String, String> jumps, Consumer<String> onJump);
+
+        /**
+         * 显示本次结论交接给利用页的上下文。
+         *
+         * <p>默认空实现：并非每个页面都需要这条横幅（例如反编译只需要看源码），
+         * 给默认实现可以让不需要的页面保持原样，而不是被迫实现一个空方法。
+         */
+        default void showContext(analyze.AnalysisContext context, String originKey) {
+        }
     }
 
     /** 一次分析最多给出的建议按钮数：太多会让工具条挤成一片。 */
@@ -109,6 +118,8 @@ final class AnalyzeWorker {
                 if (navigator != null) navigator.accept(navKey);
             }
         });
+        // 没有结论就没有上下文：把上一条清掉，否则使用者会以为本次结论来自上一次分析
+        view.showContext(report.context, report.context == null ? "" : report.context.originKey);
     }
 
     /** 建议按钮按登记顺序截断，避免工具条被挤爆。 */

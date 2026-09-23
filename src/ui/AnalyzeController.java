@@ -14,6 +14,7 @@ import analyze.AnalyzeCommand;
 import analyze.AnalyzeEngine;
 import analyze.AnalyzeReport;
 import analyzer.EngineRunner;
+import analyzer.ToolkitLocator;
 import analyzer.ReportReader;
 import analyzer.ScriptRunner;
 
@@ -43,6 +44,19 @@ public final class AnalyzeController {
     private Path signatureScript;
     /** 已释放到本地的签名库（vuln_signatures.json）。 */
     private Path signatureLibrary;
+
+    /**
+     * 「漏洞类型」下拉框的取值，与控件下拉项一一对应。
+     *
+     * <p>为什么单独存一份 id：下拉框只能显示一个字符串，而脚本接受的是类型 id。
+     * 把「显示名」当成「id」传会在类型名与 id 不同时静默筛空，只能靠报告里没结论发现。
+     */
+    private final java.util.List<String> typeIds = new java.util.ArrayList<String>();
+
+    /** 类型选项是否已补全；已补全就不再起一个 Python 进程。 */
+    private volatile boolean typeOptionsLoaded;
+    /** 正在补全：防止反复进页叠起来几个查询线程。 */
+    private volatile boolean typeOptionsLoading;
 
     public AnalyzeController(AnalyzeChainPage.Widgets widgets, UiKit.FontSink fonts,
                              AnalyzeWorker.View view, Consumer<String> navigator,
@@ -79,7 +93,86 @@ public final class AnalyzeController {
         if (widgets.outputDir.getText().trim().isEmpty()) {
             widgets.outputDir.setText(decompileDir);
         }
-        widgets.status.setText(AnalyzeEngine.rulesSummary());
+        widgets.status.setText(AnalyzeEngine.rulesSummary()
+                + "　后端: " + backendSummary());
+        loadTypeOptions();
+    }
+
+    /**
+     * 后台补全「漏洞类型」下拉框的选项。
+     *
+     * <p>取值来自签名库，得起一个 Python 进程问一次（实测约 90 ms）。
+     * 进页时同步执行，在解释器冷启动或磁盘忙时会卡几百毫秒；
+     * 因此先把「全部类型」摆着，取到再补齐，取不到就保持不筛。
+     *
+     * <p>只取一次：签名库在运行期不会变，重复问只是白付进程启动的代价。
+     */
+    private void loadTypeOptions() {
+        if (typeOptionsLoaded || typeOptionsLoading) return;
+        typeOptionsLoading = true;
+        Thread loader = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                final java.util.List<String> ids = new ArrayList<String>();
+                final java.util.List<String> labels = new ArrayList<String>();
+                try {
+                    Path script = script(signatureScript, AnalyzeCommand.SIGNATURE_RESOURCE);
+                    Path library = script(signatureLibrary,
+                            AnalyzeCommand.SIGNATURE_LIBRARY_RESOURCE);
+                    if (script != null && library != null) {
+                        signatureScript = script;
+                        signatureLibrary = library;
+                        for (String row : AnalyzeEngine.listFilters(script, library,
+                                ScriptRunner.python(config.python()),
+                                AnalyzeEngine.DEFAULT_LOCAL_TIMEOUT)) {
+                            // 行形如 type|deserialization|反序列化：证据来源另有一个下拉框，这里只收类型
+                            String[] parts = row.split("\\|", 3);
+                            if (parts.length == 3 && "type".equals(parts[0])) {
+                                ids.add(parts[1]);
+                                labels.add(parts[2]);
+                            }
+                        }
+                    }
+                } catch (RuntimeException error) {
+                    util.Log.warn("读取漏洞类型选项失败：" + error.getMessage(), error);
+                }
+                if (ids.isEmpty()) {
+                    // 取不到就不置一个筛不到东西的假选项；下次进页再试
+                    typeOptionsLoading = false;
+                    return;
+                }
+                javax.swing.SwingUtilities.invokeLater(new Runnable() {
+                    @Override
+                    public void run() {
+                        applyTypeOptions(ids, labels);
+                    }
+                });
+            }
+        }, "analyze-type-filters");
+        loader.setDaemon(true);
+        loader.start();
+    }
+
+    /** 把取到的类型选项写进下拉框；保留使用者已选中的一项。 */
+    private void applyTypeOptions(java.util.List<String> ids, java.util.List<String> labels) {
+        Object previous = widgets.onlyType.getSelectedItem();
+        typeIds.clear();
+        // 下拉框第 0 项是「全部类型」，对应空串：两者的下标必须始终对齐
+        typeIds.add("");
+        typeIds.addAll(ids);
+        widgets.onlyType.removeAllItems();
+        widgets.onlyType.addItem(AnalyzeChainPage.TYPE_ALL);
+        for (String label : labels) widgets.onlyType.addItem(label);
+        if (previous != null) {
+            for (int i = 1; i < widgets.onlyType.getItemCount(); i++) {
+                if (previous.equals(widgets.onlyType.getItemAt(i))) {
+                    widgets.onlyType.setSelectedIndex(i);
+                    break;
+                }
+            }
+        }
+        typeOptionsLoaded = true;
+        typeOptionsLoading = false;
     }
 
     /** 选择分析目标：jar 文件或整个依赖目录。 */
@@ -109,7 +202,10 @@ public final class AnalyzeController {
             widgets.status.setText("请先选择要分析的 jar 或依赖目录。");
             return;
         }
-        final String engineText = config.property("analyze_engine_jar", "").trim();
+        // 后端位置交给定位器解析（配置页 > 环境变量 > 约定位置）：
+        // 使用者「顺手解压到项目目录」也能直接用，不必先手工填路径
+        final String engineText = config.property("analyze_backend_home",
+                config.property("analyze_engine_jar", "")).trim();
         final String workDirText = config.property("analyze_work_dir", "").trim();
         final boolean quick = widgets.quickMode.isSelected();
         final boolean inner = widgets.innerJars.isSelected();
@@ -123,12 +219,11 @@ public final class AnalyzeController {
         worker.run("调用链分析", new AnalyzeWorker.Task() {
             @Override
             public AnalyzeReport run() {
-                Path engine = engineText.isEmpty() ? null : Paths.get(engineText);
                 Path workDir = workDirText.isEmpty()
                         ? Paths.get(System.getProperty("user.home"), ".JavaSecExpToolKit", "analyze")
                         : Paths.get(workDirText);
-                AnalyzeReport report = AnalyzeEngine.runEngine(engine, Paths.get(targetText), workDir,
-                        quick, inner, timeout, EngineRunner.currentJava());
+                AnalyzeReport report = AnalyzeEngine.runEngine(engineText, Paths.get(targetText),
+                        workDir, quick, inner, timeout);
                 if (report.ok) {
                     database = workDir.resolve(EngineRunner.DATABASE_NAME);
                     EngineRunner.cleanTemp(workDir);
@@ -148,6 +243,8 @@ public final class AnalyzeController {
         }
         final String queryId = queryId(widgets.queryKind.getSelectedIndex());
         final String keyword = widgets.keyword.getText().trim();
+        final int depth = parseTimeout(widgets.pathDepth.getText(),
+                String.valueOf(AnalyzeCommand.DEFAULT_PATH_DEPTH));
         final String python = ScriptRunner.python(config.python());
         worker.run("数据库查询", new AnalyzeWorker.Task() {
             @Override
@@ -158,7 +255,7 @@ public final class AnalyzeController {
                 }
                 reportScript = script;
                 return AnalyzeEngine.query(databasePath, script, python, queryId, keyword,
-                        AnalyzeEngine.DEFAULT_LOCAL_TIMEOUT);
+                        AnalyzeEngine.DEFAULT_LOCAL_TIMEOUT, depth);
             }
         });
     }
@@ -178,6 +275,10 @@ public final class AnalyzeController {
         }
         final String python = ScriptRunner.python(config.python());
         final String minSeverity = severity(widgets.minSeverity.getSelectedIndex());
+        final String evidenceSection =
+                evidenceSection(widgets.evidenceSection.getSelectedIndex());
+        final String onlyType = typeIdOf(typeIds, widgets.onlyType.getSelectedIndex());
+        final boolean compare = widgets.compareBaseline.isSelected();
         worker.run("漏洞特征匹配", new AnalyzeWorker.Task() {
             @Override
             public AnalyzeReport run() {
@@ -193,8 +294,25 @@ public final class AnalyzeController {
                             "JAR 内缺少 vuln_signatures.json 签名库。");
                 }
                 signatureLibrary = library;
+                // 机器可读报告按配置导出：文本给人读、JSON 给后续流程读。
+                // 关掉时传 null，脚本便不会写文件——不做「配置关了还偷偷写」这种事。
+                final boolean exportJson =
+                        "true".equalsIgnoreCase(config.property("analyze_json_export", "true").trim());
+                java.nio.file.Path jsonDir = null;
+                if (exportJson) {
+                    String configured = config.property("analyze_json_dir", "").trim();
+                    jsonDir = configured.isEmpty()
+                            ? AnalyzeEngine.defaultJsonReport(defaultWorkDir())
+                            : Paths.get(configured).resolve("analyze-report.json");
+                }
+                // 与上一次同输入比对：基线就是上一份导出文件。
+                // 关掉开关时显式不传，而不是「传了但脚本忽略」——两种状态在报告里必须能分辨
+                final String baseline = compare && jsonDir != null
+                        && java.nio.file.Files.isRegularFile(jsonDir)
+                        ? jsonDir.toAbsolutePath().toString() : "";
                 return AnalyzeEngine.signatures(databasePath, script, library, python, minSeverity,
-                        AnalyzeEngine.DEFAULT_LOCAL_TIMEOUT * 2);
+                        AnalyzeEngine.DEFAULT_LOCAL_TIMEOUT * 2, jsonDir, evidenceSection, onlyType,
+                        AnalyzeCommand.TOOL_VERSION, baseline);
             }
         });
     }
@@ -242,6 +360,21 @@ public final class AnalyzeController {
         }
     }
 
+    /**
+     * 后端定位摘要：进页时就把「找到了没有、是哪个形态」摆在状态栏。
+     *
+     * <p>不等到点「调用链分析」才告知：使用者往往先点了按钮又等了几分钟才发现路径没配，
+     * 提前显示可以省掉这一轮。
+     */
+    private String backendSummary() {
+        String configured = config.property("analyze_backend_home",
+                config.property("analyze_engine_jar", "")).trim();
+        ToolkitLocator.Install install = ToolkitLocator.locate(configured);
+        return install == null
+                ? "未找到 jar-analyzer（可在配置页指定安装目录，或设置环境变量）"
+                : install.describe();
+    }
+
     /** 停止本页占用的资源。 */
     public void shutdown() {
         worker.shutdown();
@@ -283,7 +416,7 @@ public final class AnalyzeController {
 
     /** 查询下拉框序号 -> 查询标识。 */
     static String queryId(int index) {
-        String[] ids = {"summary", "entries", "sinks", "strings", "components"};
+        String[] ids = {"summary", "entries", "sinks", "paths", "impls", "strings", "components"};
         if (index < 0 || index >= ids.length) return "summary";
         return ids[index];
     }
@@ -292,6 +425,29 @@ public final class AnalyzeController {
     static String severity(int index) {
         if (index < 0 || index >= AnalyzeChainPage.SEVERITY_VALUES.length) return "";
         return AnalyzeChainPage.SEVERITY_VALUES[index];
+    }
+
+    /**
+     * 证据来源下拉框序号 -> 分节名；越界时回落到「不过滤」。
+     *
+     * <p>回落到不过滤而不是回落到某一个分节：越界说明界面与脚本的取值已经漂移，
+     * 此时筛掉一部分特征会让使用者拿到偏窄的结论，而看不出问题。
+     */
+    static String evidenceSection(int index) {
+        if (index < 0 || index >= AnalyzeChainPage.EVIDENCE_VALUES.length) return "";
+        return AnalyzeChainPage.EVIDENCE_VALUES[index];
+    }
+
+    /**
+     * 漏洞类型下拉框序号 -> 类型 id。
+     *
+     * <p>序号 0 是「全部类型」，对应空串（不筛）。越界同样回落到不筛：
+     * 宁可不筛，也不要因为界面与库漂移而惄惄窄化结论。
+     */
+    public static String typeIdOf(java.util.List<String> typeIds, int index) {
+        if (typeIds == null || index < 0 || index >= typeIds.size()) return "";
+        String id = typeIds.get(index);
+        return id == null ? "" : id;
     }
 
     /** 读取超时输入；非法值回落到配置值，再回落到默认值。 */

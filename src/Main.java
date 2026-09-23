@@ -111,6 +111,9 @@ public final class Main implements UiHandle.Source {
         configController.attachView(workbench);
         fillRegistry();
         frame.add(navigation, BorderLayout.WEST);
+        // 交接条放在内容区顶部：分析结论指向任意功能页，横幅必须跟着结论跨页显示，
+        // 而不是只留在分析页上——使用者在目标页才需要知道「为什么带我到这」
+        content.add(workbench.contextBar.component(), BorderLayout.NORTH);
         frame.add(content, BorderLayout.CENTER);
         configController.applyToForms();
         frame.addComponentListener(new ComponentAdapter() {
@@ -299,6 +302,7 @@ public final class Main implements UiHandle.Source {
         registry.toolsUpload = toolsUploadWidgets;
         registry.analyzeScan = workbench.analyzeScanWidgets;
         registry.analyzeChain = workbench.analyzeChainWidgets;
+        registry.analysisContext = workbench.contextBar;
         registry.configForm = configForm;
         registry.payload = workbench.payloadWidgets;
         registry.payloadSelector = workbench.payloadSelector;
@@ -322,6 +326,11 @@ public final class Main implements UiHandle.Source {
 
     private void setContent(JPanel panel) {
         content.removeAll();
+        // 交接条由 WorkbenchPages 持有：removeAll 会把它一并摘掉，因此每次换页都要重新装上
+        content.add(workbench.contextBar.component(), BorderLayout.NORTH);
+        // 换页时按当前时间重算一次：上下文是「当时那次分析的结论」，
+        // 放久了必须能一眼看出，而不是继续显示成刚出炉的样子
+        workbench.contextBar.refresh();
         content.add(panel, BorderLayout.CENTER);
         content.revalidate();
         content.repaint();

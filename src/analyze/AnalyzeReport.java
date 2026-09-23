@@ -29,9 +29,23 @@ public final class AnalyzeReport {
     public final List<Finding> findings;
     /** 额外的可跳转入口：功能页 key → 按钮文字。 */
     public final Map<String, String> jumps;
+    /**
+     * 交接给利用功能页的上下文：这条建议从哪来、依据是什么。
+     *
+     * <p>为空表示本次动作没有产生可交接的结论（例如只是一次失败）。
+     * 界面据此显示「由哪条分析结论带入」，并把它写进按钮提示；
+     * 上下文只用于**展示**，不预填命令 / 回连地址这类高风险参数。
+     */
+    public final AnalysisContext context;
 
     private AnalyzeReport(String title, String text, boolean ok, long millis,
                           List<Finding> findings, Map<String, String> jumps) {
+        this(title, text, ok, millis, findings, jumps, null);
+    }
+
+    private AnalyzeReport(String title, String text, boolean ok, long millis,
+                          List<Finding> findings, Map<String, String> jumps,
+                          AnalysisContext context) {
         this.title = title == null ? "" : title;
         this.text = text == null ? "" : text;
         this.ok = ok;
@@ -40,6 +54,7 @@ public final class AnalyzeReport {
                 findings == null ? new ArrayList<Finding>() : new ArrayList<Finding>(findings));
         this.jumps = Collections.unmodifiableMap(
                 jumps == null ? new LinkedHashMap<String, String>() : new LinkedHashMap<String, String>(jumps));
+        this.context = context;
     }
 
     /** 构造一个只带文本的结果（数据库查询、反编译等多走这条）。 */
@@ -77,5 +92,15 @@ public final class AnalyzeReport {
     /** 是否有可跳转的建议。 */
     public boolean hasJumps() {
         return !jumps.isEmpty();
+    }
+
+    /** 是否带上了可审阅的分析上下文。 */
+    public boolean hasContext() {
+        return context != null;
+    }
+
+    /** 附加分析上下文；返回新实例而不是改本对象，避免报告被就地改出两种状态。 */
+    public AnalyzeReport withContext(AnalysisContext extra) {
+        return new AnalyzeReport(title, text, ok, millis, findings, jumps, extra);
     }
 }

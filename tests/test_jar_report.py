@@ -49,6 +49,9 @@ def build(database, calls=(), strings=(), quick=False):
     connection.execute(
         "INSERT INTO spring_method_table VALUES (1,'com/example/Demo','handle','()V','POST','/api/demo',1)")
     connection.execute("INSERT INTO java_web_table VALUES (1,'Filter','com/example/AuthFilter',1)")
+    connection.execute("INSERT INTO class_table (cid, jar_id, jar_name, version, access,"
+                       " class_name, super_class_name, is_interface)"
+                       " VALUES (1,1,'app.jar',52,1,'com/example/Demo','java/lang/Object',0)")
     connection.executemany(
         "INSERT INTO method_call_table (caller_method_name,caller_class_name,caller_method_desc,"
         "caller_jar_id,callee_method_name,callee_method_desc,callee_class_name,callee_jar_id,op_code)"
@@ -163,6 +166,204 @@ class MissingTableTest(CaptureOutputTest):
         self.assertIn("字符串常量    : 0", out)
 
 
+class PathQueryTest(CaptureOutputTest):
+    """利用路径回溯：把 sink 反推回调用者，并标出命中的入口点。
+
+    这是分析结果二次利用的关键一步，因此单独守住：回溯方向、深度限制、
+    入口标注三件事错了，都会让「有没有可达路径」这个判断反过来。
+    """
+
+    def build_chain(self):
+        directory = tempfile.mkdtemp(prefix="jar-report-paths-")
+        database = os.path.join(directory, "jar-analyzer.db")
+        # EntryController.handle -> Service.run -> Runtime.exec
+        # 首端对齐模拟库里的 Spring 路由（com/example/Demo.handle），
+        # 这样「外部可达」这一判定才真的被走到，而不是只测了普通回溯
+        build(database, calls=[
+            ("handle", "com/example/Demo", "()V", "run",
+             "()V", "com/example/Service"),
+            ("run", "com/example/Service", "()V", "exec",
+             "(Ljava/lang/String;)Ljava/lang/Process;", "java/lang/Runtime"),
+        ])
+        return database
+
+    def test_paths_reach_entry(self):
+        code, out = self.run_query(self.build_chain(), "paths", depth=4)
+        self.assertEqual(0, code)
+        self.assertIn("利用路径", out)
+        self.assertIn("java/lang/Runtime.exec", out)
+        self.assertIn("com/example/Service.run", out)
+        self.assertIn("★ 外部可达", out)
+        self.assertIn("POST /api/demo", out)
+        self.assertIn("com/example/Demo.handle", out)
+
+    def test_depth_is_respected(self):
+        """深度不足时必须说明「往上还有调用者」，不能给出「没有入口」的结论。
+
+        输出从「第 N 层调用者」升级为「断点 + 可达至此的链路」后，
+        断言的落点跟着改成同一条意图：深度不够这件事必须被明确说出来。
+        """
+        code, out = self.run_query(self.build_chain(), "paths", depth=1)
+        self.assertEqual(0, code)
+        self.assertIn("往上还有调用者", out)
+        self.assertIn("第 2 层", out)
+
+    def test_paths_emit_nav_hint(self):
+        """报告末尾必须给出可跳转的后续动作。"""
+        code, out = self.run_query(self.build_chain(), "paths", depth=4)
+        self.assertEqual(0, code)
+        self.assertIn("NAV|", out)
+
+    def test_paths_show_full_chain_and_length(self):
+        """报告要给出「入口 → … → sink」的完整链路与路径长度，而不是一个扁平集合。
+
+        astra 的建议里明确要求：只列「有哪些调用者」无法判断它们是不是同一条链上的两跳。
+        """
+        code, out = self.run_query(self.build_chain(), "paths", depth=4)
+        self.assertEqual(0, code)
+        self.assertIn("路径长度", out)
+        self.assertIn("断点: 无", out)
+        # 链路序列应按「入口在前、sink 在后」的顺序连起来
+        self.assertIn("com/example/Demo.handle → com/example/Service.run", out)
+
+    def test_paths_report_cut_point_when_depth_insufficient(self):
+        """深度不足时必须给出断点位置与「往上还有调用者」，不能声称不可达。"""
+        code, out = self.run_query(self.build_chain(), "paths", depth=1)
+        self.assertEqual(0, code)
+        self.assertIn("断点:", out)
+        self.assertIn("往上还有调用者", out)
+        self.assertIn("不代表", out)
+
+    def test_paths_state_no_taint_analysis(self):
+        """报告必须声明本引擎不产出污点分析，因此不声称链一定可利用。"""
+        code, out = self.run_query(self.build_chain(), "paths", depth=4)
+        self.assertEqual(0, code)
+        self.assertIn("不产出污点分析", out)
+
+    def test_no_sink_reports_clearly(self):
+        directory = tempfile.mkdtemp(prefix="jar-report-nopath-")
+        database = os.path.join(directory, "jar-analyzer.db")
+        build(database)
+        code, out = self.run_query(database, "paths")
+        self.assertEqual(0, code)
+        self.assertIn("没有命中内置 sink", out)
+
+
+class ImplQueryTest(CaptureOutputTest):
+    """多态实现：入口调接口方法时，判断实际执行的是哪个实现类。"""
+
+    def test_impls_lists_implementations(self):
+        directory = tempfile.mkdtemp(prefix="jar-report-impls-")
+        database = os.path.join(directory, "jar-analyzer.db")
+        build(database)
+        connection = sqlite3.connect(database)
+        connection.executescript(
+            "CREATE TABLE method_impl_table (impl_id INTEGER PRIMARY KEY, class_name TEXT,"
+            " method_name TEXT, method_desc TEXT, impl_class_name TEXT, class_jar_id INT,"
+            " impl_class_jar_id INT);")
+        connection.execute(
+            "INSERT INTO method_impl_table (class_name, method_name, method_desc,"
+            " impl_class_name) VALUES ('com/example/Api','run','()V','com/example/Impl')")
+        connection.commit()
+        connection.close()
+        code, out = self.run_query(database, "impls")
+        self.assertEqual(0, code)
+        self.assertIn("com/example/Api.run", out)
+        self.assertIn("com/example/Impl", out)
+
+    def test_impls_without_table(self):
+        directory = tempfile.mkdtemp(prefix="jar-report-noimpl-")
+        database = os.path.join(directory, "jar-analyzer.db")
+        build(database)
+        code, out = self.run_query(database, "impls")
+        self.assertEqual(0, code)
+        self.assertIn("没有 method_impl_table", out)
+
+
+class EmptyDatabaseTest(CaptureOutputTest):
+    """空库（目标里没有 class）必须提示「目标可能选错了」，不能只给一片未找到。"""
+
+    def test_empty_class_table_warns(self):
+        directory = tempfile.mkdtemp(prefix="jar-report-empty-")
+        database = os.path.join(directory, "jar-analyzer.db")
+        connection = sqlite3.connect(database)
+        connection.executescript(
+            "CREATE TABLE jar_table (jid INTEGER PRIMARY KEY, jar_name TEXT, jar_abs_path TEXT);"
+            "CREATE TABLE class_table (cid INTEGER PRIMARY KEY, class_name TEXT);"
+            "CREATE TABLE method_table (method_id INTEGER PRIMARY KEY, method_name TEXT);"
+            "CREATE TABLE method_call_table (mc_id INTEGER PRIMARY KEY, caller_class_name TEXT,"
+            " callee_class_name TEXT, callee_method_name TEXT);")
+        connection.commit()
+        connection.close()
+        code, out = self.run_query(database, "summary")
+        self.assertEqual(0, code)
+        self.assertIn("没有记录到任何类", out)
+
+
+class SchemaCompatibilityTest(CaptureOutputTest):
+    """结构不兼容必须被拦下，而不是伪装成「没有命中」。
+
+    这是本模块最危险的一类静默错误：缺 method_call_table 时，
+    sinks / paths 会输出「没有命中内置 sink 清单」，读起来就是
+    「目标没有危险调用」——而事实是这次查询根本没有意义。
+    """
+
+    def database_without(self, *drop):
+        directory = tempfile.mkdtemp(prefix="jar-report-schema-")
+        database = os.path.join(directory, "jar-analyzer.db")
+        build(database)
+        connection = sqlite3.connect(database)
+        for table in drop:
+            connection.execute("DROP TABLE IF EXISTS %s" % table)
+        connection.commit()
+        connection.close()
+        return database
+
+    def test_sinks_without_call_table_is_rejected(self):
+        database = self.database_without("method_call_table")
+        code, out = self.run_query(database, "sinks")
+        self.assertEqual(4, code)
+        self.assertIn("不兼容", out)
+        self.assertIn("method_call_table", out)
+        self.assertIn("不代表目标没有问题", out)
+
+    def test_paths_without_call_table_is_rejected(self):
+        code, out = self.run_query(self.database_without("method_call_table"), "paths")
+        self.assertEqual(4, code)
+        self.assertIn("不兼容", out)
+
+    def test_strings_without_table_still_degrades(self):
+        """字符串表缺失是自解释的降级（快速模式），不能被判为不兼容。"""
+        code, out = self.run_query(self.database_without("string_table"), "strings")
+        self.assertEqual(0, code)
+        self.assertIn("没有 string_table", out)
+
+    def test_impls_without_table_still_degrades(self):
+        code, out = self.run_query(self.database_without("method_impl_table"), "impls")
+        self.assertEqual(0, code)
+        self.assertIn("没有 method_impl_table", out)
+
+    def test_missing_optional_table_is_reported_as_notice(self):
+        """缺非关键表时要在结果前面提醒一句，不能悄悄少一块能力。"""
+        code, out = self.run_query(self.database_without("string_table"), "summary")
+        self.assertEqual(0, code)
+        self.assertIn("结构缺失", out)
+
+    def test_column_rename_is_detected(self):
+        """表在但关键列被改名，同样会让查询静默返回空。"""
+        database = self.database_without()
+        connection = sqlite3.connect(database)
+        connection.execute("ALTER TABLE method_call_table RENAME TO method_call_table_old")
+        connection.executescript(
+            "CREATE TABLE method_call_table (mc_id INTEGER PRIMARY KEY, caller_class_name TEXT,"
+            " caller_method_name TEXT, callee_method_name TEXT);")
+        connection.commit()
+        connection.close()
+        code, out = self.run_query(database, "sinks")
+        self.assertEqual(4, code)
+        self.assertIn("callee_class_name", out)
+
+
 class FailurePathTest(CaptureOutputTest):
     """失败路径必须可读：数据库不存在时不能抛栈。"""
 
@@ -200,9 +401,23 @@ class SinkRuleTest(unittest.TestCase):
         self.assertEqual(len(jar_report.SINKS) - 1, where.count(" OR "))
 
     def test_queries_cover_every_declared_query(self):
-        """Java 侧声明的查询标识与 Python 侧实现必须一一对应。"""
-        expected = {"summary", "entries", "sinks", "strings", "components"}
+        """Java 侧声明的查询标识与 Python 侧实现必须一一对应。
+
+        少一个会让界面上的按钮点了没反应；多一个会让使用者以为有这个能力。
+        两边都是显式清单，因此这里必须全等而不是包含。
+        """
+        expected = {"summary", "entries", "sinks", "paths", "impls", "strings", "components"}
         self.assertEqual(expected, set(jar_report.QUERIES.keys()))
+
+    def test_every_category_has_a_followup_action(self):
+        """每个 sink 分类都要能接到本工具的某个功能页。
+
+        这是「分析为利用服务」的落点：漏掉一个分类，报告就会给出一个
+        点了没反应的按钮，使用者只能自己找页面。
+        """
+        for category, _class, _method, _note in jar_report.SINKS:
+            self.assertIn(category, jar_report.CATEGORY_ACTION,
+                          "sink 分类 %s 没有登记后续动作" % category)
 
 
 if __name__ == "__main__":

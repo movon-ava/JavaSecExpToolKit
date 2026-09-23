@@ -66,11 +66,57 @@ public final class ScriptRunner {
     }
 
     /**
+     * 一次脚本调用的完整结果：输出 + 退出码 + 是否超时。
+     *
+     * <p>为什么要带上退出码而不是只回传文本：脚本用退出码区分「跑完了」与
+     * 「没跑成」（库结构不兼容、参数写错、查询失败）。只回传文本时这两种情况
+     * 在界面上完全一样——使用者会把「查询没执行成功」读成「目标干净」，
+     * 这正是分析类工具最危险的一类误判。
+     */
+    public static final class Outcome {
+        /** 进程退出码；超时或无法启动时为 -1。 */
+        public final int exitCode;
+        /** 合并后的标准输出与错误输出。 */
+        public final String output;
+        /** 是否因为超过超时上限被强制终止。 */
+        public final boolean timedOut;
+
+        Outcome(int exitCode, String output, boolean timedOut) {
+            this.exitCode = exitCode;
+            this.output = output == null ? "" : output;
+            this.timedOut = timedOut;
+        }
+
+        /** 正常跑完（退出码 0）。 */
+        public boolean ok() {
+            return !timedOut && exitCode == 0;
+        }
+
+        /** 供报告引用的一句话结论。 */
+        public String describe() {
+            if (timedOut) return "超时被终止（未跑完）";
+            if (exitCode == 0) return "正常结束";
+            return "异常结束（退出码 " + exitCode + "）";
+        }
+    }
+
+    /**
      * 执行命令并返回合并后的输出。
      *
      * @param timeoutSeconds 超时上限；小于等于 0 表示不限制（调用方应避免）
      */
     public static String run(List<String> command, int timeoutSeconds) {
+        return runDetailed(command, timeoutSeconds).output;
+    }
+
+    /**
+     * 执行命令并返回输出与退出码。
+     *
+     * <p>调用方需要区分「跑完了但没命中」与「根本没跑成」时必须用这个入口。
+     *
+     * @param timeoutSeconds 超时上限；小于等于 0 表示不限制（调用方应避免）
+     */
+    public static Outcome runDetailed(List<String> command, int timeoutSeconds) {
         ProcessBuilder builder = new ProcessBuilder(command);
         // 管道里按系统编码输出会让中文结果乱码，显式要求 UTF-8
         builder.environment().put("PYTHONIOENCODING", "utf-8");
@@ -107,21 +153,22 @@ public final class ScriptRunner {
                 ProcessTree.kill(process);
                 Log.warn("脚本超时已终止（上限 " + timeoutSeconds + " 秒）。");
                 synchronized (output) {
-                    return output + System.lineSeparator() + "命令超时（超过 " + timeoutSeconds + " 秒）已终止。";
+                    return new Outcome(-1, output + System.lineSeparator()
+                            + "命令超时（超过 " + timeoutSeconds + " 秒）已终止。", true);
                 }
             }
             reader.join(2000L);
             synchronized (output) {
-                return output.toString();
+                return new Outcome(process.exitValue(), output.toString(), false);
             }
         } catch (IOException error) {
             Log.error("无法启动命令：" + error.getMessage(), error);
-            return "无法启动命令：" + error.getMessage();
+            return new Outcome(-1, "无法启动命令：" + error.getMessage(), false);
         } catch (InterruptedException interrupted) {
             ProcessTree.kill(process);
             Thread.currentThread().interrupt();
             Log.warn("命令被中断，已终止进程树。", interrupted);
-            return "命令被中断。";
+            return new Outcome(-1, "命令被中断。", false);
         } finally {
             if (process != null && process.isAlive()) ProcessTree.kill(process);
         }

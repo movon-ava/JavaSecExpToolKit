@@ -83,9 +83,15 @@ public final class ConfigForm {
     // 漏洞分析
     /** 默认扫描目标：jar 文件或依赖目录；留空则每次进页自行选择。 */
     public final JTextField analyzeScanTarget = new JTextField("", 32);
-    /** 外部引擎（jar-analyzer-engine）的 jar 路径；留空表示只用本地分析。 */
-    public final JTextField analyzeEngineJar = new JTextField("", 32);
-    /** 引擎工作目录：引擎固定把 jar-analyzer.db 写到工作目录，这里必须显式指定。 */
+    /**
+     * jar-analyzer 的安装位置：可以是解压出来的完整发行包目录
+     * （{@code jar-analyzer-x.y-windows-full}），也可以是它的主 jar。
+     *
+     * <p>留空时会自动探测：环境变量 {@code JSETK_JAR_ANALYZER_HOME} → 本工具目录下的
+     * 常见位置 → 用户目录。留空不等于不可用，因此提示语写「可留空」。
+     */
+    public final JTextField analyzeBackendHome = new JTextField("", 32);
+    /** 后端工作目录：它固定把 jar-analyzer.db 写到工作目录，这里必须显式指定。 */
     public final JTextField analyzeWorkDir = new JTextField("", 32);
     /** 引擎分析超时：大 jar 构建数据库是分钟级，必须给上限。 */
     public final JTextField analyzeTimeout = new JTextField("300", 8);
@@ -97,6 +103,16 @@ public final class ConfigForm {
      * 留空表示只用内置规则表。
      */
     public final JTextField analyzeGadgetRules = new JTextField("", 32);
+    /**
+     * 是否在特征匹配后同时导出一份机器可读 JSON。
+     *
+     * <p>文本报告给人读，JSON 给后续流程读（按严重度筛选、按状态统计、接入工单）。
+     * 做成配置项而不是每次都写：导出会把路径暴露在磁盘上，使用者应当知情并可控。
+     */
+    public final javax.swing.JCheckBox analyzeJsonExport =
+            new javax.swing.JCheckBox("特征匹配后导出机器可读 JSON", true);
+    /** 机器可读报告的落地目录；留空则用后端工作目录。 */
+    public final JTextField analyzeJsonDir = new JTextField("", 32);
 
     /** 带外 Jar 的托管参数：绑定地址、端口与三个动作默认值。 */
     public final JTextField oobjarBindHost = new JTextField("", 24);
@@ -253,16 +269,20 @@ public final class ConfigForm {
                         new ConfigPage.Row[]{
                                 new ConfigPage.Row("默认扫描目标", analyzeScanTarget,
                                         "jar 文件或依赖目录；留空则进页时再选"),
-                                new ConfigPage.Row("外部引擎 JAR", analyzeEngineJar,
-                                        "jar-analyzer-engine 的 jar；留空只用本地分析"),
-                                new ConfigPage.Row("引擎工作目录", analyzeWorkDir,
-                                        "引擎固定把 jar-analyzer.db 写到工作目录"),
+                                new ConfigPage.Row("jar-analyzer 位置", analyzeBackendHome,
+                                        "安装目录或主 jar；留空则自动探测（环境变量 JSETK_JAR_ANALYZER_HOME → 本工具目录）"),
+                                new ConfigPage.Row("后端工作目录", analyzeWorkDir,
+                                        "固定把 jar-analyzer.db 写到该目录；留空用用户目录下的默认位置"),
                                 new ConfigPage.Row("分析超时（秒）", analyzeTimeout,
                                         "大 jar 构建数据库是分钟级，默认 300"),
                                 new ConfigPage.Row("反编译输出目录", analyzeDecompileDir,
                                         "留空则输出到工作目录下的 decompiled"),
                                 new ConfigPage.Row("外部 gadget 规则文件", analyzeGadgetRules,
-                                        "留空只用内置规则；格式 jar名,…|类型|结果，按坐标与版本区间判定")}),
+                                        "留空只用内置规则；格式 jar名,…|类型|结果，按坐标与版本区间判定"),
+                                new ConfigPage.Row("导出机器可读报告", analyzeJsonExport,
+                                        "特征匹配后另存一份 JSON，便于按严重度 / 状态筛选或接入工单"),
+                                new ConfigPage.Row("机器可读报告目录", analyzeJsonDir,
+                                        "留空则写到后端工作目录下的 analyze-report.json")}),
                 new ConfigPage.Group("toString 链配置",
                         "「Payload → toString 链」的默认参数；链模板与命令改完下次进页生效。",
                         new ConfigPage.Row[]{

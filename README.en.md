@@ -196,7 +196,9 @@ The `配置` page stores fixed parameters in
   always writes `jar-analyzer.db` there), analysis timeout (default 300 seconds), the
   decompile output directory (blank writes to `decompiled` under the working directory) and the
   external gadget rules file (blank keeps the built-in rule table only; format is described in
-  the "Available gadgets" section)
+  the "Available gadgets" section), whether to also export a machine-readable JSON after signature
+  matching (on by default) and the machine-readable report directory (blank writes
+  `analyze-report.json` under the backend working directory)
 
 Saved values pre-fill **every feature page** (probe, proxy, capture, Shiro, Payload, presets,
 malicious servers, the toString page, the out-of-band Jar page and the analysis page) and are pushed to already-open
@@ -698,6 +700,34 @@ be copied into this repository. The content comes from each component's public a
 entries that lead to a next action inside this toolkit are included. Findings are sorted by
 confidence, and the report always ends with "a miss does not mean there is no vulnerability".
 
+Every finding carries two independent dimensions: **confidence** (how reliable the source is) and
+**status** (how far verification has got). Status is one of `observed` / `suspected` / `confirmed` /
+`not-reproduced` / `unknown`, and a static rule hit is **always `suspected`**: high confidence is not
+the same as a confirmed vulnerability. Only both dimensions together stop "high confidence from pom
+metadata" from being read as "the vulnerability is confirmed".
+
+A finding also answers "**what is still missing**": the report has "still required (all of them)" and
+"refutation conditions" columns, plus the **rule source** the judgement rests on. The rule table
+carries a version and a maintenance date which the report header prints: a rule library without a
+version cannot answer "which version of the rules produced this", nor explain why a conclusion changed
+after the rules were updated.
+
+Once a finding is produced, an **analysis hand-off bar** appears at the top of the content area: it
+names the source, target, hit evidence and limitations, with a one-click jump back to the page that
+produced it. It **only displays, never pre-fills**: class names, constants and inferred callback
+addresses are never written into commands, callback addresses or target URLs, and it sends nothing,
+generates no payload and starts no service. After 30 minutes the bar adds a reminder suggesting you
+re-check before reusing the conclusion, otherwise a judgement made a while ago looks like it was just
+produced.
+
+Engine invocations decide success by the **real exit code of the child process**: the exit code used
+to be discarded, so "the query did not run" and "the target is clean" looked exactly the same in the
+UI. Now any non-zero exit code or timeout puts a failure banner ahead of the report stating that this
+is not a conclusion and does not mean the target is clean, and the status line never shows "done".
+
+Measured boundaries: local dependency analysis takes about 30 ms per jar, building the database is a
+minute-scale job, and signature matching runs over the 65 features in roughly a hundred milliseconds.
+
 Each suggestion is a button that jumps straight to the right page (probe / Shiro / Payload
 generation / toString chains / malicious servers / capture conversion), so you never have to hunt
 through the sidebar.
@@ -836,6 +866,56 @@ single feature has an invalid regex, or points at an unregistered vulnerability 
 fails and says which feature it was — skipping silently would make a false negative look like a clean
 result.
 
+Every finding carries a **status** and the **rule source**: static signature hits are always
+"`suspected`", the header prints the rule-library version and maintenance date, and each finding lists
+"still required (all of them)" and "refutation conditions". Bypass techniques are filtered by the
+**facts that actually hit** instead of being pasted for a whole vulnerability class — most entries in
+such a list rely on components that are not in the target at all.
+
+#### Filtering by type and evidence source
+
+Three filter controls sit next to the signature-matching button: `severity`, `evidence source`
+(all evidence / sink calls only / string constants only / class names only / method names only) and
+`vulnerability type` (all types / command execution / deserialisation / …).
+
+Filtering happens **in the script, not by filtering rows in the UI**: the aggregation, the bypass
+filtering and the "not hit" list all depend on which features took part this time, and filtering in the
+UI would split the hit counts from that list so they no longer add up. The report header states the
+filter and notes that the "not hit" list only covers the filtered features.
+
+**An unknown value is an error listing the valid ones**, never silently ignored: silently ignoring it
+would make "filtered to nothing" look like "the target is clean". When a filter selects nothing the
+report says so explicitly, and states that this does not mean the rest of the library missed.
+
+The vulnerability-type choices are not hard-coded in the UI; the signature library provides them via
+`--list-filters` (it reads the library only and **touches no database**, about 90 ms measured), and the
+page fills the combo box in a background thread. If the values cannot be read, the filter falls back to
+"no filter" rather than filtering everything away.
+
+#### Re-running the same input for comparison
+
+`与上次比对` (on by default) uses the previously exported machine-readable report as a baseline and
+appends the differences: **newly hit**, **no longer hit** and **hit-count changed**. "This differs
+from last time" is a signal in itself — the target may have changed, or the rule library may just have
+been updated — and a single current result cannot explain why the conclusion moved.
+
+If the baseline is missing, corrupt or written with a different schema, the comparison **falls back to
+not comparing** and the run still succeeds: the comparison is extra information and its absence must
+not fail the analysis. The report also keeps "no differences" and "no baseline" apart.
+
+#### Machine-readable export
+
+With "export machine-readable report" enabled in the settings page (on by default), signature matching
+also writes a JSON file (by default `analyze-report.json` under the backend working directory) with the
+schema `jsetk.analyze.signatures/1`. It contains the data-source status, dimension notes and
+limitations, plus **task metadata**: tool version, database path and SHA-256, database size and
+modification time, generation time and the filters that were in effect. Without those fields the file
+is only "a result", not "a reproducible result".
+
+If the export fails, the report says "not written" and gives the path instead of showing success:
+reporting success while nothing was written sends people to downstream tooling with a file that does
+not exist.
+
 ### Decompilation
 
 When you need the source to confirm whether a rule or a signature really holds, fill in `指定类名`
@@ -928,13 +1008,14 @@ that the setting really took effect.
 python -m unittest discover -s tests
 ```
 
-172 tests in total, split by capability:
+219 tests in total, split by capability:
 
 | Module | Coverage |
 | --- | --- |
 | `test_probe.py` | argument assembly and mode combinations of the fastjson probe engine |
 | `test_jar_report.py` | the five fact queries over the call-graph database, plus tolerance for missing tables |
-| `test_signatures.py` | signature-library format, **sink features matching `jar_report.SINKS` entry by entry**, every vulnerability class being reachable, severity filtering, and the failure paths for broken JSON / bad regex / unregistered types |
+| `test_signatures.py` | signature-library format, **sink features matching `jar_report.SINKS` entry by entry**, every vulnerability class being reachable, filtering by severity / type / evidence source / tag with the failure paths for unknown values, export task metadata, same-input baseline comparison (including the fallback for a corrupt or foreign-schema baseline), and the failure paths for broken JSON / bad regex / unregistered types |
+| `test_backend_e2e.py` | **real backend end to end** (P0): really build the database, check the schema, run a query and run signature matching; when the backend is absent it **skips and says "unverified" instead of passing** |
 | `test_logging.py` | file names, retention policy and level filtering of the logging kernel |
 | `test_decoupling.py` | package dependency boundaries and the UI file-size caps (`src/ui/*.java` ≤ 600 lines, `src/Main.java` ≤ 400 lines) |
 | `test_selfcheck_hygiene.py` | every self-check entry installing the side-effect guard |
@@ -959,14 +1040,14 @@ E:\java\jdk17\bin\java.exe @opens -cp "target\tmp2;target\classes;lib\java-chain
 
 | Self-check | Coverage | Needs `--add-opens` |
 | --- | --- | --- |
-| `UiNavigationCheck` | Sidebar expand / collapse, per-page widgets and end-to-end flows (including the toString page, the out-of-band Jar page, both analysis pages and the new settings groups), plus one real jar scanned end to end by the local analysis; asserts that the two analysis pages have different headings and widget sets (the regression guard for the page split); screenshots go to `target/ui-check/` | Yes (preset end-to-end build) |
+| `UiNavigationCheck` | Sidebar expand / collapse, per-page widgets and end-to-end flows (including the toString page, the out-of-band Jar page, both analysis pages with their filter controls and hand-off bar, and the new settings groups), plus one real jar scanned end to end by the local analysis; asserts that the two analysis pages have different headings and widget sets (the regression guard for the page split); screenshots go to `target/ui-check/` | Yes (preset end-to-end build) |
 | `UiSwitchEndToEndCheck` | Captured headers fed to the probe page through the real Python engine; the out-of-band Jar page really hosts a Jar, fetches it back over HTTP as a valid Zip, and the port can be bound again after stopping | Yes |
 | `UiShiroCheck` | Full Shiro page flow | Yes |
 | `ShiroCheck` | Shiro engine (detect / crack / chain build / echo) | Yes |
 | `PayloadCheck` | Payload engine (catalog, groups, navigation, node display names, dual form, failure paths, safety) plus the 25 out-of-band Jar combinations and toString trigger ownership (100 assertions in total) | Yes |
 | `ProxyServerCheck` | The proxy itself: plain-HTTP capture, 404 handling, `CONNECT` tunneling with byte pass-through, callbacks, `find` / `clear` | No |
 | `LogCheck` | The logging kernel (79 assertions): file-name parsing (including unpadded months and impossible dates such as 30 February), retention boundaries (month / year / leap-year crossings, 0 treated as 1), directory resolution priority, level filtering, per-day files with day rollover, stack expansion, cleanup restricted to files this tool named, silent failure when writing is impossible, and uncaught exceptions reaching the log | No |
-| `AnalyzeCheck` | The analysis kernel (85 assertions): version-comparison semantics (including `1.2.80 > 1.2.9` and pre-releases sorting below releases), the four coordinate sources and their priority, rule hits and misses, no false positives when the group differs, end-to-end analysis with jump suggestions, the failure paths of the external engine and the database, and gadget judgement (coordinates plus version ranges, patched versions not reported, new coordinates not missed, external rule-file syntax and its failure paths) | No |
+| `AnalyzeCheck` | The analysis kernel (134 assertions): version-comparison semantics (including `1.2.80 > 1.2.9` and pre-releases sorting below releases), the four coordinate sources and their priority, rule hits and misses, no false positives when the group differs, end-to-end analysis with jump suggestions, the failure paths of the external engine and the database, and gadget judgement (coordinates plus version ranges, patched versions not reported, new coordinates not missed, external rule-file syntax and its failure paths), finding status and missing evidence, rule sources and versions, the analysis context and its evidence cap, filter argument assembly and the type-combo mapping | No |
 
 Dependency-boundary, source-level and toolchain checks:
 

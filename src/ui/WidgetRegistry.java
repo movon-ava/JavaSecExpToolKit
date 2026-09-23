@@ -44,12 +44,23 @@ public final class WidgetRegistry {
     public AnalyzeScanPage.Widgets analyzeScan;
     /** 漏洞分析 · 调用链查询页：控件与上一页完全独立，自检分别断言。 */
     public AnalyzeChainPage.Widgets analyzeChain;
+    /**
+     * 「由分析结论带入」交接条：自检直接读它的可见性与文本。
+     *
+     * <p>它是跨页的（分析结论可以指向任意功能页），因此登记在页面控件之外。
+     */
+    public AnalysisContextBar analysisContext;
 
     /** 构建登记表：名字与控件一一对应，顺序稳定，便于对照断言排查。 */
     public Map<String, Object> build() {
         Map<String, Object> entries = UiHandle.registry();
         entries.put("frame", frame);
         entries.put("content", content);
+        entries.put("analysisContextBar", analysisContext.component());
+        // 文本随时间变化，必须用取值器：直接登记字符串会把那一刻的内容固化下来，
+        // 后续断言读到的就是过期数据（与导航序列同一个理由）
+        entries.put("analysisContextText", (Supplier<String>) analysisContext::text);
+        entries.put("analysisContextShowing", (Supplier<Boolean>) analysisContext::isShowing);
         entries.put("navigationList", navigationList);
         entries.put("navigationItems", navigationItems);
         entries.put("payloadWidgets", payload);
@@ -128,6 +139,7 @@ public final class WidgetRegistry {
             entries.put("analyzeQueryKind", analyzeChain.queryKind);
             entries.put("analyzeKeyword", analyzeChain.keyword);
             entries.put("analyzeQuery", analyzeChain.query);
+            entries.put("analyzePathDepth", analyzeChain.pathDepth);
             entries.put("analyzeSignatures", analyzeChain.signatures);
             entries.put("analyzeMinSeverity", analyzeChain.minSeverity);
             entries.put("analyzeClassName", analyzeChain.className);
@@ -137,6 +149,9 @@ public final class WidgetRegistry {
             entries.put("analyzeChainCopy", analyzeChain.copy);
             entries.put("analyzeChainStatus", analyzeChain.status);
             entries.put("analyzeChainOutput", analyzeChain.output);
+            entries.put("analyzeEvidenceSection", analyzeChain.evidenceSection);
+            entries.put("analyzeOnlyType", analyzeChain.onlyType);
+            entries.put("analyzeCompareBaseline", analyzeChain.compareBaseline);
             entries.put("analyzeChainJumps", analyzeChain.jumps);
         }
         entries.put("target", probe.target);
@@ -262,11 +277,13 @@ public final class WidgetRegistry {
         entries.put("configOobJarDefaultPath", configForm.oobjarDefaultPath);
         entries.put("configOobJarDefaultCommand", configForm.oobjarDefaultCommand);
         entries.put("configAnalyzeScanTarget", configForm.analyzeScanTarget);
-        entries.put("configAnalyzeEngineJar", configForm.analyzeEngineJar);
+        entries.put("configAnalyzeBackendHome", configForm.analyzeBackendHome);
         entries.put("configAnalyzeWorkDir", configForm.analyzeWorkDir);
         entries.put("configAnalyzeTimeout", configForm.analyzeTimeout);
         entries.put("configAnalyzeDecompileDir", configForm.analyzeDecompileDir);
         entries.put("configAnalyzeGadgetRules", configForm.analyzeGadgetRules);
+        entries.put("configAnalyzeJsonExport", configForm.analyzeJsonExport);
+        entries.put("configAnalyzeJsonDir", configForm.analyzeJsonDir);
         entries.put("configLogEnabled", configForm.logEnabled);
         entries.put("configLogLevel", configForm.logLevel);
         entries.put("configLogDir", configForm.logDir);

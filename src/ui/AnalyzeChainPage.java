@@ -40,6 +40,21 @@ public final class AnalyzeChainPage {
     /** 严重度下拉的显示名，顺序与 {@link #SEVERITY_VALUES} 一致。 */
     public static final String[] SEVERITY_LABELS = {"全部", "仅高危", "高危 + 中危", "全部（含低危）"};
 
+    /**
+     * 证据来源下拉的取值，顺序与 {@link #EVIDENCE_LABELS} 一致。
+     *
+     * <p>取值是脚本侧的分节名；空串表示不筛选。与签名库的 SECTIONS 同源，
+     * 写错只会表现为「筛完没有结论」，因此由自检逐项断言。
+     */
+    public static final String[] EVIDENCE_VALUES = {"", "sinks", "strings", "classes", "methods"};
+
+    /** 漏洞类型下拉的首项：表示不按类型筛选。 */
+    public static final String TYPE_ALL = "全部类型";
+
+    /** 证据来源下拉的显示名，顺序与 {@link #EVIDENCE_VALUES} 一致。 */
+    public static final String[] EVIDENCE_LABELS = {
+            "全部证据", "仅 sink 调用", "仅字符串常量", "仅类名", "仅方法名"};
+
     /** 本页需要的控件与回调。 */
     public static final class Widgets {
         /** 待分析的 jar 或依赖目录。 */
@@ -56,10 +71,33 @@ public final class AnalyzeChainPage {
         /** 数据库查询。 */
         public JComboBox<String> queryKind;
         public JTextField keyword;
+        /** 利用路径查询的向上回溯层数上限。放太大会把时间耗在远离入口的外围调用上。 */
+        public JTextField pathDepth;
         public JButton query;
         /** 特征匹配：把代码特征与签名库对照，输出漏洞类型与绕过手法。 */
         public JButton signatures;
         public JComboBox<String> minSeverity;
+        /**
+         * 按证据来源筛选：sink 调用 / 字符串常量 / 类名 / 方法名。
+         *
+         * <p>做成本页控件而不是写进配置：它是「这一次想看什么」的即时问题，
+         * 不是需要长期保留的默认值。
+         */
+        public JComboBox<String> evidenceSection;
+        /**
+         * 按漏洞类型筛选（命令执行 / 反序列化 / JNDI …）。
+         *
+         * <p>选项来自签名库（{@code --list-filters}），因此初始只有「全部类型」一项，
+         * 由控制器在后台补全：取值写死在界面里必然与库漂移。
+         */
+        public JComboBox<String> onlyType;
+        /**
+         * 与上一次同输入的结果比对。
+         *
+         * <p>默认开启：静态分析结论会随规则库与目标版本变化，
+         * 「这次和上次不一样」本身是重要信号，不比对就等于每次都从零看起。
+         */
+        public JCheckBox compareBaseline;
 
         /** 反编译（内置 CFR）。 */
         public JTextField className;
@@ -97,11 +135,19 @@ public final class AnalyzeChainPage {
         widgets.timeoutSeconds = new JTextField("300", 8);
 
         widgets.queryKind = new JComboBox<String>(new String[]{
-                "总览", "入口点", "Sink 命中", "字符串常量", "组件清单"});
+                "总览", "入口点", "Sink 命中", "利用路径", "多态实现", "字符串常量", "组件清单"});
         widgets.keyword = new JTextField("", 18);
+        widgets.pathDepth = new JTextField("6", 3);
         widgets.query = new JButton("查询数据库");
         widgets.signatures = new JButton("漏洞特征匹配");
         widgets.minSeverity = new JComboBox<String>(SEVERITY_LABELS);
+        // 取值与签名库的分节一一对应，顺序也一致：界面上的选项与脚本接受的值必须同源
+        widgets.evidenceSection = new JComboBox<String>(new String[]{
+                "全部证据", "仅 sink 调用", "仅字符串常量", "仅类名", "仅方法名"});
+        widgets.compareBaseline = new JCheckBox("与上次比对", true);
+        widgets.onlyType = new JComboBox<String>(new String[]{TYPE_ALL});
+        widgets.onlyType.setToolTipText("只看某一类漏洞（如命令执行、反序列化）；"
+                + "选项来自签名库，进页后自动补全");
 
         widgets.className = new JTextField("", 34);
         widgets.outputDir = new JTextField("", 34);
@@ -126,7 +172,8 @@ public final class AnalyzeChainPage {
     public static JPanel build(Widgets widgets, UiKit.FontSink sink) {
         JPanel page = UiKit.page();
         page.add(UiKit.pageHeading("ANALYZE · CODE", "调用链查询",
-                "建调用图 → 取事实 → 判漏洞类型与绕过手法  ·  需要外部引擎，建库是分钟级任务", sink),
+                "复用 jar-analyzer 建库 → 取事实 → 反推利用路径 → 判漏洞类型与绕过手法"
+                        + "  ·  建库是分钟级任务", sink),
                 BorderLayout.NORTH);
 
         JPanel work = new JPanel(new BorderLayout(0, 16));
@@ -169,11 +216,16 @@ public final class AnalyzeChainPage {
         UiKit.styleCombo(widgets.queryKind, 12, sink);
         UiKit.styleField(widgets.keyword, sink);
         UiKit.styleSecondaryButton(widgets.query, sink);
+        UiKit.styleField(widgets.pathDepth, sink);
         queryRow.add(UiKit.label("② 取事实", Font.BOLD, 13, UiKit.TEXT, sink));
         queryRow.add(widgets.queryKind);
         queryRow.add(widgets.keyword);
+        queryRow.add(UiKit.label("回溯", Font.PLAIN, 12, UiKit.MUTED, sink));
+        queryRow.add(widgets.pathDepth);
+        queryRow.add(UiKit.label("层", Font.PLAIN, 12, UiKit.MUTED, sink));
         queryRow.add(widgets.query);
-        queryRow.add(UiKit.label("字符串常量检索填关键字；其它查询忽略", Font.PLAIN, 12, UiKit.MUTED, sink));
+        queryRow.add(UiKit.label("常用「利用路径」：把 sink 反推回入口，★ 标出外部可达的位置",
+                Font.PLAIN, 12, UiKit.MUTED, sink));
         form.add(queryRow, c);
         row++;
 
@@ -182,10 +234,16 @@ public final class AnalyzeChainPage {
         signatureRow.setOpaque(false);
         UiKit.styleSecondaryButton(widgets.signatures, sink);
         UiKit.styleCombo(widgets.minSeverity, 14, sink);
+        UiKit.styleCombo(widgets.evidenceSection, 12, sink);
+        UiKit.styleCombo(widgets.onlyType, 14, sink);
+        UiKit.styleSwitch(widgets.compareBaseline, sink);
         signatureRow.add(UiKit.label("③ 下判断", Font.BOLD, 13, UiKit.TEXT, sink));
         signatureRow.add(widgets.signatures);
         signatureRow.add(widgets.minSeverity);
-        signatureRow.add(UiKit.label("按严重度过滤；结论含漏洞类型与该类型的绕过手法",
+        signatureRow.add(widgets.evidenceSection);
+        signatureRow.add(widgets.onlyType);
+        signatureRow.add(widgets.compareBaseline);
+        signatureRow.add(UiKit.label("按严重度、证据来源与漏洞类型筛选；结论含类型与该类型的绕过手法",
                 Font.PLAIN, 12, UiKit.MUTED, sink));
         form.add(signatureRow, c);
         row++;
@@ -298,23 +356,31 @@ public final class AnalyzeChainPage {
 
     private static String defaultText() {
         StringBuilder text = new StringBuilder();
-        text.append("用法：①选目标并点「调用链分析」建库（分钟级，需在配置页填引擎 jar）→")
+        text.append("本页不自己实现字节码分析，而是复用 jar-analyzer 的结果：")
                 .append(System.lineSeparator());
-        text.append("      ②用「查询数据库」看事实（有哪些 sink、哪些字符串、哪些入口点）→")
+        text.append("它的调用图 / 继承与多态 / Spring 路由 / 字符串常量一次建库，之后查询都是秒级。")
                 .append(System.lineSeparator());
-        text.append("      ③点「漏洞特征匹配」拿判断：可能的漏洞类型 + 该类型的绕过手法")
+        text.append(System.lineSeparator());
+        text.append("用法：①选目标并点「调用链分析」建库（分钟级；后端位置会自动探测）→")
+                .append(System.lineSeparator());
+        text.append("      ②「查询数据库」取事实，「利用路径」把 sink 反推回入口 →")
+                .append(System.lineSeparator());
+        text.append("      ③点「漏洞特征匹配」拿判断：可能的漏洞类型 + 该类型的绕过手法 →")
                 .append(System.lineSeparator());
         text.append("      ④对可疑方法用「反编译」看真实源码做定点确认")
                 .append(System.lineSeparator());
         text.append(System.lineSeparator());
-        text.append("②与③的区别：②回答「库里有什么」，输出即事实；③回答「这些事实像什么漏洞」，")
+        text.append("最该先看的是「利用路径」：它回答「这条危险调用是外部可达的吗」。")
                 .append(System.lineSeparator());
-        text.append("带严重度、命中依据、漏洞类型与绕过手法，是这份分析里最该先看的一段。")
+        text.append("★ 标出的调用者与 Spring / JavaWeb 入口在同一条路径上，是可以直接下手的位置；")
+                .append(System.lineSeparator());
+        text.append("没标出则说明回溯层数内没接到入口，可加大「回溯层数」再看一次。")
                 .append(System.lineSeparator());
         text.append(System.lineSeparator());
-        text.append("边界：③的命中只代表「出现了这类特征」，参数是否可控、目标是否真的解析这段数据，")
+        text.append("边界：命中只代表「出现了这类特征」或「调用是可达的」，参数是否可控、")
                 .append(System.lineSeparator());
-        text.append("仍需人工确认。本页不会替你下「一定有漏洞」的结论。").append(System.lineSeparator());
+        text.append("目标是否真的解析这段数据仍需人工确认；本页不会替你下「一定有漏洞」的结论。")
+                .append(System.lineSeparator());
         return text.toString();
     }
 

@@ -822,7 +822,16 @@ public final class UiNavigationCheck {
         check("端到端本地分析给出报告", analyzeReport.contains("组件与漏洞分析报告"));
         check("报告识别出 fastjson 组件", analyzeReport.contains("com.alibaba:fastjson:1.2.24"));
         check("报告命中 autoType 规则", analyzeReport.contains("Fastjson 反序列化"));
-        check("报告标注可信度为高（来自 pom.properties）", analyzeReport.contains("[高]"));
+        // 结论格式从「[可信度]」升级为「[可信度 / 状态]」：
+        // 可信度说的是来源有多可靠，状态说的是验证走到哪一步，两者不能混为一谈。
+        check("报告标注可信度为高且状态为疑似（来自 pom.properties，规则推断）",
+                analyzeReport.contains("[高 / 疑似]"));
+        check("报告印出「还缺什么才算成立」而不是只给结论",
+                analyzeReport.contains("成立还需要（缺一不可）")
+                        && analyzeReport.contains("入口参数或输入数据可被外部控制"));
+        check("报告为每条结论标注规则来源", analyzeReport.contains("来源:"));
+        check("报告标注规则库版本与维护日期",
+                analyzeReport.contains("2026.09.1") && analyzeReport.contains("2026-09-23"));
         check("报告给出判定依据（来源与命中区间）",
                 analyzeReport.contains("pom.properties") && analyzeReport.contains("<= 1.2.24"));
         check("报告给出建议动作", analyzeReport.contains("建议:"));
@@ -840,6 +849,19 @@ public final class UiNavigationCheck {
             Thread.sleep(100);
         }
         check("命中后生成可跳转的建议按钮", jumpCount > 0);
+
+        // 交接条：分析结论要能说明「这条建议从哪来」，否则使用者到了目标页
+        // 只能自己回想刚才报告里的哪一条指向这里
+        Object contextText = fieldQuiet(main, "analysisContextText");
+        String banner = contextText == null ? "" : String.valueOf(contextText);
+        System.out.println("分析上下文横幅: " + banner);
+        check("本地分析后带上「由分析结论带入」的交接条",
+                banner.contains("由分析结论带入") && banner.contains("本地依赖分析"));
+        check("交接条可回跳到产生结论的分析页",
+                banner.contains("漏洞分析") || banner.contains("组件与漏洞")
+                        || banner.contains("本地依赖分析"));
+        check("交接条明确不预填高风险参数（避免按推测发包）",
+                !banner.contains("cmd") && !banner.contains("http://"));
 
         // 调用链查询：与上一页是两个独立页面，控件、标题与内容都必须不同
         select(main, "analyze.chain");
@@ -863,9 +885,26 @@ public final class UiNavigationCheck {
         check("调用链页默认勾选解析嵌套 jar",
                 ((AbstractButton) fieldQuiet(main, "analyzeInnerJars")).isSelected());
         check("调用链页含数据库查询下拉框", fieldQuiet(main, "analyzeQueryKind") instanceof JComboBox);
-        // 下拉只列事实查询（五种）；特征匹配走独立按钮，不进下拉
-        check("调用链页查询候选为五种事实查询",
-                comboOptions(main, "analyzeQueryKind").size() == 5);
+        check("调用链页含证据来源筛选下拉框",
+                fieldQuiet(main, "analyzeEvidenceSection") instanceof JComboBox);
+        check("证据来源筛选含五种取值（全部 + 四类证据）",
+                comboOptions(main, "analyzeEvidenceSection").size() == 5);
+        check("调用链页含同输入比对开关",
+                fieldQuiet(main, "analyzeCompareBaseline") instanceof AbstractButton
+                        && ((AbstractButton) fieldQuiet(main, "analyzeCompareBaseline")).isSelected());
+        check("调用链页含漏洞类型筛选下拉框",
+                fieldQuiet(main, "analyzeOnlyType") instanceof JComboBox);
+        check("漏洞类型筛选默认为全部类型",
+                !comboOptions(main, "analyzeOnlyType").isEmpty()
+                        && ui.AnalyzeChainPage.TYPE_ALL.equals(
+                                comboOptions(main, "analyzeOnlyType").get(0)));
+        // 下拉列事实查询与两项「结果二次利用」查询（利用路径 / 多态实现）；
+        // 特征匹配走独立按钮，不进下拉
+        check("调用链页查询候选与查询枚举数量一致",
+                comboOptions(main, "analyzeQueryKind").size()
+                        == analyzer.ReportReader.Query.values().length - 1);
+        check("调用链页含利用路径回溯层数输入框",
+                fieldQuiet(main, "analyzePathDepth") instanceof JTextField);
         check("调用链页含漏洞特征匹配按钮与严重度下拉框",
                 fieldQuiet(main, "analyzeSignatures") instanceof JButton
                         && fieldQuiet(main, "analyzeMinSeverity") instanceof JComboBox);
@@ -928,8 +967,8 @@ public final class UiNavigationCheck {
         check("配置页含漏洞分析配置分组", contentLabels(main).contains("漏洞分析配置"));
         check("配置页含默认扫描目标输入框",
                 fieldQuiet(main, "configAnalyzeScanTarget") instanceof JTextField);
-        check("配置页含外部引擎 JAR 输入框",
-                fieldQuiet(main, "configAnalyzeEngineJar") instanceof JTextField);
+        check("配置页含 jar-analyzer 位置输入框",
+                fieldQuiet(main, "configAnalyzeBackendHome") instanceof JTextField);
         check("配置页含引擎工作目录输入框",
                 fieldQuiet(main, "configAnalyzeWorkDir") instanceof JTextField);
         check("配置页含分析超时输入框且默认 300 秒",
@@ -939,6 +978,11 @@ public final class UiNavigationCheck {
                 fieldQuiet(main, "configAnalyzeDecompileDir") instanceof JTextField);
         check("配置页含外部 gadget 规则文件输入框",
                 fieldQuiet(main, "configAnalyzeGadgetRules") instanceof JTextField);
+        check("配置页含机器可读报告开关与目录输入框",
+                fieldQuiet(main, "configAnalyzeJsonExport") instanceof AbstractButton
+                        && fieldQuiet(main, "configAnalyzeJsonDir") instanceof JTextField);
+        check("机器可读报告默认开启",
+                ((AbstractButton) fieldQuiet(main, "configAnalyzeJsonExport")).isSelected());
         check("带外 Jar 默认落地路径与上游预设一致",
                 "/tmp/payload.bin".equals(
                         ((JTextField) fieldQuiet(main, "configOobJarDefaultPath")).getText()));

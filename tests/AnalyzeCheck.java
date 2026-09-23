@@ -163,6 +163,39 @@ public final class AnalyzeCheck {
         check("判定按可信度排序且只出命中项", findings.size() == matched.size());
         check("pom.properties 来源给出高可信度",
                 !findings.isEmpty() && findings.get(0).confidence == analyzer.Finding.Confidence.HIGH);
+
+        // 规则治理：每条规则都要能回答「依据哪份公告 / 文档」，
+        // 以及整份规则表是哪一版、什么时候维护的
+        check("规则库带版本号",
+                !VulnerabilityRules.version().isEmpty());
+        check("规则库带维护日期",
+                VulnerabilityRules.maintained().matches("\\d{4}-\\d{2}-\\d{2}"));
+        boolean everyRuleHasSource = true;
+        for (VulnerabilityRules.Rule rule : VulnerabilityRules.rules()) {
+            if (rule.source == null || rule.source.trim().isEmpty()) {
+                everyRuleHasSource = false;
+                System.err.println("      规则 " + rule.id + " 没有来源");
+            }
+        }
+        check("每条规则都登记了判定来源", everyRuleHasSource);
+        check("按 id 取规则：不存在时返回 null", VulnerabilityRules.of("NOPE") == null);
+        check("按 id 取规则：存在时取到同一条",
+                VulnerabilityRules.of("FJ-AUTOTYPE-124") != null
+                        && "FJ-AUTOTYPE-124".equals(VulnerabilityRules.of("FJ-AUTOTYPE-124").id));
+
+        // 状态模型：静态规则命中的结论只能是「疑似」，
+        // 不能因为它来自最可靠的 pom 元数据就标成已确认
+        check("静态规则命中的结论状态为「疑似」而不是「已确认」",
+                !findings.isEmpty()
+                        && findings.get(0).status == analyzer.Finding.Status.SUSPECTED);
+        check("结论给出「还缺什么才算成立」",
+                !findings.isEmpty() && !findings.get(0).missingEvidence.isEmpty());
+        check("结论状态枚举含观察 / 疑似 / 已确认 / 未能复现 / 未知五档",
+                analyzer.Finding.Status.values().length == 5);
+        check("单行摘要同时含可信度与状态",
+                !findings.isEmpty()
+                        && findings.get(0).line().contains("疑似")
+                        && findings.get(0).line().contains("高"));
         check("结论带判定依据", !findings.isEmpty() && findings.get(0).evidence.contains("pom.properties"));
     }
 
@@ -235,16 +268,28 @@ public final class AnalyzeCheck {
                 java.nio.file.Paths.get("target", "no-such-directory-xyz"));
         check("目标不存在时给出可读提示", !missing.ok);
 
-        AnalyzeReport noEngine = AnalyzeEngine.runEngine(null, java.nio.file.Paths.get("."),
-                java.nio.file.Paths.get("target"), false, false, 60, "java");
-        check("未配置引擎时提示去配置页填写",
-                !noEngine.ok && noEngine.text.contains("外部引擎 JAR"));
+        // 后端定位：本机装了 jar-analyzer 时会被自动找到，因此断言的是
+        // 「找不到时的提示要列出找过哪些地方」而不是「一定找不到」
+        analyzer.ToolkitLocator.Install located = analyzer.ToolkitLocator.locate("");
+        check("后端定位：命中时给出形态描述",
+                located == null || (located.describe().contains("jar")
+                        && (located.isDistribution() || located.version() != null)));
+        if (located != null) {
+            check("后端命令行含 build 子命令或以 -jar 启动",
+                    located.isDistribution()
+                            ? located.command(java.nio.file.Paths.get("x.jar"), false, false, true, true)
+                                    .contains("build")
+                            : located.command(java.nio.file.Paths.get("x.jar"), false, true, false, false)
+                                    .contains("-jar"));
+            check("发行包如实声明不支持快速模式", !located.isDistribution() || !located.supportsQuick());
+        }
+        java.util.List<String> places = analyzer.ToolkitLocator.searchedPlaces("");
+        check("找不到后端时能列出找过的位置", places.size() >= 3
+                && places.get(0).contains("配置页"));
 
-        // 引擎路径必须是真实存在的文件，否则会先被「引擎 jar 不存在」拦下，
-        // 走不到超时下限这条分支
         AnalyzeReport tooShort = AnalyzeEngine.runEngine(
-                java.nio.file.Paths.get("src", "pom.xml"), java.nio.file.Paths.get("."),
-                java.nio.file.Paths.get("target"), false, false, 5, "java");
+                "src/pom.xml", java.nio.file.Paths.get("."),
+                java.nio.file.Paths.get("target"), false, false, 5);
         check("超时低于下限时提前拦下",
                 !tooShort.ok && tooShort.text.contains("至少"));
 
@@ -258,10 +303,76 @@ public final class AnalyzeCheck {
                 !ReportReader.available(java.nio.file.Paths.get("target", "no-such.db")));
         check("查询标识可反查", ReportReader.Query.of("sinks") == ReportReader.Query.SINKS);
         check("未知查询标识返回 null", ReportReader.Query.of("nope") == null);
-        check("查询候选为六种（事实查询五种 + 特征匹配）",
-                ReportReader.Query.values().length == 6);
+        check("查询候选为八种（事实查询五种 + 利用路径 + 多态实现 + 特征匹配）",
+                ReportReader.Query.values().length == 8);
+        check("利用路径已登记为查询标识",
+                ReportReader.Query.of("paths") == ReportReader.Query.PATHS);
+        check("多态实现已登记为查询标识",
+                ReportReader.Query.of("impls") == ReportReader.Query.IMPLS);
+        check("利用路径查询默认带回溯深度",
+                analyze.AnalyzeCommand.report("python", java.nio.file.Paths.get("s.py"),
+                        java.nio.file.Paths.get("d.db"), "paths", "", 10)
+                        .contains("-d"));
         check("特征匹配已登记为查询标识",
                 ReportReader.Query.of("signatures") == ReportReader.Query.SIGNATURES);
+
+        // 筛选与可复现：命令行参数必须真的被拼出来，否则界面上的下拉框只是个摆设
+        java.util.List<String> filtered = analyze.AnalyzeCommand.signatures(
+                "python", java.nio.file.Paths.get("s.py"), java.nio.file.Paths.get("l.json"),
+                java.nio.file.Paths.get("d.db"), "high", null, "sinks", "0.1.0", "base.json");
+        check("特征匹配命令行支持按证据来源筛选", filtered.contains("--only-section")
+                && filtered.contains("sinks"));
+        check("特征匹配命令行记录工具版本", filtered.contains("--tool-version")
+                && filtered.contains("0.1.0"));
+        check("特征匹配命令行支持同输入比对", filtered.contains("--baseline")
+                && filtered.contains("base.json"));
+        java.util.List<String> plain = analyze.AnalyzeCommand.signatures(
+                "python", java.nio.file.Paths.get("s.py"), java.nio.file.Paths.get("l.json"),
+                java.nio.file.Paths.get("d.db"), "", null);
+        check("不筛选时不拼接筛选参数",
+                !plain.contains("--only-section") && !plain.contains("--baseline"));
+        check("列出筛选取值不需要数据库",
+                !analyze.AnalyzeCommand.listFilters("python", java.nio.file.Paths.get("s.py"),
+                        java.nio.file.Paths.get("l.json")).contains("-db"));
+        check("列出筛选取值带固定前缀便于界面解析",
+                analyze.AnalyzeCommand.listFilters("python", java.nio.file.Paths.get("s.py"),
+                        java.nio.file.Paths.get("l.json")).contains("--list-filters"));
+        check("证据来源下拉取值与签名库分节一一对应",
+                java.util.Arrays.asList(ui.AnalyzeChainPage.EVIDENCE_VALUES)
+                        .containsAll(java.util.Arrays.asList("", "sinks", "strings",
+                                "classes", "methods"))
+                        && ui.AnalyzeChainPage.EVIDENCE_VALUES.length == 5);
+        check("证据来源下拉的显示名与取值数量一致",
+                ui.AnalyzeChainPage.EVIDENCE_LABELS.length
+                        == ui.AnalyzeChainPage.EVIDENCE_VALUES.length);
+        check("工具版本号与 pom 一致",
+                "0.1.0".equals(toolVersionInPom())
+                        && "0.1.0".equals(analyze.AnalyzeCommand.TOOL_VERSION));
+
+        // 漏洞类型筛选：下拉框的选中项必须真的能变成命令行参数
+        java.util.List<String> typed = analyze.AnalyzeCommand.signatures(
+                "python", java.nio.file.Paths.get("s.py"), java.nio.file.Paths.get("l.json"),
+                java.nio.file.Paths.get("d.db"), "", null, "", "deserialization", "", "");
+        check("特征匹配命令行支持按漏洞类型筛选",
+                typed.contains("--only-type") && typed.contains("deserialization"));
+        check("不选类型时不拼接类型参数",
+                !plain.contains("--only-type"));
+        check("类型筛选与证据筛选可同时生效",
+                analyze.AnalyzeCommand.signatures("python", java.nio.file.Paths.get("s.py"),
+                        java.nio.file.Paths.get("l.json"), java.nio.file.Paths.get("d.db"), "",
+                        null, "sinks", "deserialization", "", "")
+                        .contains("--only-section"));
+        check("下拉框首项表示不按类型筛选",
+                !ui.AnalyzeChainPage.TYPE_ALL.isEmpty()
+                        && "".equals(ui.AnalyzeController.typeIdOf(
+                                java.util.Collections.singletonList(""), 0)));
+        check("下拉框索引越界时回落到不筛选",
+                "".equals(ui.AnalyzeController.typeIdOf(
+                        java.util.Collections.singletonList("deserialization"), 5))
+                        && "".equals(ui.AnalyzeController.typeIdOf(null, 0)));
+        check("类型下拉框的选中索引与 id 表对齐",
+                "deserialization".equals(ui.AnalyzeController.typeIdOf(
+                        java.util.Arrays.asList("", "deserialization"), 1)));
 
         check("Python 解释器：配置优先",
                 "custom-python".equals(ScriptRunner.python("custom-python")));
@@ -272,7 +383,13 @@ public final class AnalyzeCheck {
                         .contains("-X"));
 
         Map<String, String> capabilities = AnalyzeEngine.capabilities();
-        check("能力清单含七项", capabilities.size() == 7);
+        check("能力清单含九项", capabilities.size() == 9);
+        check("能力清单说明复用 jar-analyzer",
+                capabilities.get("调用链分析").contains("jar-analyzer"));
+        check("能力清单含利用路径",
+                capabilities.get("利用路径").contains("入口"));
+        check("能力清单含多态实现",
+                capabilities.get("多态实现").contains("实现类"));
         check("能力清单含漏洞特征匹配",
                 capabilities.get("漏洞特征匹配").contains("绕过手法"));
         check("能力清单含可用 gadget",
@@ -287,12 +404,120 @@ public final class AnalyzeCheck {
                 "去探测".equals(AnalyzeEngine.navLabel("fastjson.detect"))
                         && "去生成载荷".equals(AnalyzeEngine.navLabel("payload.build")));
 
+        contextChecks();
+
         gadgetChecks();
 
         // 畸形容器不应让整次分析失败
         Path broken = Files.createTempDirectory("javasec-broken").resolve("broken.jar");
         Files.write(broken, "not a zip".getBytes(StandardCharsets.UTF_8));
         check("损坏的 jar 被跳过而不是中断分析", AnalyzeEngine.analyzeTarget(broken).ok);
+    }
+
+    /**
+     * 分析上下文：跳转必须带「这条建议从哪来」，且**不预填高风险参数**。
+     *
+     * <p>这套断言守的是安全边界，不是格式：把类名、常量或推测自动填进命令、
+     * 回连地址、目标 URL，会让使用者点一下生成就等于按推测向目标发包。
+     */
+    private static void contextChecks() {
+        java.util.List<String> evidence = new ArrayList<String>();
+        evidence.add("[高] com/alibaba/fastjson/JSON.parseObject（1 处，入口点）");
+        java.util.List<String> limits = new ArrayList<String>();
+        limits.add("只读查询：不修改数据库。");
+        analyze.AnalysisContext context = analyze.AnalysisContext.of(
+                "漏洞特征匹配", "analyze.chain", "/tmp/app.jar", evidence,
+                "把库里的代码特征与签名库对照后得到的疑似结论。",
+                "数据库 jar-analyzer.db（2026-09-23）", limits);
+
+        check("上下文记录来源与目标",
+                "漏洞特征匹配".equals(context.source) && "/tmp/app.jar".equals(context.target));
+        check("上下文状态为「疑似（未验证）」而不是已确认",
+                "疑似（未验证）".equals(context.status()));
+        check("上下文保留证据清单", context.hasEvidence() && context.evidence.size() == 1);
+        check("上下文保留数据来源与局限",
+                !context.dataSource.isEmpty() && !context.limitations.isEmpty());
+        check("上下文可回跳到产生它的功能页",
+                "analyze.chain".equals(context.originKey));
+        check("上下文摘要含分析来源",
+                context.banner().contains("由分析结论带入")
+                        && context.banner().contains("漏洞特征匹配"));
+        java.util.List<String> described = context.describe();
+        check("展开详情含来源 / 状态 / 证据 / 局限四类信息",
+                contains(described, "来源:") && contains(described, "结论状态:")
+                        && contains(described, "证据:") && contains(described, "本次分析的局限:"));
+        check("详情写明只展示不预填高风险参数",
+                contains(described, "不预填高风险参数"));
+
+        // 过期判断：上下文是「当时那次分析的结论」，时间久了只应提示而不该继续当依据
+        check("刚生成的上下文不算过期", !context.olderThanMinutes(60));
+        java.util.List<String> emptyEvidence = new ArrayList<String>();
+        analyze.AnalysisContext bare = analyze.AnalysisContext.of(
+                "本地依赖分析", "analyze.scan", "", emptyEvidence, "", "", null);
+        check("没有证据时如实说明而不是编造一条",
+                !bare.hasEvidence() && contains(bare.describe(), "没有可引用的具体证据"));
+
+        // 报告承载上下文：界面据此渲染交接条
+        AnalyzeReport withContext = AnalyzeReport.text("t", "x", true, 1).withContext(context);
+        check("报告可挂载分析上下文",
+                withContext.hasContext() && withContext.context == context);
+        check("未挂载上下文的报告如实报告没有",
+                !AnalyzeReport.text("t", "x", true, 1).hasContext());
+
+        // 局限说明按查询类型区分：不同查询没做的事不一样，不能共用一句
+        java.util.List<String> pathLimits =
+                AnalyzeEngine.limitationsOf(ReportReader.Query.PATHS);
+        check("利用路径的局限声明「不产出污点分析」",
+                contains(pathLimits, "不产出污点分析"));
+        check("利用路径的局限声明「未命中入口不等于不可达」",
+                contains(pathLimits, "不代表外部不可达"));
+        check("特征匹配的局限声明「未命中不等于目标干净」",
+                contains(AnalyzeEngine.limitsForSignatures(), "未命中不等于目标干净"));
+        check("特征匹配的局限声明结论一律为疑似",
+                contains(AnalyzeEngine.limitsForSignatures(), "疑似"));
+
+        // 证据摘取：只收结论行，不把整段报告塞进上下文
+        java.util.List<String> picked = AnalyzeEngine.evidenceLines(
+                "数据库: x\n===== 段 =====\n[高] Runtime.exec\n普通说明行\n"
+                        + "NAV|payload.build|去生成载荷\n★ POST /api/demo\n");
+        check("证据摘取只收结论行且剔除 NAV 行",
+                picked.size() == 2 && contains(picked, "[高] Runtime.exec")
+                        && !contains(picked, "NAV|payload.build|去生成载荷"));
+        check("证据摘取上限为 12 条", AnalyzeEngine.evidenceLines(repeat("命中", 50)).size() == 12);
+    }
+
+    /**
+     * 从 src/pom.xml 里读 <version>，用于断言「导出里的版本 = 构建产物版本」。
+     *
+     * <p>两处漂移时，机器可读报告会指向一个不存在的构建，下游对账时无从判断，
+     * 因此把它变成机械断言而不是靠人记得同步改。
+     */
+    private static String toolVersionInPom() {
+        try {
+            String pom = new String(java.nio.file.Files.readAllBytes(
+                    java.nio.file.Paths.get("src", "pom.xml")), StandardCharsets.UTF_8);
+            java.util.regex.Matcher matcher = java.util.regex.Pattern
+                    .compile("<version>([^<]+)</version>").matcher(pom);
+            if (matcher.find()) return matcher.group(1);
+        } catch (Exception unreadable) {
+            return "（读取失败：" + unreadable.getMessage() + "）";
+        }
+        return "";
+    }
+
+    /** 列表里是否含某个子串。 */
+    private static boolean contains(java.util.List<String> lines, String needle) {
+        for (String line : lines) {
+            if (line != null && line.contains(needle)) return true;
+        }
+        return false;
+    }
+
+    /** 把一段文本重复若干次，用于上限断言。 */
+    private static String repeat(String text, int times) {
+        StringBuilder builder = new StringBuilder();
+        for (int index = 0; index < times; index++) builder.append(text).append('\n');
+        return builder.toString();
     }
 
     /** 写一个最小 jar；content 为 null 时写入 class 魔数。 */
