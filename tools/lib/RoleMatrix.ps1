@@ -22,7 +22,12 @@ function Get-RoleWriteScopes {
             # 该规定的主体就是主 agent，因此这里必须给它写入域，否则共享内核改动无处可提交（实测过）。
             "src/config/*", "src/util/*", "src/pom.xml"
         )
-        probe   = @("python/fj_probe.py", "python/jar_report.py", "src/probe/Probe*")
+        # 分析侧的两个 python 文件（调用图查询 + 特征匹配）与签名库也归 probe：
+        # 它们与 jar_report.py 同属「从数据库取事实/下判断」这一件事，
+        # 拆给两个角色会让「加一条特征」变成跨角色改动。
+        probe   = @("python/fj_probe.py", "python/jar_report.py",
+                    "python/jar_signatures.py", "python/vuln_signatures.json",
+                    "src/probe/Probe*")
         exploit = @("src/shiro/*", "src/payload/*", "src/service/*", "src/preset/*",
                     "src/analyzer/*", "src/analyze/*")
         traffic = @("src/proxy/*", "src/probe/CaptureBridge.java")

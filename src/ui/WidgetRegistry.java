@@ -40,8 +40,10 @@ public final class WidgetRegistry {
     public ServicePage.Widgets service;
     public PayloadToStringPage.Widgets tostring;
     public OobJarPage.Widgets oobJar;
-    /** 漏洞分析页：自检直接读它的目标框、按钮与报告区。 */
-    public AnalyzePage.Widgets analyze;
+    /** 漏洞分析 · 组件与漏洞页：自检直接读它的目标框、按钮与报告区。 */
+    public AnalyzeScanPage.Widgets analyzeScan;
+    /** 漏洞分析 · 调用链查询页：控件与上一页完全独立，自检分别断言。 */
+    public AnalyzeChainPage.Widgets analyzeChain;
 
     /** 构建登记表：名字与控件一一对应，顺序稳定，便于对照断言排查。 */
     public Map<String, Object> build() {
@@ -107,28 +109,36 @@ public final class WidgetRegistry {
         entries.put("oobJarCopyUrl", oobJar.copyUrl);
         entries.put("oobJarStatus", oobJar.status);
         entries.put("oobJarOutput", oobJar.output);
-        if (analyze != null) {
-            entries.put("analyzeTarget", analyze.target);
-            entries.put("analyzeChooseTarget", analyze.chooseTarget);
-            entries.put("analyzePom", analyze.pomPath);
-            entries.put("analyzeClassName", analyze.className);
-            entries.put("analyzeOutputDir", analyze.outputDir);
-            entries.put("analyzeLocal", analyze.analyzeLocal);
-            entries.put("analyzeRunEngine", analyze.runEngine);
-            entries.put("analyzeQuick", analyze.quickMode);
-            entries.put("analyzeInnerJars", analyze.innerJars);
-            entries.put("analyzeTimeout", analyze.timeoutSeconds);
-            entries.put("analyzeQueryKind", analyze.queryKind);
-            entries.put("analyzeKeyword", analyze.keyword);
-            entries.put("analyzeQuery", analyze.query);
-            entries.put("analyzeDecompile", analyze.decompile);
-            entries.put("analyzeOpenOutput", analyze.openOutput);
-            entries.put("analyzeCopy", analyze.copy);
-            entries.put("analyzeStatus", analyze.status);
-            entries.put("analyzeOutput", analyze.output);
-            entries.put("analyzeJumps", analyze.jumps);
+        if (analyzeScan != null) {
+            entries.put("analyzeTarget", analyzeScan.target);
+            entries.put("analyzeChooseTarget", analyzeScan.chooseTarget);
+            entries.put("analyzePom", analyzeScan.pomPath);
+            entries.put("analyzeLocal", analyzeScan.run);
+            entries.put("analyzeCopy", analyzeScan.copy);
+            entries.put("analyzeStatus", analyzeScan.status);
+            entries.put("analyzeOutput", analyzeScan.output);
+            entries.put("analyzeJumps", analyzeScan.jumps);
         }
-
+        if (analyzeChain != null) {
+            entries.put("analyzeChainTarget", analyzeChain.target);
+            entries.put("analyzeRunEngine", analyzeChain.runEngine);
+            entries.put("analyzeQuick", analyzeChain.quickMode);
+            entries.put("analyzeInnerJars", analyzeChain.innerJars);
+            entries.put("analyzeTimeout", analyzeChain.timeoutSeconds);
+            entries.put("analyzeQueryKind", analyzeChain.queryKind);
+            entries.put("analyzeKeyword", analyzeChain.keyword);
+            entries.put("analyzeQuery", analyzeChain.query);
+            entries.put("analyzeSignatures", analyzeChain.signatures);
+            entries.put("analyzeMinSeverity", analyzeChain.minSeverity);
+            entries.put("analyzeClassName", analyzeChain.className);
+            entries.put("analyzeOutputDir", analyzeChain.outputDir);
+            entries.put("analyzeDecompile", analyzeChain.decompile);
+            entries.put("analyzeOpenOutput", analyzeChain.openOutput);
+            entries.put("analyzeChainCopy", analyzeChain.copy);
+            entries.put("analyzeChainStatus", analyzeChain.status);
+            entries.put("analyzeChainOutput", analyzeChain.output);
+            entries.put("analyzeChainJumps", analyzeChain.jumps);
+        }
         entries.put("target", probe.target);
         entries.put("timeout", probe.timeout);
         entries.put("modeDetect", probe.modeDetect);
@@ -256,6 +266,7 @@ public final class WidgetRegistry {
         entries.put("configAnalyzeWorkDir", configForm.analyzeWorkDir);
         entries.put("configAnalyzeTimeout", configForm.analyzeTimeout);
         entries.put("configAnalyzeDecompileDir", configForm.analyzeDecompileDir);
+        entries.put("configAnalyzeGadgetRules", configForm.analyzeGadgetRules);
         entries.put("configLogEnabled", configForm.logEnabled);
         entries.put("configLogLevel", configForm.logLevel);
         entries.put("configLogDir", configForm.logDir);

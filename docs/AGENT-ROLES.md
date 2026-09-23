@@ -14,7 +14,7 @@
 | 角色 | 写入域 | 核心产出 | 完成标志 |
 | --- | --- | --- | --- |
 | 主 agent | `AGENTS.md`、`README.md`、`README.en.md`、`PROGRESS.md`、`AI_REPORT.md`、`build.ps1`、`run.ps1`、`tools/*`、`docs/*`、`openspec/*`、`src/config/*`、`src/util/*`、`src/pom.xml` | change 全生命周期、集成、Git | change 归档且校验通过 |
-| 功能开发 probe | `python/fj_probe.py`、`python/jar_report.py`、`src/probe/Probe*` | 探测引擎与调用链数据库查询脚本 | `test_probe.py`、`test_jar_report.py` 全绿 |
+| 功能开发 probe | `python/fj_probe.py`、`python/jar_report.py`、`python/jar_signatures.py`、`python/vuln_signatures.json`、`src/probe/Probe*` | 探测引擎与调用链数据库查询脚本 | `test_probe.py`、`test_jar_report.py` 全绿 |
 | 功能开发 exploit | `src/shiro/*`、`src/payload/*`、`src/service/*`、`src/preset/*`、`src/analyzer/*`、`src/analyze/*` | 利用链、载荷生成、恶意服务器与漏洞分析内核 | `ShiroCheck`、`AnalyzeCheck` 全绿 |
 | 功能开发 traffic | `src/proxy/*`、`src/probe/CaptureBridge.java` | 代理与抓包转换 | `ProxyServerCheck` 全绿 |
 | UI | `src/ui/*`、`src/Main.java` | 界面装配与交互 | 三个 `Ui*Check` 全绿 |
@@ -110,7 +110,7 @@
 
 | 角色 | 写入域 | 验证命令 |
 | --- | --- | --- |
-| probe | `python/fj_probe.py`、`python/jar_report.py`、`src/probe/Probe*` | `python -m unittest discover -s tests` |
+| probe | `python/fj_probe.py`、`python/jar_report.py`、`python/jar_signatures.py`、`python/vuln_signatures.json`、`src/probe/Probe*` | `python -m unittest discover -s tests` |
 | exploit | `src/shiro/*`、`src/payload/*`、`src/service/*`、`src/preset/*`、`src/analyzer/*`、`src/analyze/*` | `ShiroCheck`、`AnalyzeCheck` |
 | traffic | `src/proxy/*`、`src/probe/CaptureBridge.java` | `ProxyServerCheck` |
 

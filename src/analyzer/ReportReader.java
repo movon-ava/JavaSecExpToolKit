@@ -25,7 +25,15 @@ public final class ReportReader {
         /** 字符串常量搜索（SQL、URL、密钥等敏感信息）。 */
         STRINGS("strings", "字符串常量"),
         /** 组件与版本（引擎侧的口径，可与本地扫描结果对照）。 */
-        COMPONENTS("components", "组件清单");
+        COMPONENTS("components", "组件清单"),
+        /**
+         * 漏洞特征匹配：把库里的代码特征（字符串常量 / 类名 / 方法名 / sink 调用）
+         * 与内置签名库对照，得出可能的漏洞类型与绕过手法。
+         *
+         * <p>走另一个脚本（jar_signatures.py）：事实查询与判定的输出契约不同，
+         * 合在一个脚本里会让两类需求互相牵制。
+         */
+        SIGNATURES("signatures", "漏洞特征匹配");
 
         private final String id;
         private final String label;

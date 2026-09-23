@@ -258,7 +258,10 @@ public final class AnalyzeCheck {
                 !ReportReader.available(java.nio.file.Paths.get("target", "no-such.db")));
         check("查询标识可反查", ReportReader.Query.of("sinks") == ReportReader.Query.SINKS);
         check("未知查询标识返回 null", ReportReader.Query.of("nope") == null);
-        check("查询候选为五种", ReportReader.Query.values().length == 5);
+        check("查询候选为六种（事实查询五种 + 特征匹配）",
+                ReportReader.Query.values().length == 6);
+        check("特征匹配已登记为查询标识",
+                ReportReader.Query.of("signatures") == ReportReader.Query.SIGNATURES);
 
         check("Python 解释器：配置优先",
                 "custom-python".equals(ScriptRunner.python("custom-python")));
@@ -269,7 +272,12 @@ public final class AnalyzeCheck {
                         .contains("-X"));
 
         Map<String, String> capabilities = AnalyzeEngine.capabilities();
-        check("能力清单含五项", capabilities.size() == 5);
+        check("能力清单含七项", capabilities.size() == 7);
+        check("能力清单含漏洞特征匹配",
+                capabilities.get("漏洞特征匹配").contains("绕过手法"));
+        check("能力清单含可用 gadget",
+                capabilities.get("可用 gadget").contains(
+                        String.valueOf(analyzer.GadgetInventory.ruleCount())));
         check("能力清单声明反编译无需 Node",
                 capabilities.get("反编译").contains("无需 Node"));
         check("能力清单含内置规则条数",
@@ -278,6 +286,8 @@ public final class AnalyzeCheck {
         check("建议按钮文字按页面 key 映射",
                 "去探测".equals(AnalyzeEngine.navLabel("fastjson.detect"))
                         && "去生成载荷".equals(AnalyzeEngine.navLabel("payload.build")));
+
+        gadgetChecks();
 
         // 畸形容器不应让整次分析失败
         Path broken = Files.createTempDirectory("javasec-broken").resolve("broken.jar");
@@ -298,6 +308,113 @@ public final class AnalyzeCheck {
             zip.closeEntry();
         }
         zip.close();
+    }
+
+    /**
+     * gadget 判定：坐标 + 版本区间口径。
+     *
+     * <p>这里守住三件事，它们都是「判定看起来正常但结论是错的」那类风险：
+     * 版本已修复的组件不能被判成可用（CommonsCollections 3.2.2）、
+     * 新坐标不能漏（c3p0 的 com.mchange、mysql-connector-j）、
+     * 外部规则文件的语法与问题上报必须真的生效。
+     */
+    private static void gadgetChecks() throws Exception {
+        System.out.println();
+        System.out.println("== gadget 判定 ==");
+
+        check("内置 gadget 规则非空", analyzer.GadgetInventory.ruleCount() > 0);
+        check("内置规则不重复 id",
+                uniqueIds(analyzer.GadgetRules.all()));
+        check("规则类型不为空且去重",
+                analyzer.GadgetRules.categories().size() > 4
+                        && !analyzer.GadgetRules.categories().contains(""));
+        check("取规则：不存在返回 null",
+                analyzer.GadgetRules.of("GAD-NOPE") == null);
+
+        // CommonsCollections 3.2.1 可用；3.2.2 已修复，不能再判成可用
+        Path ccDir = Files.createTempDirectory("javasec-cc");
+        Path ccJar = ccDir.resolve("commons-collections-3.2.1.jar");
+        writeJar(ccJar, new String[][]{
+                {"META-INF/maven/commons-collections/commons-collections/pom.properties",
+                        "version=3.2.1\ngroupId=commons-collections\nartifactId=commons-collections\n"},
+                {"org/apache/commons/collections/functors/InvokerTransformer.class", null}});
+        AnalyzeReport ccReport = AnalyzeEngine.analyzeTarget(ccJar);
+        check("已存在的 CC3 被判为可用",
+                ccReport.text.contains("[可用] CommonsCollections 3"));
+        check("报告给出 gadget 判定依据（坐标）",
+                ccReport.text.contains("commons-collections:commons-collections:3.2.1"));
+        check("可用链给出下一步动作",
+                ccReport.text.contains("下一步:") && ccReport.text.contains("直达:"));
+        check("未引入的链列为缺失并说明还差什么",
+                ccReport.text.contains("[缺失]") && ccReport.text.contains("需要"));
+
+        Path ccFixed = ccDir.resolve("commons-collections-3.2.2.jar");
+        writeJar(ccFixed, new String[][]{
+                {"META-INF/maven/commons-collections/commons-collections/pom.properties",
+                        "version=3.2.2\ngroupId=commons-collections\nartifactId=commons-collections\n"},
+                {"org/apache/commons/collections/functors/InvokerTransformer.class", null}});
+        AnalyzeReport fixedReport = AnalyzeEngine.analyzeTarget(ccFixed);
+        check("已修复版本（3.2.2）不再被判为可用",
+                !fixedReport.text.contains("[可用] CommonsCollections 3"));
+
+        // 新坐标：c3p0 / mysql-connector-j / h2 都要能识别
+        Path c3p0 = ccDir.resolve("c3p0-0.9.5.5.jar");
+        writeJar(c3p0, new String[][]{
+                {"META-INF/maven/com.mchange/c3p0/pom.properties",
+                        "version=0.9.5.5\ngroupId=com.mchange\nartifactId=c3p0\n"}});
+        check("新坐标的 c3p0 被识别为可用",
+                AnalyzeEngine.analyzeTarget(c3p0).text.contains("[可用] c3p0"));
+
+        Path mysql8 = ccDir.resolve("mysql-connector-j-8.0.33.jar");
+        writeJar(mysql8, new String[][]{
+                {"META-INF/maven/com.mysql/mysql-connector-j/pom.properties",
+                        "version=8.0.33\ngroupId=com.mysql\nartifactId=mysql-connector-j\n"}});
+        check("MySQL 8.x 新坐标被识别为可用",
+                AnalyzeEngine.analyzeTarget(mysql8).text.contains("[可用] MySQL 驱动（新坐标 8.x）"));
+
+        // 外部规则文件：格式、通配、版本排除、问题上报
+        Path ruleFile = ccDir.resolve("gadget.dat");
+        Files.write(ruleFile, ("# 注释行\n"
+                + "commons-collections-3.2.1.jar|NATIVE|外部规则：CC3\n"
+                + "*-collections4.jar|NATIVE|*通配规则\n"
+                + "commons-collections-!3.2.1.jar|NATIVE|版本排除规则\n"
+                + "坏行只有两段|NATIVE\n").getBytes(StandardCharsets.UTF_8));
+        analyzer.GadgetRuleFile.Parsed parsed = analyzer.GadgetRuleFile.parse(ruleFile);
+        check("规则文件：合法行被读取（注释与空行跳过）", parsed.rules.size() == 3);
+        check("规则文件：坏行被逐行报告而不是静默丢弃",
+                parsed.problems.size() == 1 && parsed.problems.get(0).contains("第 5 行"));
+        check("规则文件：带版本的 jar 名被解析成上界",
+                parsed.rules.get(0).requires.get(0).range.upper.equals("3.2.1"));
+        check("规则文件：!版本被解析成排除项",
+                parsed.rules.get(2).requires.get(0).range.excluded.contains("3.2.1"));
+        check("规则文件：独立于内置表的 id",
+                parsed.rules.get(0).id.startsWith("EXT-"));
+
+        // 外部规则参与判定：通配规则在 cc3 目录下应命中并给出依据
+        AnalyzeReport withRules = AnalyzeEngine.analyzeTarget(ccDir);
+        check("外部规则可向报告归因（多个 jar 的目录）",
+                withRules.ok && withRules.text.contains("可用 gadget"));
+        AnalyzeReport extra = AnalyzeEngine.analyzeTarget(ccJar, parsed.rules, ruleFile.toString());
+        check("外部规则被应用到判定",
+                extra.text.contains("外部 gadget 规则:") && extra.text.contains("外部规则：CC3"));
+
+        analyzer.GadgetRuleFile.Parsed absent = AnalyzeEngine.loadGadgetRules(
+                ccDir.resolve("no-such-rules.dat").toString());
+        check("规则文件缺失时给出可读问题而不抛异常",
+                !absent.problems.isEmpty());
+        check("规则文件留空时不报错",
+                AnalyzeEngine.loadGadgetRules("").problems.isEmpty());
+        check("重复规则以外部为准（同 id 覆盖）",
+                analyzer.GadgetInventory.merged(parsed.rules).size()
+                        >= analyzer.GadgetRules.count());
+    }
+
+    private static boolean uniqueIds(List<analyzer.GadgetRule> rules) {
+        java.util.Set<String> ids = new java.util.HashSet<String>();
+        for (analyzer.GadgetRule rule : rules) {
+            if (!ids.add(rule.id)) return false;
+        }
+        return true;
     }
 
     private static void check(String message, boolean condition) {

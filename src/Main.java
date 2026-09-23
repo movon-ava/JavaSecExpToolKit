@@ -297,7 +297,8 @@ public final class Main implements UiHandle.Source {
         registry.proxy = proxyWidgets;
         registry.shiro = shiroWidgets;
         registry.toolsUpload = toolsUploadWidgets;
-        registry.analyze = workbench.analyzeWidgets;
+        registry.analyzeScan = workbench.analyzeScanWidgets;
+        registry.analyzeChain = workbench.analyzeChainWidgets;
         registry.configForm = configForm;
         registry.payload = workbench.payloadWidgets;
         registry.payloadSelector = workbench.payloadSelector;

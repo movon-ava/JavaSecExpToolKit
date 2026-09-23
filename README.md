@@ -121,8 +121,8 @@ Maven 的 POM 位于 Java 工作区（`src/pom.xml`，与源码同级），产�
 - `代理` — 一级分类；点击可展开 / 收起二级项 `代理抓包`（本地 HTTP 代理）
   与 `抓包转换`（单次抓包、格式转换）
 - `FastJson` — 一级分类；点击可展开 / 收起二级项 `Fastjson 探测`
-- `漏洞分析` — 一级分类；点击可展开 / 收起二级项 `组件与漏洞`（本地读依赖坐标并判定已知漏洞）
-  与 `调用链查询`（外部引擎建库后按 Sink / 入口点 / 字符串查询）
+- `漏洞分析` — 一级分类；点击可展开 / 收起二级项 `组件与漏洞`（读依赖坐标，判定已知漏洞与
+  可用 gadget）与 `调用链查询`（外部引擎建库后取事实、判漏洞类型与绕过手法）
 - `小工具` — 一级分类；点击可展开 / 收起二级项 `文件上传`（选择本地文件按 multipart
   上传到指定接口，并记录原始响应）
 - `配置` — 设置项，分为 `通用配置` 与各功能分组
@@ -168,7 +168,8 @@ Maven 的 POM 位于 Java 工作区（`src/pom.xml`，与源码同级），产�
   是否回显到控制台（默认关闭）
 - `漏洞分析配置` — 默认扫描目标（jar / 依赖目录）、外部引擎 JAR（`jar-analyzer-engine`，
   留空则只跑本地分析）、引擎工作目录（引擎固定把 `jar-analyzer.db` 写到工作目录）、
-  分析超时（默认 300 秒）、反编译输出目录（留空则输出到工作目录下的 `decompiled`）
+  分析超时（默认 300 秒）、反编译输出目录（留空则输出到工作目录下的 `decompiled`）、
+  外部 gadget 规则文件（留空只用内置规则表，格式见「可用 gadget」一节）
 
 保存后的值会预填到**全部功能页**（探测页 + 代理页 + 抓包页 + Shiro 页 + Payload 页 +
 预设链页 + 恶意服务器页 + toString 链页 + 带外 Jar 页 + 漏洞分析页），保存后即刻下发到已经打开的页面，不需要重开程序。代理启动后会
@@ -204,15 +205,15 @@ CEYE 确认作为附属阶段时仍依赖 DNS 阶段。未填 Token 就执行 `C
 | 路径 | 用途 |
 | --- | --- |
 | `src/` | 组合根 `Main.java`（352 行，只做装配与切页）、`pom.xml`、本地代理（`proxy/ProxyServer.java`）与 Shiro 模块（`shiro/`） |
-| `src/ui/` | 各功能页的**视图**与**行为**分开放：视图 `*Page` / `*Form`（`HomePage` / `ProbePage` / `CapturePage` / `ProxyPage` / `ShiroPage` / `PayloadPage` / `PresetPage` / `ServicePage` / `ConfigPage` / `ConfigForm` / `ToolsUploadPage` / `PayloadToStringPage` / `OobJarPage`），行为 `*Controller`（`NavController` / `ProbeController` / `CaptureController` / `ProxyController` / `ShiroController` / `ConfigController` / `PayloadController` / `PresetController` / `ServiceController` / `ToolsUploadController` / `PayloadToStringController` / `OobJarController` / `WorkbenchPages`），另有样式 `UiKit`、共用链编辑 `ChainEditor`、启动预热 `StartupWarmup` / 启动画面 `StartupSplash`、列式链选择器 `PayloadChainSelector`（载荷生成页的选链主体，不持有链状态）及其协作类 `ChainSelectorSizing`（几何换算）/ `ChainColumn` / `ChainColumnState` / `ChainColumnPanel`（每列的面板与筛选状态）/ `ChainResizeHandle`（竖向拖拽条）/ `ChainColumnFilter`（过滤判定）/ `ChainNodeRenderer`（条目渲染）/ `ChainTagMenu`（标签菜单）、载荷页拆分出的 `PayloadPanels`（面板构建）/ `PayloadColumns`（列换算）/ `PayloadOutputText`（输出文本）/ `PayloadExporter`（导出落盘）、自检门面 `UiHandle` + `WidgetRegistry` |
+| `src/ui/` | 各功能页的**视图**与**行为**分开放：视图 `*Page` / `*Form`（`HomePage` / `ProbePage` / `CapturePage` / `ProxyPage` / `ShiroPage` / `PayloadPage` / `PresetPage` / `ServicePage` / `ConfigPage` / `ConfigForm` / `ToolsUploadPage` / `PayloadToStringPage` / `OobJarPage` / `AnalyzeScanPage` / `AnalyzeChainPage`），行为 `*Controller`（`NavController` / `ProbeController` / `CaptureController` / `ProxyController` / `ShiroController` / `ConfigController` / `PayloadController` / `PresetController` / `ServiceController` / `ToolsUploadController` / `PayloadToStringController` / `OobJarController` / `AnalyzeScanController` / `WorkbenchPages`），另有样式 `UiKit`、共用链编辑 `ChainEditor`、启动预热 `StartupWarmup` / 启动画面 `StartupSplash`、列式链选择器 `PayloadChainSelector`（载荷生成页的选链主体，不持有链状态）及其协作类 `ChainSelectorSizing`（几何换算）/ `ChainColumn` / `ChainColumnState` / `ChainColumnPanel`（每列的面板与筛选状态）/ `ChainResizeHandle`（竖向拖拽条）/ `ChainColumnFilter`（过滤判定）/ `ChainNodeRenderer`（条目渲染）/ `ChainTagMenu`（标签菜单）、载荷页拆分出的 `PayloadPanels`（面板构建）/ `PayloadColumns`（列换算）/ `PayloadOutputText`（输出文本）/ `PayloadExporter`（导出落盘）、两页共用的后台执行器 `AnalyzeWorker`（不冻结界面 + 单页内互斥 + 建议按钮截断）、自检门面 `UiHandle` + `WidgetRegistry` |
 | `src/payload/` | 通用载荷生成（`PayloadEngine` / `PayloadCatalog` / `PayloadResult`），与 Shiro 等具体功能解耦；功能模板 `JarPreset`（带外 Jar 的包装 × 末端动作）、`ToStringPreset`（toString 链模板）与节点归属规则 `ChainScope` |
 | `src/service/` | 恶意服务器（`ServiceManager` / `ServiceSpec` / `ServiceEndpoint` / `ServiceDefaults`）与带外 Jar 托管 `OobJarService`：唯一直接调用 java-chains 服务端适配器的包 |
 | `src/preset/` | 内置预设链读取（`PresetCatalogService` / `PresetItem`）：唯一引用上游预设模型的包，纯数据出参 |
 | `src/probe/` | 引擎调用与命令行拼装（`ProbeEngine` / `ProbeCommand` / `CaptureBridge`） |
-| `src/analyzer/` | 漏洞分析内核（叶子层，不依赖任何项目包）：依赖坐标读取 `Dependency` / `DependencyScanner` / `PomScanner`、版本比较 `Version`、规则表 `VulnerabilityRules`、结论 `Finding` / `VulnerabilityAnalyzer`、外部引擎调用 `EngineRunner`、查询枚举 `ReportReader`、脚本执行 `ScriptRunner`、反编译 `Decompiler` |
-| `src/analyze/` | 漏洞分析编排层（只依赖 `analyzer`）：`AnalyzeEngine`（本地分析 / 调引擎 / 查询 / 反编译）、`AnalyzeReport`、`AnalyzeCommand`（命令行是唯一契约，集中一处便于比对） |
+| `src/analyzer/` | 漏洞分析内核（叶子层，不依赖任何项目包）：依赖坐标读取 `Dependency` / `DependencyScanner` / `PomScanner`、版本比较 `Version`、组件规则表 `VulnerabilityRules`、结论 `Finding` / `VulnerabilityAnalyzer`、gadget 判定 `GadgetRule`（需求 / 版本区间 / 通配）/ `GadgetRules`（内置规则表）/ `GadgetRuleFile`（外部规则文件解析）/ `GadgetInventory`（判定与渲染）、外部引擎调用 `EngineRunner`、查询枚举 `ReportReader`、脚本执行 `ScriptRunner`、反编译 `Decompiler` |
+| `src/analyze/` | 漏洞分析编排层（只依赖 `analyzer`）：`AnalyzeEngine`（本地分析 / 调引擎 / 查询 / 特征匹配 / 反编译）、`AnalyzeReport`、`AnalyzeCommand`（命令行是唯一契约，集中一处便于比对） |
 | `src/config/` `src/util/` | `config.properties` 读写；报文解析与平台差异；日志内核 `Log`（记录通道）与 `LogFiles`（文件名与保留策略） |
-| `python/` | 探测引擎（`fj_probe.py`）与调用链数据库查询脚本（`jar_report.py`），打进 JAR |
+| `python/` | 探测引擎（`fj_probe.py`）、调用链数据库查询脚本（`jar_report.py`）与漏洞特征匹配（`jar_signatures.py` + 签名库 `vuln_signatures.json`），全部打进 JAR |
 | `tests/` | Python 单元测试与 Java 界面自检；`TestProcessGuard.java` 在自检退出时清理构建期弹出的计算器进程 |
 | `tools/` | 维护辅助脚本：`agent.ps1`（启动角色化 agent）、`dispatch.ps1`（单条派发并自动合并）、`orchestrate.ps1`（一句话目标自动拆解编排）、`watchdog.ps1`（会话停滞看护）、`lib/`（角色矩阵与执行原语）、`audit_boundary.py`（依赖边界审计）、`apply_patch.py` |
 | `docs/` | 设计文档（`DESIGN.md`、`DESIGN-shiro.md`、`DESIGN-probe-accuracy.md`、`DESIGN-agents.md`、`DESIGN-modularization.md`、`DESIGN-payload.md`、`DESIGN-services.md`、`DESIGN-analyze.md`）与多 Agent 职责说明（`AGENT-ROLES.md`）与运行手册（`AGENT-RUNBOOK.md`） |
@@ -275,7 +276,7 @@ CEYE 确认作为附属阶段时仍依赖 DNS 阶段。未填 Token 就执行 `C
 编排器先按角色聚合（每个角色几步、主要工作、产出文件），再给逐步表格；
 单条派发也会打印角色、主要工作与产出文件清单。
 
-工具链自身的回归用 `tools\check_agent_tools.ps1`（84 项机械断言），
+工具链自身的回归用 `tools\check_agent_tools.ps1`（91 项机械断言），
 覆盖参数与变量同名、开关写错导致死代码、缺 BOM、`.gitignore` 未锚定等已实际发生过的缺陷：
 
 ```powershell
@@ -556,12 +557,16 @@ LDAPS 需要同时提供 JKS 证书路径，未显式填写端口时**不下发*
 
 ## 漏洞分析
 
-`主页 → 漏洞分析` 回答两个不同层级的问题，因此分成两页、三种代价：
+`主页 → 漏洞分析` 回答两个不同层级的问题，因此分成**两个真正独立的页面**、三种代价：
 
-| 二级项 | 做什么 | 代价 |
-| --- | --- | --- |
-| `组件与漏洞` | 读 jar 内的 Maven 坐标，按 25 条内置规则判定已知漏洞，给出证据与跳转建议 | 秒级，不需要任何外部程序 |
-| `调用链查询` | 用外部引擎把 jar 解析成调用图数据库，再按 Sink 命中 / 入口点 / 字符串常量查询 | 分钟级，需要自备引擎 |
+| 二级项 | 口径 | 做什么 | 代价 |
+| --- | --- | --- | --- |
+| `组件与漏洞` | 依赖 | 读 jar 内的 Maven 坐标，按 25 条内置规则判定已知漏洞，并判定哪些 gadget 链在 classpath 上齐备 | 秒级，不需要任何外部程序 |
+| `调用链查询` | 代码 | 用外部引擎把 jar 解析成调用图数据库，先取事实（Sink 命中 / 入口点 / 字符串常量），再判**可能的漏洞类型与绕过手法**，最后可定点反编译 | 分钟级，需要自备引擎 |
+
+两页**控件、报告区与建议按钮容器都各自独立**：在依赖口径页看到的结论不会覆盖代码口径页的报告，
+反之亦然。此前两页指向同一个视图，点哪个二级项都一样，因此「结论来自哪一侧」在界面上无法判断；
+现在两页的标题副标题分别是 `ANALYZE · DEPENDENCIES` 与 `ANALYZE · CODE`，一眼可区分。
 
 ### 组件与漏洞（本地分析）
 
@@ -590,6 +595,61 @@ XStream、SnakeYAML、Jackson-databind、FakeMySQL 场景）。
 结论里的跳转建议是按钮，点一下直接去对应功能页（探测页 / Shiro 页 / Payload 生成 /
 toString 链 / 恶意服务器 / 抓包转换），不需要自己去侧边栏找。
 
+#### 可用 gadget（依赖口径）
+
+报告的第三段回答另一个问题：**这些依赖凑在一起，本工具里哪几条链能构建出来**。
+它和规则表的分工很清楚——规则表判「组件自身有没有已知漏洞」，
+gadget 段判「组件之间的组合能力」：CommonsCollections 自己不算漏洞，
+它是「反序列化入口存在时能达成 RCE」的能力。
+
+判据是 **Maven 坐标 + 版本区间**，不是 jar 文件名。这一点是它与上游 `jar-analyzer` 的
+gadget 分析最大的差别：上游按「一串 jar 名是否都出现在扫描目录里」判定，于是
+`commons-collections-3.2.2.jar`（该版本已修补 InvokerTransformer 的可用性）也会被算成可用链。
+本项目的需求模型支持四件事：
+
+- `groupId` 前缀 + `artifactId`（支持 `*` 通配）
+- 版本区间（`lower` / `upper`）与**排除版本**
+- 版本不可比较时判为**不满足**（宁可不报，不可误报）
+- 一条链的所有依赖必须**同时**满足（沿用上游的 AND 语义）
+
+内置规则 39 条，按类型分组：原生反序列化（CC3 / CC4 / Beanutils / c3p0 / Groovy / Jython /
+BCEL / AspectJWeaver / JDK7u21）、Hessian、JDBC 驱动（MySQL 新旧坐标 / PostgreSQL / H2 / Derby）、
+fastjson、Jackson、toString 触发（Rome）、模板与表达式（Velocity / Freemarker / javax.el / Xalan）。
+
+规则是**本项目自己写的**：上游 `jar-analyzer` 是 GPLv3，它的 `gadget.dat` 不能进本仓库；
+这里只借鉴「多依赖 AND 判定」这一思路。收录标准沿用既有约定——判定出来必须能接上后续动作，
+接不上任何功能页的组件不进这张表。
+
+报告同时列出**缺失链与还差什么**（例如「[缺失] CommonsCollections 4　需要 org.apache.commons:commons-collections4 不限版本」）。
+只报凑齐了什么是不够的：使用者会在「Payload 生成」里反复试一条注定构造不出来的链。
+
+段末固定带一句边界说明：**只说明 gadget 在 classpath 上，不等于可达**。
+是否可达取决于有没有反序列化入口、入口参数能否被外部控制，要靠「调用链查询」的
+Sink 命中与特征匹配继续往上追。
+
+#### 外部规则文件
+
+内置表只覆盖本工具能接上后续动作的链，实际目标可能在用别的组件。为了「分析更多 gadget」
+不必重新编译，配置页「漏洞分析配置」里可以指定一个**外部规则文件**。
+
+格式沿用上游 `gadget.dat` 的形态（**只读格式，不引入它的数据文件**），每行
+`jar名,…|类型|结果`，`#` 开头是注释，按 `|` 分三段：
+
+```
+# 每个 jar 名会被翻译成坐标 + 版本区间
+commons-collections-3.2.1.jar|NATIVE|外部规则：CC3
+*-collections4.jar|NATIVE|通配 artifactId
+commons-collections-!3.2.1.jar|NATIVE|排除 3.2.1 之外的版本
+```
+
+与上游按文件名逐字比对不同，这里把 jar 名解析成三件事：`commons-collections-3.2.1.jar`
+→ artifactId `commons-collections` + 上界 `3.2.1`；`!3.2.2` → 排除 3.2.2；
+`*-core.jar` → artifactId 通配。
+
+**写错的行会逐行报进报告**（含行号），而不是静默跳过：一条写错的规则会让使用者以为
+「这条链判定过了、目标没有」，而实际上它根本没被加载。合法行仍然生效。
+留空则不读该文件，只用内置规则。
+
 ### 调用链查询（外部引擎）
 
 调用链分析需要在配置页填 `外部引擎 JAR`（`jar-analyzer-engine`，MIT，CLI 形态）。
@@ -610,10 +670,46 @@ toString 链 / 恶意服务器 / 抓包转换），不需要自己去侧边栏�
 sink 清单同样是本项目自己写的（上游的 sink 与 SCA 数据都在 GPLv3 的 GUI 侧，不在 engine 里）。
 查询走 Python 标准库 `sqlite3`，连接一律 `mode=ro` **只读**，不写库。
 
+#### 漏洞特征匹配（下判断）
+
+上面五类查询回答的是「库里有什么」，输出即事实。要回答「**这些事实像什么漏洞**」，
+点同一页的 `漏洞特征匹配`（可先用右侧下拉框按严重度过滤）。
+
+四类证据都从数据库里读，都是只读 SELECT：
+
+| 证据 | 来源表 | 能看出什么 |
+| --- | --- | --- |
+| 常量 | `string_table` | 硬编码密钥、JNDI 地址、Log4j lookup 表达式、上传后缀黑名单 |
+| 类 | `class_table` | 反序列化实现类、入口类（Filter / Servlet / Controller）、模板引擎类 |
+| 方法 | `method_table` | `readObject` / `lookup` / `doGet` 一类回调与入口方法 |
+| 调用 | `method_call_table` | `Runtime.exec` / `ObjectInputStream.readObject` / `InitialContext.lookup` 等危险调用（与 sink 清单同一份数据） |
+
+签名库（`python/vuln_signatures.json`）覆盖 **14 种 Java 领域高危类型**：反序列化、JNDI 注入、
+表达式注入、服务端模板注入、命令执行、代码执行（类加载 / 字节码）、SSRF、SQL 注入、
+路径穿越 / 任意文件读写、XXE、文件上传、配置 / 敏感信息暴露、凭据泄露、拒绝服务。
+每种类型都登记了**触发条件**与**实战常见的绕过手法**，报告按严重度排序后逐类给出。
+
+举例（反序列化一类）：黑名单绕过（fastjson 的 `L` 前缀 / 双写 `LL` / `[` 前缀 / `TypeUtils` 缓存 /
+`Throwable` 预期类）、Jackson 的 `@class` 单值与数组包装、SnakeYAML 的 `!!javax.script...`、
+XStream 的黑名单外链、二次反序列化（`SignedObject` / `RMIConnector` / c3p0）、
+以及目标类改字段后需要重算 `serialVersionUID` 这类会让载荷直接失败的点。
+
+报告结构是：总算 → **可能的漏洞类型与绕过手法**（每类给触发条件 + 命中依据 + 绕过手法）
+→ 命中明细（每条给特征标识、命中数、样例，并标出 `[入口点]`）→ 未命中特征清单。
+最后一段在「确实跑过」和「没跑」之间划清界限：未命中的特征也会列出来。
+
+签名库和 sink 清单**必须完全一致**：`tests/test_signatures.py` 逐条比对两处的
+`(类名, 方法名)` 集合，任何一处漂移都会让测试失败。漂移的后果是静默的——报告只会少报一类漏洞，
+不会报错。同一个测试也守住「每种漏洞类型至少被一条特征指向」：否则那一类永远不会被报出来。
+
+匹配是**判定而不是结论**：命中只代表「出现了这类特征」，参数是否可控、
+目标是否真的解析这段数据，仍需人工确认。签名库单条特征正则非法、或指向未登记的漏洞类型时，
+整次匹配直接失败并指出是哪一条——静默跳过会让「漏报」看起来像「没有命中」。
+
 ### 反编译
 
-需要看源码确认「这条规则到底成不成立」时，在分析页填 `指定类名`（留空则整包）后点
-`反编译`，产物输出到 `反编译输出目录`。
+需要看源码确认「这条规则 / 这条特征到底成不成立」时，在「调用链查询」页填 `指定类名`
+（留空则整包）后点 `反编译`，产物输出到 `反编译输出目录`。
 
 用的是**运行期依赖里已经带有的 CFR**，因此**零新增依赖、零额外进程、不需要 Node**
 （实测 84 个类的整包反编译 3.5 秒）。产物**只写不读**：本工具不会去解析这些源码，
@@ -692,6 +788,18 @@ python .\python\fj_probe.py --mode upload --upload-url http://127.0.0.1:8080/upl
 python -m unittest discover -s tests
 ```
 
+共 172 项，按能力分模块：
+
+| 模块 | 覆盖 |
+| --- | --- |
+| `test_probe.py` | Fastjson 探测引擎的参数拼装与模式组合 |
+| `test_jar_report.py` | 调用链数据库的五类事实查询与缺表容错 |
+| `test_signatures.py` | 签名库格式、**sink 特征与 `jar_report.SINKS` 逐条一致**、每种漏洞类型都被指向、按严重度过滤、坏 JSON / 坏正则 / 未登记类型的失败路径 |
+| `test_logging.py` | 日志内核的文件名、保留策略与级别过滤 |
+| `test_decoupling.py` | 包级依赖边界、界面文件规模上限（`src/ui/*.java` ≤ 600 行、`src/Main.java` ≤ 400 行） |
+| `test_selfcheck_hygiene.py` | 每个自检入口都装了副作用清理守卫 |
+| `test_java8_source_level.py` | `src/` 不得出现 Java 9+ API 与语法 |
+
 Java 界面自检针对已编译的 class 运行，并自行打印断言：
 
 ```powershell
@@ -711,14 +819,14 @@ E:\java\jdk17\bin\java.exe @opens -cp "target\tmp2;target\classes;lib\java-chain
 
 | 自检 | 覆盖范围 | 是否需要 `--add-opens` |
 | --- | --- | --- |
-| `UiNavigationCheck` | 侧边栏展开 / 收起、各页面控件与端到端流程（含 toString 链页、带外 Jar 页、漏洞分析页与新增配置分组），并真实造 jar 跑一次本地依赖分析，截图写入 `target/ui-check/` | 需要（预设链端到端生成） |
+| `UiNavigationCheck` | 侧边栏展开 / 收起、各页面控件与端到端流程（含 toString 链页、带外 Jar 页、漏洞分析两页与新增配置分组），并真实造 jar 跑一次本地依赖分析；断言两页标题与控件集合互不相同（拆页回归守卫），截图写入 `target/ui-check/` | 需要（预设链端到端生成） |
 | `UiSwitchEndToEndCheck` | 抓包头经真实 Python 引擎送入探测页；带外 Jar 页真实托管 → HTTP 取回合法 Zip → 停止后端口可再次绑定 | 需要 |
 | `UiShiroCheck` | Shiro 页全流程 | 需要 |
 | `ShiroCheck` | Shiro 引擎（检测 / 爆破 / 链生成 / 回显） | 需要 |
 | `PayloadCheck` | 载荷生成引擎（目录、分组、导航、节点显示名、双形态、失败路径、安全），外加带外 Jar 25 种组合与 toString 触发节点归属（共 100 条断言） | 需要 |
 | `ProxyServerCheck` | 代理本身：明文抓包、404、`CONNECT` 隧道字节透传、回调与 `find` / `clear` | 不需要 |
 | `LogCheck` | 日志内核（79 条断言）：文件名解析（含月份不补零、二月三十这类非法日期）、保留天数边界（跨月 / 跨年 / 闰年 / 填 0 按 1 处理）、目录解析优先级、级别过滤、按日期分文件与跨天切换、异常栈展开、清理只认本工具命名的文件、写入失败静默、未捕获异常入库 | 不需要 |
-| `AnalyzeCheck` | 漏洞分析内核（61 条断言）：版本比较语义（含 `1.2.80 > 1.2.9`、预发布小于正式发布）、四类坐标来源与优先级、规则命中与不命中、group 不符时不误报、端到端分析与跳转建议、外部引擎与数据库的失败路径 | 不需要 |
+| `AnalyzeCheck` | 漏洞分析内核（85 条断言）：版本比较语义（含 `1.2.80 > 1.2.9`、预发布小于正式发布）、四类坐标来源与优先级、规则命中与不命中、group 不符时不误报、端到端分析与跳转建议、外部引擎与数据库的失败路径，以及 gadget 判定（坐标 + 版本区间、已修复版本不误报、新坐标不漏判、外部规则文件语法与失败路径） | 不需要 |
 
 依赖边界自检、源码级别门禁与工具链自检：
 

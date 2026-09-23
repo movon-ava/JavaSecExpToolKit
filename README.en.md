@@ -139,8 +139,9 @@ The sidebar is grouped by feature:
   and `抓包转换` (capture one request, inspect the raw response, convert formats)
 - `FastJson` — first-level category; click it to expand / collapse `Fastjson 探测`
 - `漏洞分析` — first-level category; click it to expand / collapse `组件与漏洞` (read dependency
-  coordinates locally and judge known vulnerabilities) and `调用链查询` (build a call-graph
-  database with an external engine, then query sinks / entry points / string constants)
+  coordinates, judge known vulnerabilities and which gadget chains are present) and `调用链查询`
+  (build a call-graph database with an external engine, gather facts, judge vulnerability types
+  and bypass techniques)
 - `小工具` — first-level category; click it to expand / collapse `文件上传` (pick a local file,
   upload it as multipart to a target endpoint, and keep the raw response)
 - `配置` — settings, grouped into `通用配置` and per-feature sections
@@ -192,8 +193,10 @@ The `配置` page stores fixed parameters in
   echo records to the console (off by default)
 - `漏洞分析配置` — default scan target (jar / dependency directory), external engine JAR
   (`jar-analyzer-engine`; blank means local analysis only), engine working directory (the engine
-  always writes `jar-analyzer.db` there), analysis timeout (default 300 seconds) and the
-  decompile output directory (blank writes to `decompiled` under the working directory)
+  always writes `jar-analyzer.db` there), analysis timeout (default 300 seconds), the
+  decompile output directory (blank writes to `decompiled` under the working directory) and the
+  external gadget rules file (blank keeps the built-in rule table only; format is described in
+  the "Available gadgets" section)
 
 Saved values pre-fill **every feature page** (probe, proxy, capture, Shiro, Payload, presets,
 malicious servers, the toString page, the out-of-band Jar page and the analysis page) and are pushed to already-open
@@ -237,15 +240,15 @@ readable hint instead of an engine error — set CEYE Token on the settings page
 | Path | Purpose |
 | --- | --- |
 | `src/` | Composition root `Main.java` (352 lines: wiring and page switching only), `pom.xml`, the local proxy (`proxy/ProxyServer.java`), and the Shiro module (`shiro/`) |
-| `src/ui/` | Per-feature **views** and **behaviour** kept apart: views `*Page` / `*Form` (`HomePage` / `ProbePage` / `CapturePage` / `ProxyPage` / `ShiroPage` / `PayloadPage` / `PresetPage` / `ServicePage` / `ConfigPage` / `ConfigForm` / `ToolsUploadPage` / `PayloadToStringPage` / `OobJarPage`), behaviour `*Controller` (`NavController` / `ProbeController` / `CaptureController` / `ProxyController` / `ShiroController` / `ConfigController` / `PayloadController` / `PresetController` / `ServiceController` / `ToolsUploadController` / `PayloadToStringController` / `OobJarController` / `WorkbenchPages`), plus styling `UiKit`, the shared `ChainEditor`, startup warm-up `StartupWarmup` / splash `StartupSplash`, the column selector `PayloadChainSelector` (the payload page's chain picker, holding no chain state) with its collaborators `ChainSelectorSizing` (geometry) / `ChainColumn` / `ChainColumnState` / `ChainColumnPanel` (per-column panel and filter state) / `ChainResizeHandle` (vertical drag bar) / `ChainColumnFilter` (filter predicate) / `ChainNodeRenderer` (row rendering) / `ChainTagMenu` (tag menu), the payload page split-outs `PayloadPanels` (panel building) / `PayloadColumns` (column mapping) / `PayloadOutputText` (output text) / `PayloadExporter` (export to disk), and the self-check facade `UiHandle` + `WidgetRegistry` |
+| `src/ui/` | Per-feature **views** and **behaviour** kept apart: views `*Page` / `*Form` (`HomePage` / `ProbePage` / `CapturePage` / `ProxyPage` / `ShiroPage` / `PayloadPage` / `PresetPage` / `ServicePage` / `ConfigPage` / `ConfigForm` / `ToolsUploadPage` / `PayloadToStringPage` / `OobJarPage` / `AnalyzeScanPage` / `AnalyzeChainPage`), behaviour `*Controller` (`NavController` / `ProbeController` / `CaptureController` / `ProxyController` / `ShiroController` / `ConfigController` / `PayloadController` / `PresetController` / `ServiceController` / `ToolsUploadController` / `PayloadToStringController` / `OobJarController` / `AnalyzeScanController` / `WorkbenchPages`), plus styling `UiKit`, the shared `ChainEditor`, startup warm-up `StartupWarmup` / splash `StartupSplash`, the column selector `PayloadChainSelector` (the payload page's chain picker, holding no chain state) with its collaborators `ChainSelectorSizing` (geometry) / `ChainColumn` / `ChainColumnState` / `ChainColumnPanel` (per-column panel and filter state) / `ChainResizeHandle` (vertical drag bar) / `ChainColumnFilter` (filter predicate) / `ChainNodeRenderer` (row rendering) / `ChainTagMenu` (tag menu), the payload page split-outs `PayloadPanels` (panel building) / `PayloadColumns` (column mapping) / `PayloadOutputText` (output text) / `PayloadExporter` (export to disk), the shared background runner for both analysis pages `AnalyzeWorker` (keeps the UI responsive, serialises actions per page, truncates suggestion buttons), and the self-check facade `UiHandle` + `WidgetRegistry` |
 | `src/payload/` | Generic payload generation (`PayloadEngine` / `PayloadCatalog` / `PayloadResult`), decoupled from concrete features such as Shiro; feature templates `JarPreset` (out-of-band Jar kinds × tail actions), `ToStringPreset` (toString chain templates) and the node-ownership rule `ChainScope` |
 | `src/service/` | Malicious servers (`ServiceManager` / `ServiceSpec` / `ServiceEndpoint` / `ServiceDefaults`) plus out-of-band Jar hosting (`OobJarService`): the only package that talks to the java-chains server-side adapters |
 | `src/preset/` | Built-in preset chains (`PresetCatalogService` / `PresetItem`): the only package that touches the upstream preset model, exposing plain data |
 | `src/probe/` | Engine invocation and command-line assembly (`ProbeEngine` / `ProbeCommand` / `CaptureBridge`) |
-| `src/analyzer/` | Vulnerability-analysis kernel (a leaf package that depends on no project package): dependency coordinates `Dependency` / `DependencyScanner` / `PomScanner`, version comparison `Version`, rule table `VulnerabilityRules`, findings `Finding` / `VulnerabilityAnalyzer`, external engine `EngineRunner`, query enum `ReportReader`, script execution `ScriptRunner`, decompilation `Decompiler` |
-| `src/analyze/` | Vulnerability-analysis orchestration (depends on `analyzer` only): `AnalyzeEngine` (local analysis / engine run / query / decompile), `AnalyzeReport`, `AnalyzeCommand` (the command line is the single contract, kept in one place so it can be diffed against upstream docs) |
+| `src/analyzer/` | Vulnerability-analysis kernel (a leaf package that depends on no project package): dependency coordinates `Dependency` / `DependencyScanner` / `PomScanner`, version comparison `Version`, component rule table `VulnerabilityRules`, findings `Finding` / `VulnerabilityAnalyzer`, gadget judgement `GadgetRule` (requirement / version range / wildcard) / `GadgetRules` (built-in table) / `GadgetRuleFile` (external rule-file parsing) / `GadgetInventory` (judgement and rendering), external engine `EngineRunner`, query enum `ReportReader`, script execution `ScriptRunner`, decompilation `Decompiler` |
+| `src/analyze/` | Vulnerability-analysis orchestration (depends on `analyzer` only): `AnalyzeEngine` (local analysis / engine run / query / signature match / decompile), `AnalyzeReport`, `AnalyzeCommand` (the command line is the single contract, kept in one place so it can be diffed against upstream docs) |
 | `src/config/` `src/util/` | `config.properties` read/write; message parsing and platform differences; the logging kernel `Log` (record channel) and `LogFiles` (file names and retention) |
-| `python/` | probe engine (`fj_probe.py`) and the call-graph database query script (`jar_report.py`), packaged into the JAR |
+| `python/` | probe engine (`fj_probe.py`), the call-graph database query script (`jar_report.py`) and vulnerability signature matching (`jar_signatures.py` plus the library `vuln_signatures.json`), all packaged into the JAR |
 | `tests/` | Python unit tests and Java UI self-checks; `TestProcessGuard.java` kills calculator processes spawned during a self-check run |
 | `tools/` | maintenance helpers: `agent.ps1` (launch a role-scoped agent), `dispatch.ps1` (dispatch one role and auto-merge), `orchestrate.ps1` (one-sentence goal, automatic decomposition and orchestration), `watchdog.ps1` (stall watchdog), `lib/` (role matrix and execution primitives), `audit_boundary.py` (dependency audit), `apply_patch.py` |
 | `docs/` | design documentation (`DESIGN.md`, `DESIGN-shiro.md`, `DESIGN-probe-accuracy.md`, `DESIGN-agents.md`, `DESIGN-modularization.md`, `DESIGN-payload.md`, `DESIGN-services.md`, `DESIGN-analyze.md`) plus the multi-agent role guide (`AGENT-ROLES.md`) and the runbook (`AGENT-RUNBOOK.md`) |
@@ -299,7 +302,7 @@ files it produced**: the orchestrator groups results by role first (steps per ro
 produced files) and then lists step-by-step detail; a single dispatch prints the role, its work
 and the produced files as well.
 
-The tooling has its own regression check (`tools\check_agent_tools.ps1`, 84 mechanical
+The tooling has its own regression check (`tools\check_agent_tools.ps1`, 91 mechanical
 assertions) covering defects that actually happened: a counter colliding with a parameter
 name, a misspelled switch turning a branch into dead code, a missing BOM, an unanchored
 `.gitignore` rule, a `,@()` return that silently disabled two guard branches, and managed
@@ -653,13 +656,19 @@ are plain-JDK and were measured to run directly on Java 17.
 
 ## Vulnerability analysis
 
-`主页 → 漏洞分析` answers two different levels of question, so it is split into two pages with
-three very different costs:
+`主页 → 漏洞分析` answers two different levels of question, so it is split into **two genuinely
+independent pages** with three very different costs:
 
-| Sub-item | What it does | Cost |
-| --- | --- | --- |
-| `组件与漏洞` | Reads the Maven coordinates inside a jar and judges known vulnerabilities against 25 built-in rules, with evidence and jump suggestions | Seconds; needs no external program |
-| `调用链查询` | Runs an external engine to turn a jar into a call-graph database, then queries sinks / entry points / string constants | Minutes; needs the engine jar |
+| Sub-item | Angle | What it does | Cost |
+| --- | --- | --- | --- |
+| `组件与漏洞` | Dependencies | Reads the Maven coordinates inside a jar, judges known vulnerabilities against 25 built-in rules, and reports which gadget chains are present on the classpath | Seconds; needs no external program |
+| `调用链查询` | Code | Runs an external engine to turn a jar into a call-graph database, gathers facts (sink hits / entry points / string constants), judges **likely vulnerability types and bypass techniques**, and can decompile a class to confirm | Minutes; needs the engine jar |
+
+Both pages have **their own widgets, report pane and suggestion-button container**: a finding on the
+dependency page never overwrites the report on the code page, and vice versa. Previously both
+sub-items pointed at the same view, so clicking either one showed the same thing and there was no way
+to tell which angle a finding came from. Their headings now read `ANALYZE · DEPENDENCIES` and
+`ANALYZE · CODE`.
 
 ### Components and vulnerabilities (local analysis)
 
@@ -693,6 +702,72 @@ Each suggestion is a button that jumps straight to the right page (probe / Shiro
 generation / toString chains / malicious servers / capture conversion), so you never have to hunt
 through the sidebar.
 
+#### Available gadgets (dependency angle)
+
+The third section of the report answers a different question: **given these dependencies, which
+chains can this toolkit actually build?** It is split from the rule table on purpose — the rule table
+judges whether a component itself has a known vulnerability, while this section judges the
+*combination*: CommonsCollections is not a vulnerability, it is the ability to reach RCE when a
+deserialisation entry point exists.
+
+The criterion is **Maven coordinates plus a version range**, not jar file names. This is the biggest
+difference from the gadget analysis in upstream `jar-analyzer`, which decides by "are all these jar
+names present in the scanned directory" and therefore counts
+`commons-collections-3.2.2.jar` (where the InvokerTransformer chain was patched) as usable.
+This project's requirement model supports four things:
+
+- `groupId` prefix plus `artifactId` (with `*` wildcards)
+- version ranges (`lower` / `upper`) and **excluded versions**
+- a requirement with an incomparable or missing version counts as **not satisfied** (better to stay
+  silent than to misreport)
+- every dependency of a chain must be satisfied **at the same time** (upstream's AND semantics)
+
+There are 39 built-in rules, grouped by type: native deserialisation (CC3 / CC4 / Beanutils / c3p0 /
+Groovy / Jython / BCEL / AspectJWeaver / JDK7u21), Hessian, JDBC drivers (MySQL both coordinates /
+PostgreSQL / H2 / Derby), fastjson, Jackson, toString triggers (Rome) and templates and expressions
+(Velocity / Freemarker / javax.el / Xalan).
+
+The rules are **written in this project**: upstream `jar-analyzer` is GPLv3 and its `gadget.dat`
+cannot enter this repository; only the idea of multi-dependency AND matching is borrowed. The
+inclusion bar is the existing one — a chain must lead to a next action, and components that lead
+nowhere are left out.
+
+The report also lists **missing chains and what is missing** (for example
+"[缺失] CommonsCollections 4　需要 org.apache.commons:commons-collections4 不限版本").
+Reporting only what is present is not enough: you would keep trying a chain in "Payload generation"
+that can never be built.
+
+The section always ends with its boundary: **it only proves the gadgets are on the classpath, not
+that the chain is reachable**. Reachability depends on whether a deserialisation entry point exists
+and whether its arguments are attacker-controlled; follow up with sink hits and signature matching
+on the call-graph page.
+
+#### External rules file
+
+The built-in table only covers chains that lead to a next action inside this toolkit, but a real
+target may use something else. So that "analyse more gadgets" does not require a rebuild, the
+settings page (`漏洞分析配置`) lets you point at an **external rules file**.
+
+The format follows upstream's `gadget.dat` shape (**the format only — none of its data files are
+included**): one rule per line as `jar名,…|类型|结果`, `#` starts a comment, and the line is split
+on `|` into three parts:
+
+```
+# every jar name is translated into coordinates plus a version range
+commons-collections-3.2.1.jar|NATIVE|external rule: CC3
+*-collections4.jar|NATIVE|wildcard artifactId
+commons-collections-!3.2.1.jar|NATIVE|exclude everything except 3.2.1
+```
+
+Unlike upstream's literal file-name comparison, each jar name is parsed into three things:
+`commons-collections-3.2.1.jar` becomes artifactId `commons-collections` with upper bound `3.2.1`;
+`!3.2.2` becomes an excluded version; `*-core.jar` becomes a wildcard artifactId.
+
+**Unparsable lines are reported line by line** (with the line number) instead of being skipped
+silently: a mis-written rule makes you believe the chain was evaluated and found absent, when in fact
+it was never loaded. Valid lines still take effect. Leaving the field blank disables the file
+entirely, and only the built-in table is used.
+
 ### Call-graph query (external engine)
 
 Call-graph analysis needs the `外部引擎 JAR` (`jar-analyzer-engine`, MIT, a CLI) set on the settings
@@ -716,10 +791,56 @@ The sink list is likewise written in this project (upstream's sink and SCA data 
 not in the engine). Queries go through Python's standard-library `sqlite3`, always opened `mode=ro`
 — **read-only**, never writing to the database.
 
+#### Signature matching (judging)
+
+The five queries above answer "what is in the database" — the output is a fact. To answer "**what do
+these facts look like**", click `漏洞特征匹配` on the same page (optionally filtering by severity with
+the dropdown next to it).
+
+All four kinds of evidence are read from the database with read-only SELECTs:
+
+| Evidence | Source table | What it reveals |
+| --- | --- | --- |
+| Constants | `string_table` | Hard-coded keys, JNDI addresses, Log4j lookup expressions, upload suffix blacklists |
+| Classes | `class_table` | Deserialisation implementation classes, entry classes (Filter / Servlet / Controller), template engines |
+| Methods | `method_table` | Callbacks and entry points such as `readObject` / `lookup` / `doGet` |
+| Calls | `method_call_table` | Dangerous calls such as `Runtime.exec` / `ObjectInputStream.readObject` / `InitialContext.lookup` (the same data as the sink list) |
+
+The signature library (`python/vuln_signatures.json`) covers **14 high-risk Java vulnerability
+classes**: deserialisation, JNDI injection, expression injection, server-side template injection,
+command execution, code execution (class loading / bytecode), SSRF, SQL injection, path traversal /
+arbitrary file access, XXE, file upload, configuration / sensitive-information exposure, credential
+leakage and denial of service. Each class records its **trigger condition** and the **bypass
+techniques seen in practice**, and the report lists them by severity.
+
+For example, the deserialisation class lists blacklist bypasses (fastjson's `L` prefix, doubled `LL`,
+the `[` prefix, the `TypeUtils` cache and `Throwable` expected classes), Jackson's `@class` single
+value and array wrapping, SnakeYAML's `!!javax.script...`, XStream chains outside the blacklist,
+second-order deserialisation (`SignedObject` / `RMIConnector` / c3p0) and the point that changing a
+field on the target class requires recomputing `serialVersionUID` or the payload simply fails.
+
+The report reads: summary, then **likely vulnerability types and bypass techniques** (each with its
+trigger condition, the evidence it rests on and the bypass list), then hit details (feature id, hit
+count, samples, with `[入口点]` marking externally reachable classes), then the list of features that
+did not hit. That last part draws the line between "it ran" and "it did not".
+
+The signature library and the sink list **must stay identical**: `tests/test_signatures.py` compares
+the `(class, method)` pairs of both sides, so any drift fails the suite. Drift would be silent — the
+report would simply miss one class of vulnerability without erroring. The same test also guards
+"every vulnerability class is reachable by at least one feature", otherwise that class could never
+be reported.
+
+Matching is a **judgement, not a verdict**: a hit only means the feature is present. Whether the
+argument is controllable and whether the target really parses that data still needs a human. If a
+single feature has an invalid regex, or points at an unregistered vulnerability class, the whole run
+fails and says which feature it was — skipping silently would make a false negative look like a clean
+result.
+
 ### Decompilation
 
-When you need the source to confirm whether a rule really holds, fill in `指定类名` (blank
-decompiles the whole jar) and click `反编译`; the output goes to `反编译输出目录`.
+When you need the source to confirm whether a rule or a signature really holds, fill in `指定类名`
+(blank decompiles the whole jar) on the call-graph page and click `反编译`; the output goes to
+`反编译输出目录`.
 
 It uses the **CFR already bundled with the runtime dependency**, so **no new dependency, no extra
 process and no Node** (measured: 84 classes decompiled in 3.5 seconds). The output is **write-only**:
@@ -807,6 +928,18 @@ that the setting really took effect.
 python -m unittest discover -s tests
 ```
 
+172 tests in total, split by capability:
+
+| Module | Coverage |
+| --- | --- |
+| `test_probe.py` | argument assembly and mode combinations of the fastjson probe engine |
+| `test_jar_report.py` | the five fact queries over the call-graph database, plus tolerance for missing tables |
+| `test_signatures.py` | signature-library format, **sink features matching `jar_report.SINKS` entry by entry**, every vulnerability class being reachable, severity filtering, and the failure paths for broken JSON / bad regex / unregistered types |
+| `test_logging.py` | file names, retention policy and level filtering of the logging kernel |
+| `test_decoupling.py` | package dependency boundaries and the UI file-size caps (`src/ui/*.java` ≤ 600 lines, `src/Main.java` ≤ 400 lines) |
+| `test_selfcheck_hygiene.py` | every self-check entry installing the side-effect guard |
+| `test_java8_source_level.py` | no Java 9+ APIs or syntax under `src/` |
+
 The Java self-checks run against the compiled classes and print their own assertions:
 
 ```powershell
@@ -826,14 +959,14 @@ E:\java\jdk17\bin\java.exe @opens -cp "target\tmp2;target\classes;lib\java-chain
 
 | Self-check | Coverage | Needs `--add-opens` |
 | --- | --- | --- |
-| `UiNavigationCheck` | Sidebar expand / collapse, per-page widgets and end-to-end flows (including the toString page, the out-of-band Jar page, the analysis page and the new settings groups), plus one real jar scanned end to end by the local analysis; screenshots go to `target/ui-check/` | Yes (preset end-to-end build) |
+| `UiNavigationCheck` | Sidebar expand / collapse, per-page widgets and end-to-end flows (including the toString page, the out-of-band Jar page, both analysis pages and the new settings groups), plus one real jar scanned end to end by the local analysis; asserts that the two analysis pages have different headings and widget sets (the regression guard for the page split); screenshots go to `target/ui-check/` | Yes (preset end-to-end build) |
 | `UiSwitchEndToEndCheck` | Captured headers fed to the probe page through the real Python engine; the out-of-band Jar page really hosts a Jar, fetches it back over HTTP as a valid Zip, and the port can be bound again after stopping | Yes |
 | `UiShiroCheck` | Full Shiro page flow | Yes |
 | `ShiroCheck` | Shiro engine (detect / crack / chain build / echo) | Yes |
 | `PayloadCheck` | Payload engine (catalog, groups, navigation, node display names, dual form, failure paths, safety) plus the 25 out-of-band Jar combinations and toString trigger ownership (100 assertions in total) | Yes |
 | `ProxyServerCheck` | The proxy itself: plain-HTTP capture, 404 handling, `CONNECT` tunneling with byte pass-through, callbacks, `find` / `clear` | No |
 | `LogCheck` | The logging kernel (79 assertions): file-name parsing (including unpadded months and impossible dates such as 30 February), retention boundaries (month / year / leap-year crossings, 0 treated as 1), directory resolution priority, level filtering, per-day files with day rollover, stack expansion, cleanup restricted to files this tool named, silent failure when writing is impossible, and uncaught exceptions reaching the log | No |
-| `AnalyzeCheck` | The analysis kernel (61 assertions): version-comparison semantics (including `1.2.80 > 1.2.9` and pre-releases sorting below releases), the four coordinate sources and their priority, rule hits and misses, no false positives when the group differs, end-to-end analysis with jump suggestions, and the failure paths of the external engine and the database | No |
+| `AnalyzeCheck` | The analysis kernel (85 assertions): version-comparison semantics (including `1.2.80 > 1.2.9` and pre-releases sorting below releases), the four coordinate sources and their priority, rule hits and misses, no false positives when the group differs, end-to-end analysis with jump suggestions, the failure paths of the external engine and the database, and gadget judgement (coordinates plus version ranges, patched versions not reported, new coordinates not missed, external rule-file syntax and its failure paths) | No |
 
 Dependency-boundary, source-level and toolchain checks:
 

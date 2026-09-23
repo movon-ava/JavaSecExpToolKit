@@ -39,7 +39,7 @@ context: |
   - 禁止修改本次任务之外的功能与配置项；需要牵连其他文件时先说明方案再动手。
 
   ## 验证入口
-  - Python：python -m unittest discover -s tests（当前 156 项）
+  - Python：python -m unittest discover -s tests（当前 172 项）
   - Java：AnalyzeCheck、LogCheck、PayloadCheck、ShiroCheck、ProxyServerCheck、UiNavigationCheck、UiShiroCheck、UiSwitchEndToEndCheck
   - 运行 Java 自检需 JDK17 并加 --add-opens java.xml/...xalan...=ALL-UNNAMED
   - 构建后必须校验 JAR 构建时间晚于 src/、python/、tests/ 下全部源文件

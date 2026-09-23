@@ -39,7 +39,10 @@ public final class ScriptRunner {
     public static Path extract(String resource) throws IOException {
         InputStream input = ScriptRunner.class.getResourceAsStream(resource);
         if (input == null) throw new IOException("JAR 内缺少资源：" + resource);
-        String suffix = resource.endsWith(".py") ? ".py" : ".tmp";
+        // 后缀按资源类型保留：签名库是 json，脚本按 .json 结尾去猜同目录的默认库，
+        // 统一改成 .tmp 会让「脚本旁找不到签名库」这类现场难以判断
+        String suffix = resource.endsWith(".py") ? ".py"
+                : (resource.endsWith(".json") ? ".json" : ".tmp");
         Path file = Files.createTempFile("jsetk-analyzer-", suffix);
         file.toFile().deleteOnExit();
         try (InputStream source = input; OutputStream target = Files.newOutputStream(file)) {

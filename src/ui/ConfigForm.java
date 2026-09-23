@@ -91,6 +91,12 @@ public final class ConfigForm {
     public final JTextField analyzeTimeout = new JTextField("300", 8);
     /** 反编译产物目录；走内置 CFR 时输出到这里。 */
     public final JTextField analyzeDecompileDir = new JTextField("", 32);
+    /**
+     * 外部 gadget 规则文件：格式沿用上游 gadget.dat 的「jar名,…|类型|结果」，
+     * 但判定按 Maven 坐标 + 版本区间（见 analyzer/GadgetRuleFile）。
+     * 留空表示只用内置规则表。
+     */
+    public final JTextField analyzeGadgetRules = new JTextField("", 32);
 
     /** 带外 Jar 的托管参数：绑定地址、端口与三个动作默认值。 */
     public final JTextField oobjarBindHost = new JTextField("", 24);
@@ -254,7 +260,9 @@ public final class ConfigForm {
                                 new ConfigPage.Row("分析超时（秒）", analyzeTimeout,
                                         "大 jar 构建数据库是分钟级，默认 300"),
                                 new ConfigPage.Row("反编译输出目录", analyzeDecompileDir,
-                                        "留空则输出到工作目录下的 decompiled")}),
+                                        "留空则输出到工作目录下的 decompiled"),
+                                new ConfigPage.Row("外部 gadget 规则文件", analyzeGadgetRules,
+                                        "留空只用内置规则；格式 jar名,…|类型|结果，按坐标与版本区间判定")}),
                 new ConfigPage.Group("toString 链配置",
                         "「Payload → toString 链」的默认参数；链模板与命令改完下次进页生效。",
                         new ConfigPage.Row[]{

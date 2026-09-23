@@ -765,39 +765,29 @@ public final class UiNavigationCheck {
         select(main, "analyze.scan");
         List<String> analyzeTexts = contentLabels(main);
         System.out.println("漏洞分析页标题: " + analyzeTexts);
-        check("跳转漏洞分析二级项打开分析页", analyzeTexts.contains("漏洞分析"));
+        check("跳转漏洞分析二级项打开「组件与漏洞」页",
+                analyzeTexts.contains("组件与漏洞"));
         check("跳转分析页不回落到主页", !analyzeTexts.contains("安全测试工具箱"));
         check("漏洞分析分类自动展开且含两个二级项",
                 labels(navItems(main)).contains("组件与漏洞") && labels(navItems(main)).contains("调用链查询")
                         && labels(navItems(main)).size() == expectedNavSize());
         check("组件与漏洞为选中项", "组件与漏洞".equals(plain(list.getSelectedValue())));
-        check("分析页含目标输入框", fieldQuiet(main, "analyzeTarget") instanceof JTextField);
-        check("分析页含选择目标按钮", fieldQuiet(main, "analyzeChooseTarget") instanceof JButton);
-        check("分析页含 pom.xml 输入框", fieldQuiet(main, "analyzePom") instanceof JTextField);
-        check("分析页含特殊类名输入框", fieldQuiet(main, "analyzeClassName") instanceof JTextField);
-        check("分析页含反编译输出目录输入框", fieldQuiet(main, "analyzeOutputDir") instanceof JTextField);
-        check("分析页含调用链超时输入框", fieldQuiet(main, "analyzeTimeout") instanceof JTextField);
-        check("分析页含本地依赖分析按钮", fieldQuiet(main, "analyzeLocal") instanceof JButton);
-        check("分析页含调用链分析按钮", fieldQuiet(main, "analyzeRunEngine") instanceof JButton);
-        check("分析页含快速模式与解析嵌套 jar 开关",
-                fieldQuiet(main, "analyzeQuick") instanceof AbstractButton
-                        && fieldQuiet(main, "analyzeInnerJars") instanceof AbstractButton);
-        check("分析页默认勾选解析嵌套 jar", ((AbstractButton) fieldQuiet(main, "analyzeInnerJars")).isSelected());
-        check("分析页含数据库查询下拉框", fieldQuiet(main, "analyzeQueryKind") instanceof JComboBox);
-        check("分析页查询候选与引擎查询一一对应",
-                comboOptions(main, "analyzeQueryKind").size() == analyzer.ReportReader.Query.values().length);
-        check("分析页含关键字输入框与查询按钮",
-                fieldQuiet(main, "analyzeKeyword") instanceof JTextField
-                        && fieldQuiet(main, "analyzeQuery") instanceof JButton);
-        check("分析页含反编译与打开输出目录按钮",
-                fieldQuiet(main, "analyzeDecompile") instanceof JButton
-                        && fieldQuiet(main, "analyzeOpenOutput") instanceof JButton);
-        check("分析页含报告文本域且只读",
+        check("组件与漏洞页含目标输入框", fieldQuiet(main, "analyzeTarget") instanceof JTextField);
+        check("组件与漏洞页含选择目标按钮", fieldQuiet(main, "analyzeChooseTarget") instanceof JButton);
+        check("组件与漏洞页含 pom.xml 输入框", fieldQuiet(main, "analyzePom") instanceof JTextField);
+        check("组件与漏洞页含本地依赖分析按钮", fieldQuiet(main, "analyzeLocal") instanceof JButton);
+        check("组件与漏洞页含报告文本域且只读",
                 fieldQuiet(main, "analyzeOutput") instanceof JTextArea
                         && !((JTextArea) fieldQuiet(main, "analyzeOutput")).isEditable());
-        check("分析页含跳转建议容器与状态标签",
+        check("组件与漏洞页含跳转建议容器与状态标签",
                 fieldQuiet(main, "analyzeJumps") instanceof javax.swing.JPanel
                         && fieldQuiet(main, "analyzeStatus") instanceof javax.swing.JLabel);
+        // 两页曾经指向同一个视图：点哪个二级项看到的都一样。这两条断言是本缺陷的回归守卫。
+        check("组件与漏洞页属于依赖口径（标题与副标题可区分）",
+                analyzeTexts.contains("ANALYZE · DEPENDENCIES"));
+        check("组件与漏洞页的视图实现已拆出独立类（不再共用一个视图类）",
+                viewClassPresent("ui.AnalyzeScanPage") && viewClassPresent("ui.AnalyzeChainPage")
+                        && !viewClassPresent("ui.AnalyzePage"));
 
         // 失败路径：没选目标时给出可读提示而不是静默失败
         setText(main, "analyzeTarget", "");
@@ -836,6 +826,11 @@ public final class UiNavigationCheck {
         check("报告给出判定依据（来源与命中区间）",
                 analyzeReport.contains("pom.properties") && analyzeReport.contains("<= 1.2.24"));
         check("报告给出建议动作", analyzeReport.contains("建议:"));
+        // 依赖口径报告必须带 gadget 段，且缺失项要逐条列出「还差什么」
+        check("报告包含 gadget 可用性段（依赖口径）",
+                analyzeReport.contains("===== 可用 gadget（依赖口径）====="));
+        check("gadget 段逐条列出缺失依赖",
+                analyzeReport.contains("[缺失]") && analyzeReport.contains("需要"));
         // 建议按钮与状态在同一个 EDT 任务里写入，这里轮询等待，避免读到中间状态
         long jumpDeadline = System.currentTimeMillis() + 5000;
         int jumpCount = 0;
@@ -846,13 +841,63 @@ public final class UiNavigationCheck {
         }
         check("命中后生成可跳转的建议按钮", jumpCount > 0);
 
-        // 调用链查询：未构建数据库时必须给出可读提示
+        // 调用链查询：与上一页是两个独立页面，控件、标题与内容都必须不同
         select(main, "analyze.chain");
+        List<String> chainTexts = contentLabels(main);
+        System.out.println("调用链页标题: " + chainTexts);
+        check("调用链页标题为调用链查询",
+                chainTexts.contains("调用链查询"));
+        check("跳转调用链二级项不回落到组件与漏洞页",
+                !chainTexts.contains("ANALYZE · DEPENDENCIES"));
+        check("两页内容标签集不同（不再共用一个视图）", !chainTexts.equals(analyzeTexts));
+        check("调用链页属于代码口径（标题与副标题可区分）",
+                chainTexts.contains("ANALYZE · CODE"));
+        check("调用链页含目标输入框", fieldQuiet(main, "analyzeChainTarget") instanceof JTextField);
+        check("调用链页含特殊类名输入框", fieldQuiet(main, "analyzeClassName") instanceof JTextField);
+        check("调用链页含反编译输出目录输入框", fieldQuiet(main, "analyzeOutputDir") instanceof JTextField);
+        check("调用链页含调用链超时输入框", fieldQuiet(main, "analyzeTimeout") instanceof JTextField);
+        check("调用链页含调用链分析按钮", fieldQuiet(main, "analyzeRunEngine") instanceof JButton);
+        check("调用链页含快速模式与解析嵌套 jar 开关",
+                fieldQuiet(main, "analyzeQuick") instanceof AbstractButton
+                        && fieldQuiet(main, "analyzeInnerJars") instanceof AbstractButton);
+        check("调用链页默认勾选解析嵌套 jar",
+                ((AbstractButton) fieldQuiet(main, "analyzeInnerJars")).isSelected());
+        check("调用链页含数据库查询下拉框", fieldQuiet(main, "analyzeQueryKind") instanceof JComboBox);
+        // 下拉只列事实查询（五种）；特征匹配走独立按钮，不进下拉
+        check("调用链页查询候选为五种事实查询",
+                comboOptions(main, "analyzeQueryKind").size() == 5);
+        check("调用链页含漏洞特征匹配按钮与严重度下拉框",
+                fieldQuiet(main, "analyzeSignatures") instanceof JButton
+                        && fieldQuiet(main, "analyzeMinSeverity") instanceof JComboBox);
+        check("严重度候选与签名库取值一一对应",
+                comboOptions(main, "analyzeMinSeverity").size()
+                        == ui.AnalyzeChainPage.SEVERITY_VALUES.length);
+        check("严重度默认不过滤",
+                ((javax.swing.JComboBox<?>) fieldQuiet(main, "analyzeMinSeverity")).getSelectedIndex() == 0);
+        check("调用链页含关键字输入框与查询按钮",
+                fieldQuiet(main, "analyzeKeyword") instanceof JTextField
+                        && fieldQuiet(main, "analyzeQuery") instanceof JButton);
+        check("调用链页含反编译与打开输出目录按钮",
+                fieldQuiet(main, "analyzeDecompile") instanceof JButton
+                        && fieldQuiet(main, "analyzeOpenOutput") instanceof JButton);
+        check("调用链页含报告文本域且只读",
+                fieldQuiet(main, "analyzeChainOutput") instanceof JTextArea
+                        && !((JTextArea) fieldQuiet(main, "analyzeChainOutput")).isEditable());
+        check("两页的报告区各自独立（互不覆盖）",
+                fieldQuiet(main, "analyzeOutput") != fieldQuiet(main, "analyzeChainOutput"));
+
+        // 未构建数据库：查询与特征匹配都必须给出可读提示，而不是静默不出结果
         clickButton(main, "analyzeQuery");
         Thread.sleep(300);
-        String chainStatus = ((javax.swing.JLabel) fieldQuiet(main, "analyzeStatus")).getText();
+        String chainStatus = ((javax.swing.JLabel) fieldQuiet(main, "analyzeChainStatus")).getText();
         check("未构建数据库时查询给出可读提示",
                 chainStatus.contains("还没有可查询的数据库") || chainStatus.contains("找不到"));
+        clickButton(main, "analyzeSignatures");
+        Thread.sleep(300);
+        String signatureStatus =
+                ((javax.swing.JLabel) fieldQuiet(main, "analyzeChainStatus")).getText();
+        check("未构建数据库时特征匹配给出可读提示",
+                signatureStatus.contains("还没有可查询的数据库") || signatureStatus.contains("找不到"));
         snapshot(frame, "target/ui-check/11-analyze.png");
 
         // 配置页新增「小工具配置」分组
@@ -892,6 +937,8 @@ public final class UiNavigationCheck {
                         && "300".equals(((JTextField) fieldQuiet(main, "configAnalyzeTimeout")).getText()));
         check("配置页含反编译输出目录输入框",
                 fieldQuiet(main, "configAnalyzeDecompileDir") instanceof JTextField);
+        check("配置页含外部 gadget 规则文件输入框",
+                fieldQuiet(main, "configAnalyzeGadgetRules") instanceof JTextField);
         check("带外 Jar 默认落地路径与上游预设一致",
                 "/tmp/payload.bin".equals(
                         ((JTextField) fieldQuiet(main, "configOobJarDefaultPath")).getText()));
@@ -1183,6 +1230,16 @@ public final class UiNavigationCheck {
                 if (text != null && !text.isEmpty()) texts.add(text);
             }
             if (child instanceof java.awt.Container) collectLabels((java.awt.Container) child, texts);
+        }
+    }
+
+    /** 某个界面视图类是否存在；用于守住「两页不再塌回一个视图」这条回归线。 */
+    private static boolean viewClassPresent(String className) {
+        try {
+            Class.forName(className);
+            return true;
+        } catch (ClassNotFoundException absent) {
+            return false;
         }
     }
 

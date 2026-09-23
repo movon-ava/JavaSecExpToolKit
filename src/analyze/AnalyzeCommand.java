@@ -19,6 +19,12 @@ public final class AnalyzeCommand {
     /** 内置数据库查询脚本在 JAR 内的路径。 */
     public static final String REPORT_RESOURCE = "/python/jar_report.py";
 
+    /** 漏洞特征匹配脚本在 JAR 内的路径。 */
+    public static final String SIGNATURE_RESOURCE = "/python/jar_signatures.py";
+
+    /** 签名库在 JAR 内的路径：特征匹配脚本需要它才能判定。 */
+    public static final String SIGNATURE_LIBRARY_RESOURCE = "/python/vuln_signatures.json";
+
     /** 反编译脚本在 JAR 内的路径（可选后端）。 */
     public static final String DECOMPILE_RESOURCE = "/python/jar_decompile.py";
 
@@ -67,6 +73,28 @@ public final class AnalyzeCommand {
         if (innerJars) {
             command.add("--inner-jars");
             command.add("--fix-class");
+        }
+        return command;
+    }
+
+    /**
+     * 漏洞特征匹配命令。
+     *
+     * <p>与普通库查询分开：它需要额外指定签名库路径，而且输出包含判定结论而非纯事实，
+     * 因此单独一个方法而不是给 report 加参数。
+     *
+     * @param script      已释放到临时目录的 jar_signatures.py
+     * @param library     已释放到临时目录的 vuln_signatures.json
+     * @param minSeverity 最低严重度（high / medium / low）；空串表示不过滤
+     */
+    public static List<String> signatures(String python, Path script, Path library,
+                                          Path database, String minSeverity) {
+        List<String> command = ScriptRunner.pythonCommand(python, script,
+                "-db", database.toAbsolutePath().toString(),
+                "-s", library.toAbsolutePath().toString());
+        if (minSeverity != null && !minSeverity.trim().isEmpty()) {
+            command.add("--min-severity");
+            command.add(minSeverity.trim());
         }
         return command;
     }

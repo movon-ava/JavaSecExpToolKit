@@ -1,5 +1,197 @@
 # AI 工作报告
 
+## 2026-09-23（本轮：漏洞分析拆页 + 漏洞特征匹配 + gadget 规则表）
+
+### 一、需求
+
+> jar-anayzer工具也有gadget分析功能，能否集成到项目中并进行拓展，使其能够支持分析更多的gadget
+
+这一句话背后的前序工作还有两项，本轮一并收口：上一轮已开始但未编译通过的**漏洞分析拆页**
+（`组件与漏洞` 与 `调用链查询` 指向同一个页面），以及随之落地的**漏洞特征匹配**
+（用漏洞库做特征匹配，结论给出可能的漏洞类型与绕过手法）。
+
+按三条线拆开：
+
+1. **拆页**：两个二级项必须是两个真正不同的页面 —— 依赖口径（读 Maven 坐标）与代码口径
+   （读调用图）的代价、输入与结论都不同，共用一页等于让使用者无法判断结论来自哪一侧。
+2. **漏洞特征匹配**：把调用图数据库里的四类证据与签名库对照，输出可能的漏洞类型与该类型下
+   常见的绕过手法，并可按严重度过滤。
+3. **gadget 规则表**：把上游 `jar-analyzer` 的 gadget 分析思路接过来并拓展 —— 判据从
+   「jar 文件名是否出现」升级为 **Maven 坐标 + 版本区间**，并支持外部规则文件。
+
+### 二、根因分析（改代码之前先定位成因）
+
+**根因 1：两个二级项指向同一个视图，是设计决策错误而不是笔误。**
+`WorkbenchPages.java` 里 `analyzeScan()` 与 `analyzeChain()` **都**
+`return AnalyzePage.build(analyzeWidgets, fonts)`，后者只多做一步
+`queryKind.setSelectedIndex(2)`；`AnalyzePage` 的注释还明确写着「两者共用一页是刻意的」。
+后果有两层：使用者无法判断「我现在看的是依赖结论还是代码结论」；分钟级的建库动作与秒级的
+本地分析混在同一个按钮组里，代价差异在界面上表达不出来。
+
+**根因 2：上游 gadget 分析按 jar 文件名判定，会产生「看起来正常但结论是错的」结果。**
+读上游实现（`GadgetRule.build` 读 `gadget.dat`、`GadgetAnalyzer.process` 扫目录收集 jar 名、
+每条规则的 jar 名必须全部命中）后确认它的判定只有两档匹配（精确与全通配）加一个版本黑名单，
+且**只判断「这些 jar 都在目录里」**。三个具体缺口：
+
+- **不带版本约束**：`commons-collections-3.2.2.jar` 已修补 InvokerTransformer 的可用性，
+  但「存在这个 jar」的判定会把它算成可用链 —— 这是实打实的误报；
+- **不带 groupId**：同名 artifact 在不同 group 下可能是完全不同的库，只按文件名无法区分；
+- **只报凑齐了什么**：不报「还差哪个组件」，使用者只能反复试一条注定构造不出来的链。
+
+本项目此前的 `GadgetInventory` 只有 8 条硬编码 gadget，判据是 `artifactId` 相等，
+既表达不了版本区间，也无法在不改代码的前提下扩充。
+
+**根因 3：签名库的失败是静默的。**
+上一轮新增的 `python/jar_signatures.py` 与 `vuln_signatures.json` 已能跑出「漏洞类型 + 绕过手法」，
+但没有任何机械断言守住它与 `jar_report.SINKS` 的一致性：sink 特征是按「类名 + 方法名」精确匹配
+调用边的，两处一旦漂移，特征匹配会**静默地少报一类漏洞**，而报告看起来完全正常。
+本轮的补测（`tests/test_signatures.py`）立刻查出三个真实缺口：`xxe` / `upload` / `dos`
+三种漏洞类型只有类型定义、**没有任何特征指向它们**（因此永远不会被报出来），以及
+数据库文件缺失时只回显 SQLite 的英文错误。
+
+**改动原则**：依赖口径与代码口径的判定逻辑一行未改（`VulnerabilityRules` 25 条规则、
+`VulnerabilityAnalyzer` 的排序与可信度语义保持原样），本轮只改「结论怎么被看到」
+与「判定口径从文件名换成坐标」。
+
+### 三、改动清单
+
+| 文件 | 写入域 | 动作 |
+| --- | --- | --- |
+| `src/ui/AnalyzeScanPage.java` | 界面 | 新增：组件与漏洞页视图（依赖口径，标题 `ANALYZE · DEPENDENCIES`） |
+| `src/ui/AnalyzeChainPage.java` | 界面 | 新增：调用链查询页视图（代码口径，标题 `ANALYZE · CODE`，含特征匹配按钮与严重度下拉） |
+| `src/ui/AnalyzeWorker.java` | 界面 | 新增：两页共用的后台执行器（不冻结界面 + 单页内互斥 + 建议按钮截断） |
+| `src/ui/AnalyzeScanController.java` | 界面 | 新增：依赖口径页的行为，含外部规则文件读取与问题上报 |
+| `src/ui/AnalyzeController.java` | 界面 | 改：收窄为代码口径页的行为，新增特征匹配动作，脚本与签名库分别缓存 |
+| `src/ui/AnalyzePage.java` | 界面 | 删除：内容已拆入两页与共用执行器 |
+| `src/ui/WorkbenchPages.java` | 界面 | 改：两页各自的懒加载入口、默认值下发与跳转渲染，复制动作抽成共用方法 |
+| `src/ui/WidgetRegistry.java` | 界面 | 改：两页控件分别登记（依赖页 8 项 / 代码页 17 项 / 配置 1 项） |
+| `src/Main.java` | 界面 | 改：登记两页控件（组合根仍只做装配） |
+| `src/ui/ConfigForm.java`、`src/ui/ConfigController.java` | 界面 | 改：新增「外部 gadget 规则文件」控件、回填与落盘 |
+| `src/analyzer/GadgetRule.java` | 利用链 | 新增：需求模型（groupId 前缀 + artifactId 通配 + 版本区间含排除版本 + glob 匹配） |
+| `src/analyzer/GadgetRules.java` | 利用链 | 新增：39 条自研规则表，按 8 类分组 |
+| `src/analyzer/GadgetRuleFile.java` | 利用链 | 新增：外部规则文件解析（jar 名 → 坐标 + 版本区间，坏行逐行上报） |
+| `src/analyzer/GadgetInventory.java` | 利用链 | 改：判定改为坐标 + 版本区间，缺失项逐条列出，按类型分组渲染 |
+| `src/analyze/AnalyzeEngine.java` | 利用链 | 改：两份报告都拼入 gadget 段、新增外部规则读取入口、能力清单补两项 |
+| `src/analyze/AnalyzeCommand.java` | 利用链 | 改：新增特征匹配命令与两处资源常量 |
+| `src/analyzer/ReportReader.java` | 利用链 | 改：查询枚举新增特征匹配标识 |
+| `src/analyzer/ScriptRunner.java` | 利用链 | 改：资源释放按后缀区分 `.py` / `.json` |
+| `python/jar_signatures.py` | probe | 改：数据库缺失时给出可读提示；关掉绕过手法时标题同步变化 |
+| `python/vuln_signatures.json` | probe | 改：补 11 条特征，使 14 种漏洞类型全部可达（54 → 65 条） |
+| `src/pom.xml` | 主 agent | 改：把签名脚本与签名库打进 JAR |
+| `tests/AnalyzeCheck.java` | 测试 | 改：新增 gadget 判定断言组，能力清单七项、查询枚举六项（61 → 85 条断言） |
+| `tests/UiNavigationCheck.java` | 测试 | 改：两页分别断言控件与标题，新增「两页不再共用一个视图」的回归守卫 |
+| `tests/test_signatures.py` | 测试 | 新增：16 项单测（签名库格式、sink 一致性、类型可达性、过滤与失败路径） |
+| `tools/lib/RoleMatrix.ps1`、`tools/agent.ps1`、`tools/dispatch.ps1`、`docs/AGENT-ROLES.md` | 主 agent | 改：两个新 python 文件纳入 probe 写入域并同步职责文档 |
+| `openspec/changes/analyze-page-split`、`openspec/changes/gadget-rules` | 主 agent | 新增：两份 change 规划件（proposal / tasks / 规格增量） |
+| `README.md`、`README.en.md`、`PROGRESS.md`、`openspec/config.yaml` | 主 agent | 改：文档同步（两页分工、特征匹配、gadget 口径、外部规则文件、测试章） |
+
+### 四、功能行为
+
+**拆页后两页各自独立。** 依赖口径页只有秒级动作（本地依赖分析 + pom 对照），
+代码口径页只有分钟级动作（建库）与后续事实/判定/定点确认。两页的标题、副标题、
+控件集合、报告区与建议按钮容器都不相同：在依赖页产出的结论不会覆盖代码页的报告。
+
+**漏洞特征匹配。** 同一页点 `漏洞特征匹配`（可用右侧下拉按严重度过滤），
+报告结构为：总算 → **可能的漏洞类型与绕过手法**（每类给触发条件 + 命中依据 + 绕过手法清单）
+→ 命中明细（特征标识、命中数、样例，外部可达类标 `[入口点]`）→ 未命中特征清单。
+14 种类型覆盖反序列化 / JNDI / 表达式 / 模板 / 命令执行 / 代码执行 / SSRF / SQL 注入 /
+路径穿越 / XXE / 文件上传 / 信息暴露 / 凭据泄露 / 拒绝服务。签名库 65 条特征。
+
+**gadget 规则表。** 判据是 groupId 前缀 + artifactId（支持 `*` 通配）+ 版本区间（含排除版本），
+版本不可比时判为**不满足**；一条链的全部依赖必须同时满足（保留上游的 AND 语义）。
+报告按类型分组列可用链（依据坐标 / 能力 / 下一步 / 直达页），并逐条列出缺失链与「还差什么」。
+段末固定声明边界：只说明 gadget 在 classpath 上，不等于可达。
+
+**外部规则文件。** 配置页「漏洞分析配置」可指定一个规则文件，格式沿用上游
+`gadget.dat` 的 `jar名,…|类型|结果`（**只读格式，不引入它的数据文件**），
+但每个 jar 名会被翻译成坐标 + 版本区间：`commons-collections-3.2.1.jar` → 上界 `3.2.1`；
+`!3.2.2` → 排除；`*-core.jar` → artifactId 通配。写错的行逐行报进报告（含行号），
+合法行仍然生效；留空只用内置规则表。
+
+### 五、验证记录
+
+| 验证项 | 命令 | 结果 |
+| --- | --- | --- |
+| Java 源码编译（release 8） | `javac --release 8 -nowarn -d target\checkclasses src\**\*.java` | 通过（243 个 class） |
+| 自检编译 | `javac -cp target\checkclasses;lib\... -d target\tmp2 tests\*.java` | 通过 |
+| 漏洞分析自检 | `AnalyzeCheck` | **85 条断言，失败 0**（原 61 条） |
+| 日志内核自检 | `LogCheck` | 79 条断言，失败 0 |
+| 载荷生成自检 | `PayloadCheck` | 100 条断言，失败 0 |
+| Shiro 自检 | `ShiroCheck` | 通过 |
+| Shiro 界面自检 | `UiShiroCheck` | 通过 |
+| 代理自检 | `ProxyServerCheck` | 通过 |
+| 界面自检 | `UiNavigationCheck` | **全部通过**（含两页拆页回归守卫、端到端本地分析、配置页新控件） |
+| Python 单测 | `python -X utf8 -m unittest discover -s tests` | **172 项通过**（原 156 项，新增 16 项） |
+| 依赖边界审计 | `python -X utf8 tools\audit_boundary.py` | 全部通过（无环 / 无越界 / 叶子层无出边 / 通用组件未引用功能模块） |
+| 工具链自检 | `powershell -File tools\check_agent_tools.ps1` | 91 项通过 |
+| OpenSpec 校验 | `openspec validate --all --strict` | **16 passed, 0 failed**（新增两份 change） |
+| 构建 | `build.ps1` | 见第七节 |
+
+拆页这条缺陷的机械回归守卫有三处，确保以后不会塌回一个视图：
+`viewClassPresent("ui.AnalyzeScanPage") && viewClassPresent("ui.AnalyzeChainPage")
+&& !viewClassPresent("ui.AnalyzePage")`、两页 `contentLabels()` 不相同、
+以及两页报告区对象不相等（`analyzeOutput != analyzeChainOutput`）。
+
+### 六、多 Agent 协作
+
+| 角色 | 主要工作 |
+| --- | --- |
+| 主 agent | 需求澄清与三条线拆分、根因定位（拆页决策错误 / 上游判定口径缺口 / 签名库静默漂移）、共享内核与 `src/pom.xml` 写入、两份 OpenSpec change 规划与校验、工具链与职责文档同步、README 中英同步、备份与门禁总控 |
+| 利用链 agent | gadget 判定内核三件套（`GadgetRule` / `GadgetRules` / `GadgetRuleFile`）与 `GadgetInventory` 重写、`AnalyzeEngine` 两份报告拼装与规则读取入口、`AnalyzeCommand` / `ReportReader` / `ScriptRunner` 同步 |
+| 界面 agent | 两页视图与控制器的拆分（删 `AnalyzePage`、抽 `AnalyzeWorker`）、`WorkbenchPages` 与 `WidgetRegistry` 接线、配置页新增控件与落盘 |
+| 探测 agent | `jar_signatures.py` 的可读失败提示与标题语义、`vuln_signatures.json` 补 11 条特征使 14 种类型全部可达 |
+| 测试 agent | `AnalyzeCheck` 新增 gadget 断言组（61 → 85 条）、`UiNavigationCheck` 两页分别断言与拆页回归守卫、新增 `test_signatures.py` 16 项 |
+| 监督 agent | 逐文件比对写入域与包级依赖边界（`analyzer` 仍为零项目依赖叶子、`analyze` 只依赖 `analyzer`）；核对界面文件规模上限；确认断言只增不减 |
+| 看护 agent | 盯长任务（Python 单测约 55 秒、`UiNavigationCheck` 约 16 秒）判定「在做 / 等待 / 卡死」，本轮无真卡死 |
+
+（本轮没有另起并发会话，改动由主 agent 串行完成；上表按职责归类，说明各写入域分别由谁负责。）
+
+### 七、备份与 Git
+
+- 改动前快照 `.backups/20260923-141351`（275 个文件），按规则只保留最近三份。
+- `.backups/`、`target/`、`JavaSecExpToolKit.jar`、`.pi/` 由 `.gitignore` 忽略。
+- 构建与提交记录见本节末的实测输出。
+
+构建实测（`build.ps1`）：
+
+```
+Maven build complete: G:\java\JavaSecExpToolKit\JavaSecExpToolKit.jar
+JAR build time: 2026-09-23 14:47:19
+JAR size: 602989 bytes
+Source freshness checked: 129 file(s) under src / python / tests
+Runtime dependency: lib\java-chains-cli-2.0.0-beta4.jar (184569201 bytes)
+```
+
+首次构建失败过一次，原因不是代码：我把 Maven 输出同时 `Tee-Object` 写进了 `target\build_out.log`，
+而 `build.ps1` 里 `mvn clean` 要删的正是 `target\`，Windows 上占用中的文件删不掉，
+表现为 `Failed to clean project: Failed to delete ...\target\build_out.log`。把日志改写到 `%TEMP%` 后构建通过。
+
+
+### 八、如实说明的局限
+
+1. **gadget 判定只证明「组件在 classpath 上」，不证明链可达**：是否可达取决于有没有
+   反序列化入口、入口参数能否被外部控制。报告里明确写了这条边界，但它意味着
+   「可用 gadget N 项」不能直接当成「N 条可利用链」。这是依赖口径的固有上限，不是实现缺陷。
+2. **规则表仍是手工维护的白名单**：39 条内置规则只覆盖本工具能接上后续动作的链；
+   未收录的组件需要用户通过外部规则文件补充。规则内容取自各组件公开的 gadget 形态与修复公告，
+   没有从上游 GPLv3 的数据文件里复制任何内容——上游 `gadget.dat`、`dfs-sink.json`
+   与 SCA 规则一律未进入本仓库。
+3. **外部规则文件的语法沿用了上游格式，因此表达能力被它限制**：一行只能表达
+   「一组依赖 + 一个类型 + 一句结论」，无法给单条依赖分别指定不同的版本区间下界。
+   需要更细的区间时只能用内置规则表的方式扩展代码。
+4. **特征匹配的严重度是人工标定的**：`high` / `medium` / `low` 由签名库作者按
+   「命中后是否直接指向 RCE」这一条经验规则判定，不是自动化评分；
+   按严重度过滤会漏掉被标为低危但实际可利用的特征。
+5. **`xxe` / `upload` / `dos` 三类特征本轮才补齐**：在此之前它们只有类型定义、
+   没有任何特征指向，因此永远不会出现在结论里。这是上一轮遗留的缺口，
+   现在由 `test_signatures.py` 的「每种漏洞类型至少被一条特征指向」断言守住。
+6. **两页各自的互斥粒度是「页内」**：两页可以同时跑各自的动作（它们用的输入与产物不同），
+   但同一页内仍然只允许一个动作。若将来两页共享同一个数据库写入动作，需要把互斥提升到全局。
+7. **两份新 change 尚未归档**：`analyze-page-split` 与 `gadget-rules` 已通过
+   `openspec validate --all --strict`，待功能稳定后再走 archive 流程；
+   加上此前未归档的三份，当前共有五份 change 待归档。
+
+
 ## 2026-09-23（本轮：日志记录 - 按日期分文件 + 定期清理）
 
 ### 一、需求

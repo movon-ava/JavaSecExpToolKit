@@ -107,7 +107,8 @@ $cards = @{
 共享内核约束：src/config/** 与 src/util/** 只由主 agent 单独开 change 修改，改前必须列出全部调用方。
 "@
     probe = @"
-你是功能开发 agent（probe）。写入域仅限 python/fj_probe.py 与 src/probe/Probe*.java。
+你是功能开发 agent（probe）。写入域仅限 python/fj_probe.py、python/jar_report.py、
+python/jar_signatures.py、python/vuln_signatures.json 与 src/probe/Probe*.java。
 禁止：不改 src/ui/**、tests/**、src/util/**、src/config/**、src/pom.xml；不改配置项键名。
 完成标志：python -m unittest discover -s tests 全绿。
 "@

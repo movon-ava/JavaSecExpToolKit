@@ -12,6 +12,9 @@ import java.util.Map;
 
 import analyzer.Decompiler;
 import analyzer.DependencyScanner;
+import analyzer.GadgetInventory;
+import analyzer.GadgetRule;
+import analyzer.GadgetRuleFile;
 import analyzer.EngineRunner;
 import analyzer.PomScanner;
 import analyzer.ReportReader;
@@ -69,6 +72,23 @@ public final class AnalyzeEngine {
      * @param target  jar 文件或依赖目录
      */
     public static AnalyzeReport analyzeTarget(Path target) {
+        return analyzeTarget(target, java.util.Collections.<GadgetRule>emptyList(), "");
+    }
+
+    /**
+     * 分析一个 jar 或目录，并可用外部规则文件扩充 gadget 判定。
+     *
+     * <p>外部规则的作用是「不改代码就能分析更多 gadget」：规则文件的类型与依赖名
+     * 完全由使用者提供，本工具只负责按坐标与版本区间核对依赖是否齐备。
+     * 文件里的问题**如实写进报告**而不是静默跳过——一条写错的规则会让使用者
+     * 以为「这条链判定过了、目标没有」，而实际上它根本没被加载。
+     *
+     * @param target     jar 文件或依赖目录
+     * @param extraRules 外部 gadget 规则；空表示只用内置规则表
+     * @param ruleSource 外部规则文件路径，仅用于报告里标注来源；可空
+     */
+    public static AnalyzeReport analyzeTarget(Path target, List<GadgetRule> extraRules,
+                                              String ruleSource) {
         long started = System.currentTimeMillis();
         if (target == null || !Files.exists(target)) {
             return AnalyzeReport.failed("本地依赖分析", "请先选择一个 jar 文件或依赖目录。");
@@ -76,20 +96,50 @@ public final class AnalyzeEngine {
         try {
             VulnerabilityAnalyzer.Result result = VulnerabilityAnalyzer.analyze(target);
             String text = VulnerabilityAnalyzer.render(result, target.toString());
+            // gadget 段直接拼进报告：依赖清单的价值有一半在「能拿它做什么」，
+            // 使用者不必自己把组件名翻成链
+            StringBuilder extra = new StringBuilder(text);
+            extra.append(System.lineSeparator())
+                    .append(GadgetInventory.render(result.dependencies, extraRules));
+            if (extraRules != null && !extraRules.isEmpty()) {
+                extra.append(System.lineSeparator()).append("外部 gadget 规则: ")
+                        .append(extraRules.size()).append(" 条")
+                        .append(ruleSource == null || ruleSource.isEmpty()
+                                ? "" : "（来源 " + ruleSource + "）")
+                        .append(System.lineSeparator());
+            }
             List<String> hints = VulnerabilityAnalyzer.hints(result.dependencies);
             if (!hints.isEmpty()) {
-                StringBuilder extra = new StringBuilder(text);
                 extra.append(System.lineSeparator()).append("===== 组合提示 =====")
                         .append(System.lineSeparator());
                 for (String hint : hints) {
                     extra.append("  - ").append(hint).append(System.lineSeparator());
                 }
-                text = extra.toString();
             }
+            text = extra.toString();
             return AnalyzeReport.of("本地依赖分析", text, true,
                     System.currentTimeMillis() - started, result.findings);
         } catch (IOException | RuntimeException error) {
             return AnalyzeReport.failed("本地依赖分析", "分析失败：" + error.getMessage());
+        }
+    }
+
+    /**
+     * 读外部 gadget 规则文件。
+     *
+     * <p>返回值里的问题清单必须交给报告：规则文件是本工具唯一由使用者手写的输入，
+     * 写错一行就会静默少判一条链，因此解析问题必须与结论一起呈现。
+     */
+    public static GadgetRuleFile.Parsed loadGadgetRules(String path) {
+        if (path == null || path.trim().isEmpty()) {
+            return new GadgetRuleFile.Parsed(new ArrayList<GadgetRule>(), new ArrayList<String>());
+        }
+        try {
+            return GadgetRuleFile.parse(Paths.get(path.trim()));
+        } catch (IOException | RuntimeException error) {
+            List<String> problems = new ArrayList<String>();
+            problems.add("读取外部 gadget 规则文件失败：" + error.getMessage());
+            return new GadgetRuleFile.Parsed(new ArrayList<GadgetRule>(), problems);
         }
     }
 
@@ -101,6 +151,11 @@ public final class AnalyzeEngine {
      * jar 被裁剪）本身就是有用的排查线索。
      */
     public static AnalyzeReport analyzePom(Path pom) {
+        return analyzePom(pom, java.util.Collections.<GadgetRule>emptyList());
+    }
+
+    /** 解析 pom.xml，并可用外部规则文件扩充 gadget 判定。 */
+    public static AnalyzeReport analyzePom(Path pom, List<GadgetRule> extraRules) {
         long started = System.currentTimeMillis();
         if (pom == null || !Files.isRegularFile(pom)) {
             return AnalyzeReport.failed("pom.xml 分析", "请选择一个 pom.xml 文件。");
@@ -138,6 +193,8 @@ public final class AnalyzeEngine {
             text.append("    建议: ").append(finding.suggestion).append(System.lineSeparator());
         }
         text.append(System.lineSeparator())
+                .append(GadgetInventory.render(dependencies, extraRules))
+                .append(System.lineSeparator())
                 .append("注意：这里读的是**声明**，实际生效版本还可能被 dependencyManagement、")
                 .append("父 pom 或 profile 覆盖；以运行时实际加载的依赖为准。")
                 .append(System.lineSeparator());
@@ -219,6 +276,33 @@ public final class AnalyzeEngine {
     }
 
     /**
+     * 漏洞特征匹配：把库里的代码特征与内置签名库对照，
+     * 给出可能的漏洞类型与该类型下常见的绕过手法。
+     *
+     * <p>与 {@link #query} 分开的理由：库查询输出的是事实（有哪些 sink、有哪些字符串），
+     * 本方法输出的是判定（这些事实像什么漏洞）。两者的输出契约与演进节奏都不同。
+     *
+     * @param script  已释放的 jar_signatures.py
+     * @param library     已释放的 vuln_signatures.json
+     * @param minSeverity 最低严重度（high / medium / low）；空串表示不过滤
+     */
+    public static AnalyzeReport signatures(Path database, Path script, Path library, String python,
+                                          String minSeverity, int timeoutSeconds) {
+        if (!ReportReader.available(database)) {
+            return AnalyzeReport.failed("漏洞特征匹配",
+                    "找不到 " + EngineRunner.DATABASE_NAME + "：" + database
+                            + "\n请先执行一次「调用链分析」。");
+        }
+        long started = System.currentTimeMillis();
+        List<String> command = AnalyzeCommand.signatures(python, script, library, database,
+                minSeverity);
+        String output = ScriptRunner.run(command,
+                timeoutSeconds <= 0 ? DEFAULT_LOCAL_TIMEOUT : timeoutSeconds);
+        long millis = System.currentTimeMillis() - started;
+        return AnalyzeReport.text("漏洞特征匹配", output, true, millis);
+    }
+
+    /**
      * 反编译目标到指定目录（内置 CFR）。
      *
      * @param timeoutSeconds 预算上限；CFR 是同步 API 无法中途打断，超预算时结果会被标注但仍保留产物
@@ -275,6 +359,11 @@ public final class AnalyzeEngine {
         capabilities.put("调用链分析", "需在配置页指定 jar-analyzer-engine 的 jar");
         capabilities.put("数据库查询", "Python 标准库 sqlite3，只读");
         capabilities.put("反编译", "内置 CFR（随运行期依赖提供），无需 Node");
+        capabilities.put("漏洞特征匹配",
+                "字符串常量 / 类名 / 方法名 / sink 调用与签名库对照，给出漏洞类型与绕过手法");
+        capabilities.put("可用 gadget",
+                GadgetInventory.ruleCount() + " 条内置规则，按 Maven 坐标 + 版本区间判定；"
+                        + "可用外部规则文件补充（gadget.dat 语法）");
         return Collections.unmodifiableMap(capabilities);
     }
 }

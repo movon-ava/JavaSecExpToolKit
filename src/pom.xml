@@ -46,6 +46,9 @@
                 <includes>
                     <include>fj_probe.py</include>
                     <include>jar_report.py</include>
+                    <!-- 漏洞特征匹配：脚本 + 签名库必须同时打进 JAR，缺一个就跑不出结论 -->
+                    <include>jar_signatures.py</include>
+                    <include>vuln_signatures.json</include>
                 </includes>
             </resource>
             <resource>

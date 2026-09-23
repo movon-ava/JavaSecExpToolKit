@@ -84,7 +84,8 @@ $roleKeywords = [ordered]@{
     ui           = @('界面', '页面', '配置页', '按钮', '布局', '面板', 'ui', '界面自检')
     traffic      = @('代理', '抓包', '请求头', '转发', '拦截', 'proxy', 'capture')
     exploit      = @('shiro', 'payload', '利用链', '回显', '爆破', '密钥', '载荷', '链生成')
-    probe        = @('fastjson', '探测', '版本识别', '识别盲区', '探针', 'fj_probe', 'probe')
+    probe        = @('fastjson', '探测', '版本识别', '识别盲区', '探针', 'fj_probe', 'probe',
+                     '特征匹配', '签名库', '漏洞类型', '绕过手法')
 }
 
 function Resolve-Role {

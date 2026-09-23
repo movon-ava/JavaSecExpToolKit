@@ -254,6 +254,7 @@ public final class ConfigController {
         form.analyzeWorkDir.setText(config.getProperty("analyze_work_dir", ""));
         form.analyzeTimeout.setText(config.getProperty("analyze_timeout", "300"));
         form.analyzeDecompileDir.setText(config.getProperty("analyze_decompile_dir", ""));
+        form.analyzeGadgetRules.setText(config.getProperty("analyze_gadget_rules", ""));
         form.uploadUrl.setText(config.getProperty("upload_url", ""));
         form.uploadField.setText(config.getProperty("upload_field", "file"));
         form.uploadTimeout.setText(config.getProperty("upload_timeout", "30"));
@@ -343,6 +344,7 @@ public final class ConfigController {
         config.setProperty("analyze_work_dir", form.analyzeWorkDir.getText().trim());
         config.setProperty("analyze_timeout", Platform.valueOr(form.analyzeTimeout.getText(), "300"));
         config.setProperty("analyze_decompile_dir", form.analyzeDecompileDir.getText().trim());
+        config.setProperty("analyze_gadget_rules", form.analyzeGadgetRules.getText().trim());
         Object presetCategory = form.presetCategory.getSelectedItem();
         config.setProperty("preset_category", presetCategory == null ? "全部分类"
                 : String.valueOf(presetCategory));
